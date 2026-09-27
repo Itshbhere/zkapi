@@ -317,10 +317,18 @@ struct DeploymentManifest {
     indexer_url: String,
     request_charge_cap: u128,
     proof_backend: String,
+    #[serde(default)]
+    proof_setup: DeploymentProofSetup,
     state_signing_key: DeploymentCurvePoint,
     clearance_signing_key: DeploymentCurvePoint,
     #[serde(default)]
     models: Vec<ModelDescriptor>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DeploymentProofSetup {
+    #[serde(default)]
+    circuit_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -890,6 +898,13 @@ fn validate_deployment_manifest(manifest: &DeploymentManifest) -> anyhow::Result
             "deployment {} uses unsupported proof backend {}; expected groth16_bn254",
             manifest.deployment_id,
             manifest.proof_backend
+        );
+    }
+    if manifest.proof_setup.circuit_id != zkapi_proof::compact::CIRCUIT_ID {
+        anyhow::bail!(
+            "deployment {} has an incompatible legacy proof circuit; expected {}. Funding requires a new vault and note-bound proof setup. Keep existing funds and recovery data with the legacy deployment",
+            manifest.deployment_id,
+            zkapi_proof::compact::CIRCUIT_ID
         );
     }
     if manifest.protocol_server_url.is_empty() || manifest.indexer_url.is_empty() {
@@ -2391,6 +2406,7 @@ mod tests {
             indexer_url: "https://indexer.example".to_string(),
             request_charge_cap: 1,
             proof_backend: "stwo_scarb".to_string(),
+            proof_setup: DeploymentProofSetup::default(),
             state_signing_key: DeploymentCurvePoint {
                 x: "0x1".to_string(),
                 y: "0x2".to_string(),
@@ -2427,5 +2443,39 @@ mod tests {
         demo["demo_mint_enabled"] = serde_json::Value::Bool(true);
         let demo: DeploymentManifest = serde_json::from_value(demo).unwrap();
         assert!(demo.demo_mint_enabled);
+    }
+
+    #[test]
+    fn deployment_manifest_rejects_legacy_circuits_before_funding() {
+        let mut json = serde_json::json!({
+            "deployment_id": "note-bound-test", "protocol_version": 2,
+            "chain_id": 1, "rpc_url": "https://rpc.example",
+            "contract_address": "0x1", "billing_token_address": "0x2",
+            "protocol_server_url": "https://server.example",
+            "indexer_url": "https://indexer.example", "request_charge_cap": 1,
+            "proof_backend": "groth16_bn254",
+            "state_signing_key": {"x": "0x1", "y": "0x2"},
+            "clearance_signing_key": {"x": "0x3", "y": "0x4"}
+        });
+        for circuit in [
+            None,
+            Some(""),
+            Some("legacy-unbound"),
+            Some("unknown-future-circuit"),
+        ] {
+            json.as_object_mut().unwrap().remove("proof_setup");
+            if let Some(circuit_id) = circuit {
+                json["proof_setup"] = serde_json::json!({"circuit_id": circuit_id});
+            }
+            let manifest: DeploymentManifest = serde_json::from_value(json.clone()).unwrap();
+            let error = validate_deployment_manifest(&manifest)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("incompatible legacy proof circuit"));
+            assert!(error.contains("new vault"));
+        }
+        json["proof_setup"] = serde_json::json!({"circuit_id": zkapi_proof::compact::CIRCUIT_ID});
+        let manifest: DeploymentManifest = serde_json::from_value(json).unwrap();
+        validate_deployment_manifest(&manifest).unwrap();
     }
 }

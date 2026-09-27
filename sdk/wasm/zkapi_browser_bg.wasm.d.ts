@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_browserrequestprover_free: (a: number, b: number) => void;
+export const browser_circuit_id: () => [number, number];
 export const browser_complete_response: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const browser_confirm_deposit: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const browser_generate_deposit: () => [number, number, number, number];

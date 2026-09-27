@@ -17,9 +17,17 @@ Nonzero-token deployments retain the ERC-20 behavior and reject ETH on deposit.
 Existing vaults are immutable and do not gain native support from a frontend
 update. Publish a fresh deployment ID, contract address and native asset pins;
 preserve the legacy wallet and withdrawal route for old notes. This asset change
-retains the pinned circuit and proof keys: the circuit operates on integer
-balances and does not assign a currency denomination. It does not include the
-separate note-binding circuit migration.
+requires circuit `zkapi-v2-note-bound-v1`, its exact revised setup/WASM/key hashes,
+and the historical-root challenge repair. Integer gwei accounting does not itself
+require a new circuit, but the old circuit allowed signed balance state to move
+between notes and must not be reused. The independent note-bound repair is now a
+mandatory part of this native deployment. See [Note-bound migration](note-binding-review.md).
+
+The first empty September 27 native Sepolia vault at
+`0x0bf47f7fCc28975E4A928587869B73D32CD12f77` used the old verifier. It is
+abandoned and must never be advertised or funded. Its first prepared image/source
+archive is also superseded; the native deployment needs a fresh vault with the
+note-bound adapter and the final reviewed source.
 
 ## Pinned configuration
 
@@ -38,7 +46,9 @@ The public deployment manifest and browser trust configuration must agree on:
 ```
 
 Pin the RPC URL, chain, fresh vault and ordinary protocol/signing/proof-asset
-fields too. The example feed is Sepolia; it does not select a production feed.
+fields too. Both manifest `proof_setup.circuit_id` and browser
+`trusted_deployment.circuit_id` must equal `zkapi-v2-note-bound-v1`, and all new
+request/withdrawal proving and verifying key hashes must match that setup. The example feed is Sepolia; it does not select a production feed.
 The server checks chain ID, feed decimals and the vault's native-unit getter
 before answering or accepting a quote. There is no symbol-only fallback.
 
@@ -155,7 +165,14 @@ zkapi ... serverd ... \
 ```
 
 The server requires prompt-private lease configuration and rejects proxy policy
-for native mode. Configure the published manifest separately; these flags do
+for native mode. Operate the compatible v2 [challenge daemon](challenge-service.md)
+alongside server and indexer, with a dedicated funded signer restricted to the
+new vault. It reads the exact historical request root from the native server's
+finalized transcript or exact active-lease request and uses a current zero-slot
+restoration path. A missing station usage receipt does not prevent an already
+issued lease from being challenged. Native usage
+settlement preserves the original proof/public inputs required for that challenge.
+Do not reuse a daemon, verifier or setup from another circuit. Configure the published manifest separately; these flags do
 not rewrite static frontend manifests. Current native integration targets the
 browser SDK. The existing local CLI/clientd funding flow still expects ERC-20
 and does not prepare native quotes; it must not be advertised as native-ready.
@@ -168,3 +185,19 @@ and real browser proof/authorization binding with a signed
 gwei settlement. Contract tests cover native deposit/close/escape/expiry payouts,
 wrong-value rejection, failed-recipient atomicity and recipient reentrancy. Native ETH deployment and
 live end-to-end acceptance are separate from these local tests.
+
+OA provisioning retries accept a shortened remaining lifetime only when the
+relay explicitly marks the station response `replayed: true`. Its original
+expiry stays unchanged and must remain in the future and within the requested
+maximum TTL; absent flags and ordinary new issuance retain strict lifetime
+bounds. Expired replays remain pending/error recovery rather than creating a
+second key for the same accepted request.
+
+Native OA issuance uses a deployment-bound upstream request ID: a versioned
+Keccak domain hash of the complete accepted request binding (chain, vault,
+nullifier, browser request ID, payload/quote, and proof). This separate ID is
+persisted atomically with the lease and reused for key issuance and usage
+recovery. It prevents two deployments that share an org from redeeming the same
+key by choosing the same browser request ID. The browser-visible ID stays
+unchanged; legacy lease rows retain their historical namespace. Native rows
+with a missing or mismatched upstream ID fail closed.

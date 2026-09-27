@@ -51,6 +51,9 @@ pub struct OpenRouterLeaseRecord {
     pub client_request_id: String,
     pub request_nullifier: Felt252,
     pub api_request: ApiRequestV2,
+    /// Native OA requests use a deployment/proof-bound upstream namespace.
+    /// None preserves the historical browser-ID namespace for legacy leases.
+    pub oa_client_request_id: Option<String>,
     pub key_hash: Option<String>,
     pub key_source: String,
     pub status: String,
@@ -117,6 +120,7 @@ impl NullifierStore {
                 client_request_id TEXT PRIMARY KEY,
                 request_nullifier TEXT NOT NULL UNIQUE,
                 api_request_json TEXT NOT NULL,
+                oa_client_request_id TEXT,
                 key_hash TEXT UNIQUE,
                 key_source TEXT NOT NULL DEFAULT 'openrouter',
                 status TEXT NOT NULL,
@@ -150,6 +154,10 @@ impl NullifierStore {
         );
         let _ = conn.execute(
             "ALTER TABLE openrouter_leases ADD COLUMN key_source TEXT NOT NULL DEFAULT 'openrouter'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE openrouter_leases ADD COLUMN oa_client_request_id TEXT",
             [],
         );
         backfill_openrouter_request_bindings(&conn)?;
@@ -427,6 +435,29 @@ impl NullifierStore {
         settle_after: u64,
         spending_limit_usd: f64,
     ) -> Result<(), ServerError> {
+        self.create_openrouter_lease_with_oa_id(
+            request,
+            key_source,
+            issued_at,
+            expires_at,
+            settle_after,
+            spending_limit_usd,
+            None,
+        )
+    }
+
+    // Extends the legacy constructor without changing existing callers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_openrouter_lease_with_oa_id(
+        &self,
+        request: &ApiRequestV2,
+        key_source: &str,
+        issued_at: u64,
+        expires_at: u64,
+        settle_after: u64,
+        spending_limit_usd: f64,
+        oa_client_request_id: Option<&str>,
+    ) -> Result<(), ServerError> {
         let request_json = serde_json::to_string(request).map_err(|error| {
             ServerError::Database(format!("lease serialization failed: {error}"))
         })?;
@@ -437,8 +468,8 @@ impl NullifierStore {
         conn.execute(
             "INSERT INTO openrouter_leases (
                 client_request_id, request_nullifier, api_request_json, key_source, status,
-                issued_at, expires_at, settle_after, spending_limit_usd, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, 'provisioning', ?5, ?6, ?7, ?8, ?9)",
+                issued_at, expires_at, settle_after, spending_limit_usd, updated_at, oa_client_request_id
+             ) VALUES (?1, ?2, ?3, ?4, 'provisioning', ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 request.client_request_id,
                 request.public_inputs.request_nullifier.to_hex(),
@@ -449,6 +480,7 @@ impl NullifierStore {
                 settle_after as i64,
                 spending_limit_usd,
                 current_timestamp() as i64,
+                oa_client_request_id,
             ],
         )
         .map_err(|error| ServerError::Database(format!("lease insert failed: {error}")))?;
@@ -767,6 +799,7 @@ fn row_to_openrouter_lease(row: &rusqlite::Row<'_>) -> rusqlite::Result<OpenRout
         client_request_id: row.get("client_request_id")?,
         request_nullifier: Felt252::from_hex(&nullifier).unwrap_or(Felt252::ZERO),
         api_request,
+        oa_client_request_id: row.get("oa_client_request_id")?,
         key_hash: row.get("key_hash")?,
         key_source: row.get("key_source")?,
         status: row.get("status")?,

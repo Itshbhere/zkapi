@@ -13,8 +13,12 @@ if (process.argv.includes('--check')) {
     const manifestFile = path.join(root, 'sdk/assets/manifest.json');
     const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
     const protocolRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: path.join(root, 'protocol'), encoding: 'utf8' }).trim();
+    const setup = JSON.parse(await fs.readFile(path.join(root, 'protocol/setup/v2/manifest.json'), 'utf8'));
+    if (setup.circuit_id !== 'zkapi-v2-note-bound-v1') throw new Error('Incompatible protocol setup circuit.');
+    manifest.circuitId = setup.circuit_id;
     for (const network of ['sepolia', 'mainnet']) {
         const config = JSON.parse(await fs.readFile(path.join(root, `sdk/assets/config/${network}.json`), 'utf8'));
+        if (config.trusted_deployment?.circuit_id !== setup.circuit_id) throw new Error(`Incompatible ${network} circuit pin.`);
         for (const kind of ['request', 'withdrawal']) {
             const bytes = await fs.readFile(path.join(root, `protocol/setup/v2/${kind}.pk`));
             const hash = createHash('sha256').update(bytes).digest('hex');

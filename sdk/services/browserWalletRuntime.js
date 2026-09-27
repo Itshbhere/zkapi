@@ -53,6 +53,7 @@ function browserConfigUrl() {
     return configured;
 }
 const LEASE_AUTHORIZATION = JSON.stringify({ mode: 'openrouter_ephemeral_lease', version: 1 });
+const REQUIRED_CIRCUIT_ID = 'zkapi-v2-note-bound-v1';
 const MAX_RECOVERY_WAIT_MS = 45_000;
 // OA may briefly throttle child-key creation. Keep retrying the same durable,
 // idempotent lease request long enough to cross a one-minute limiter without
@@ -391,6 +392,11 @@ class BrowserWalletRuntime extends EventTarget {
         if (Number(manifest.protocol_version) !== 2 || manifest.proof_backend !== 'groth16_bn254') {
             throw new Error('The selected deployment is not a zkAPI v2 Groth16 deployment.');
         }
+        if (manifest.proof_setup?.circuit_id !== REQUIRED_CIRCUIT_ID) {
+            const error = new Error('This deployment uses an incompatible legacy proof circuit. Funding is unavailable until the operator publishes a new vault and note-bound proof setup. Keep existing funds and recovery data with the legacy deployment.');
+            error.code = 'incompatible_proof_circuit';
+            throw error;
+        }
         for (const field of ['deployment_id', 'contract_address', 'protocol_server_url', 'indexer_url']) {
             if (!manifest[field]) throw new Error(`The deployment manifest omitted ${field}.`);
         }
@@ -418,6 +424,9 @@ class BrowserWalletRuntime extends EventTarget {
     }
 
     validateManifestTrust(manifest) {
+        if (this.browserConfig.deployment_status === 'migration_required') {
+            throw new Error('This application still pins a legacy vault. Configure a newly deployed note-bound vault before funding.');
+        }
         const trusted = this.browserConfig.trusted_deployment;
         if (!trusted) {
             throw new Error('browser-config.json omitted its trusted deployment pins.');
@@ -429,6 +438,7 @@ class BrowserWalletRuntime extends EventTarget {
         };
         const lowercase = value => String(value || '').toLowerCase();
         const normalizedUrl = value => normalizeUrl(new URL(value).href);
+        requireEqual(manifest.proof_setup?.circuit_id, trusted.circuit_id, 'proof circuit');
         requireEqual(manifest.deployment_id, trusted.deployment_id, 'deployment id');
         requireEqual(manifest.chain_id, trusted.chain_id, 'chain id', Number);
         requireEqual(manifest.contract_address, trusted.contract_address, 'vault address', lowercase);

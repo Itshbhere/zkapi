@@ -9,6 +9,7 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 /** Read and verify the package's public artifacts without any source submodule. */
 export async function verifyBrowserSdkAssets() {
     const manifest = JSON.parse(await fs.readFile(path.join(sdkRoot, 'assets/manifest.json'), 'utf8'));
+    if (manifest.circuitId !== 'zkapi-v2-note-bound-v1') throw new Error('Incompatible SDK circuit artifacts.');
     for (const [relative, expected] of Object.entries(manifest.files)) {
         const resolved = path.resolve(sdkRoot, relative);
         if (!resolved.startsWith(`${sdkRoot}${path.sep}`)) throw new Error('Invalid SDK asset path.');
@@ -59,7 +60,7 @@ export async function buildBrowserSdkAssets({ outDir, network = 'sepolia', publi
         bundle: true, format: 'esm', platform: 'browser', target: ['es2020'], minify: true, logLevel: 'warning'
     });
     files['assets/zkapiWasmWorker.js'] = digest(await fs.readFile(workerFile));
-    const manifest = { schema: 1, network, protocolRevision: provenance.protocolRevision, files: { ...files } };
+    const manifest = { schema: 1, network, circuitId: provenance.circuitId, protocolRevision: provenance.protocolRevision, files: { ...files } };
     await write('sdk-assets.json', `${JSON.stringify(manifest, null, 2)}\n`);
     return {
         directory, config, manifest, files,

@@ -57,6 +57,7 @@ test('browser build contains every wallet WASM operation', () => {
     const module = new WebAssembly.Module(bytes);
     const exports = new Set(WebAssembly.Module.exports(module).map(entry => entry.name));
     for (const name of [
+        'browser_circuit_id',
         'browser_generate_deposit',
         'browser_confirm_deposit',
         'browser_wallet_status',
@@ -105,23 +106,29 @@ test('browser worker retains the decoded request prover and retries failed initi
     );
 });
 
-test('static proving keys match the deployment-pinned hashes', () => {
+test('static proving keys match the note-bound development setup hashes', () => {
     assert.equal(
         sha256(path.join(root, 'assets/proofs/request.pk')),
-        'faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e'
+        'c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584'
     );
     assert.equal(
         sha256(path.join(root, 'assets/proofs/withdrawal.pk')),
-        '92a90139c87ae0e331fddc92a36e231047e1b4ae95474521d9a75f9b5a7bd0ab'
+        '8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668'
     );
 });
 
-test('browser config defaults to the public Sepolia deployment', () => {
+test('browser config pins the fresh note-bound Sepolia deployment', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/sepolia.json'), 'utf8'));
-    assert.equal(config.deployment_manifest_url, 'https://d33l4w2z2nh4cg.cloudfront.net/config.json');
+    assert.equal(config.deployment_manifest_url, 'https://d24dltwirql2l5.cloudfront.net/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);
     assert.equal(config.trusted_deployment.chain_id, 11155111);
-    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x590df9abbfb21074016daa486c771ae0af729ee2');
+    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-sepolia-note-bound-20260922');
+    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x94b4e26b292db9a57a4b410e5b45b12ea14cbc1c');
+    assert.equal(config.trusted_deployment.billing_token_address.toLowerCase(), '0x046ba3224cb9c20e997456c4262f9376920283bc');
+    assert.equal(config.trusted_deployment.protocol_server_url, 'https://d24dltwirql2l5.cloudfront.net');
+    assert.equal(config.trusted_deployment.indexer_url, config.trusted_deployment.protocol_server_url);
+    assert.equal(config.trusted_deployment.circuit_id, 'zkapi-v2-note-bound-v1');
+    assert.equal(config.deployment_status, undefined);
     assert.equal(config.trusted_deployment.request_proving_key_sha256, sha256(path.join(root, 'assets/proofs/request.pk')));
     assert.equal(config.trusted_deployment.withdrawal_proving_key_sha256, sha256(path.join(root, 'assets/proofs/withdrawal.pk')));
     assert.equal(config.proving_keys_base_url, './proofs/');
@@ -132,7 +139,7 @@ test('browser config defaults to the public Sepolia deployment', () => {
     assert.equal(config.openrouter_requests_per_key, undefined);
 });
 
-test('mainnet browser config pins real Ethereum USDC and the deployed zkAPI server', () => {
+test('mainnet browser config retains USDC and requires the new circuit', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/mainnet.json'), 'utf8'));
     assert.equal(config.deployment_manifest_url, 'https://d27v1dvkaxfc09.cloudfront.net/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);

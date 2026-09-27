@@ -78,6 +78,8 @@ pub struct OaOrgProvisioner {
 #[derive(Deserialize)]
 struct OaOrgKeyResponse {
     source: String,
+    #[serde(default)]
+    replayed: bool,
     key: String,
     key_hash: String,
     credit_limit: f64,
@@ -440,7 +442,10 @@ fn validate_response(
         && (response.credit_limit - requested_limit_usd).abs()
             <= f64::EPSILON.max(requested_limit_usd * 1e-9);
     let expected_expiry = now.saturating_add(ttl_seconds);
-    let expiry_is_bounded = response.expires_at_unix >= expected_expiry.saturating_sub(30)
+    // An explicit idempotent station replay retains its original expiry. It
+    // may have less lifetime remaining, but cannot extend the requested TTL.
+    let expiry_is_bounded = response.expires_at_unix > now
+        && (response.replayed || response.expires_at_unix >= expected_expiry.saturating_sub(30))
         && response.expires_at_unix <= expected_expiry.saturating_add(30);
     let verifier_is_secure = is_secure_or_loopback_url(&response.verifier_url);
     let inference_is_secure = is_secure_or_loopback_url(&response.openrouter_api_base);
@@ -566,6 +571,34 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::post;
     use axum::{Json, Router};
+
+    #[test]
+    fn delayed_issuance_requires_explicit_replay_and_preserves_expiry_bounds() {
+        let now = current_timestamp();
+        let value = json!({
+            "source":"oa_org", "key":"runtime-key", "key_hash":"hash", "credit_limit":1.0,
+            "duration_minutes":5, "expires_at_unix":now + 120,
+            "station_id":"station", "station_recently_attested":true,
+            "station_signature":"ab".repeat(64), "org_signature":"cd".repeat(64),
+            "verifier_url":"https://verifier.example", "openrouter_api_base":"https://openrouter.ai/api/v1"
+        });
+        let mut response: OaOrgKeyResponse = serde_json::from_value(value).unwrap();
+        assert!(!response.replayed);
+        assert!(validate_response(&response, 1.0, 5, 300).is_err());
+        response.replayed = true;
+        assert!(validate_response(&response, 1.0, 5, 300).is_ok());
+        assert_eq!(response.expires_at_unix, now + 120);
+        response.expires_at_unix = now;
+        assert!(validate_response(&response, 1.0, 5, 300).is_err());
+        response.expires_at_unix = now + 1000;
+        assert!(validate_response(&response, 1.0, 5, 300).is_err());
+        response.expires_at_unix = now + 120;
+        response.credit_limit = 2.0;
+        assert!(validate_response(&response, 1.0, 5, 300).is_err());
+        response.credit_limit = 1.0;
+        response.duration_minutes = 10;
+        assert!(validate_response(&response, 1.0, 5, 300).is_err());
+    }
 
     #[test]
     fn string_detail_identifies_the_hourly_issuance_guard() {

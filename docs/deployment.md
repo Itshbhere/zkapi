@@ -1,7 +1,14 @@
 # Deployment
 
-The commands below describe the historical ERC-20 deployment. Native ETH requires
-a fresh vault and matching SDK/server pins; see [Native ETH billing](native-eth-billing.md).
+Every new deployment now requires circuit `zkapi-v2-note-bound-v1`, revised
+setup/WASM/proof hashes, a fresh immutable verifier/vault, the historical-root
+challenge repair, and the compatible [challenge service](challenge-service.md).
+See [Note-bound migration](note-binding-review.md). Do not use the abandoned first
+native Sepolia vault or legacy unbound verifier. Existing legacy wallets require
+their corresponding legacy recovery tools; they cannot be silently migrated.
+
+The commands below are ERC-20 examples. Native ETH adds a fresh native vault and
+matching SDK/server pins; see [Native ETH billing](native-eth-billing.md).
 
 This is the v2 deployment sequence. It deploys the real Groth16 adapter; there
 is no mock adapter or Stwo process in the public path.

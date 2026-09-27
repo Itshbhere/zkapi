@@ -65,3 +65,10 @@ See [deployment.md](deployment.md) for operations.
 Native browser deployments use gwei ledger units and a proof-bound, frozen per-lease
 ETH/USD quote. See [Native ETH billing](native-eth-billing.md) for conversion,
 recovery, deployment pins and the explicit legacy/native boundaries.
+
+New deployments require `zkapi-v2-note-bound-v1`: signed commitments include the
+private note leaf, so state from one note cannot be spent through another. The
+vault accepts an archived request root for escape challenges while independently
+checking the current restoration path. Operate `zkapi-challenged` against the
+same finalized transcript database and revised setup; see
+[Note-bound migration](note-binding-review.md) and [Challenge service](challenge-service.md).

@@ -184,7 +184,7 @@ test('native manifest trust pins asset, denomination, feed, freshness and RPC wi
     const config = JSON.parse(await readFile(new URL('../assets/config/sepolia.json', import.meta.url), 'utf8'));
     const trusted = { ...config.trusted_deployment, ...funding, rpc_url: funding.demo_rpc_url, billing_token_address: null };
     const manifest = { ...trusted, protocol_version: 2, proof_backend: 'groth16_bn254',
-        proof_setup: { request_proving_key_sha256: trusted.request_proving_key_sha256,
+        proof_setup: { circuit_id: trusted.circuit_id, request_proving_key_sha256: trusted.request_proving_key_sha256,
             withdrawal_proving_key_sha256: trusted.withdrawal_proving_key_sha256 },
         privacy_mode: { openrouter_inference_base: trusted.openrouter_inference_base, verifier_url: trusted.verifier_url } };
     const runtime = new BrowserWalletRuntime();
