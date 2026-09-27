@@ -116,10 +116,15 @@ pub fn create_router(processor: Arc<RequestProcessor>) -> Router {
         .route("/health", get(handle_health))
         .route("/v1/attestation", get(handle_attestation))
         .route("/v2/requests", post(handle_request))
+        .route("/v2/billing/quote", get(handle_native_billing_quote))
         .route("/v2/openrouter/leases", post(handle_openrouter_lease))
         .route(
             "/v2/openrouter/leases/{client_request_id}",
             get(handle_openrouter_lease_status).post(handle_openrouter_lease_retirement),
+        )
+        .route(
+            "/v2/openrouter/leases/{client_request_id}/expire",
+            post(handle_native_lease_expiry),
         )
         .route("/v2/withdraw/clearance", post(handle_clearance))
         .route(
@@ -280,6 +285,38 @@ async fn handle_recovery_by_nullifier(
         .map_err(|e| error_to_response(&e, &nullifier_hex, &processor))
 }
 
+async fn handle_native_lease_expiry(
+    State(processor): State<AppState>,
+    Path(client_request_id): Path<String>,
+    Json(request): Json<ApiRequestV2>,
+) -> Result<(HeaderMap, Json<serde_json::Value>), ErrorHttpResponse> {
+    let status = processor
+        .expire_unaccepted_native_lease(&client_request_id, &request)
+        .await
+        .map_err(|error| error_to_response(&error, &client_request_id, &processor))?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    Ok((headers, Json(status)))
+}
+
+async fn handle_native_billing_quote(
+    State(processor): State<AppState>,
+) -> Result<(HeaderMap, Json<crate::native_billing::NativeBillingQuote>), ErrorHttpResponse> {
+    let quote = processor
+        .native_billing_quote()
+        .await
+        .map_err(|error| error_to_response(&error, "billing-quote", &processor))?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    Ok((headers, Json(quote)))
+}
+
 /// Server identity + signing capacity for the dashboard header panel.
 #[derive(Debug, Serialize)]
 struct ServerIdentity {
@@ -293,8 +330,9 @@ struct ServerIdentity {
     auth_scheme: &'static str,
     policy_enabled: bool,
     request_charge_cap: u128,
-    request_charge_cap_usd: f64,
-    credits_per_usd: f64,
+    request_charge_cap_usd: Option<f64>,
+    credits_per_usd: Option<f64>,
+    billing_asset: &'static str,
     state_signing_key: CurvePointWire,
     clearance_signing_key: CurvePointWire,
     openrouter_leases_enabled: bool,
@@ -335,8 +373,19 @@ async fn handle_dashboard_summary(State(processor): State<AppState>) -> Json<Das
         auth_scheme: config.auth_scheme.as_str(),
         policy_enabled: config.policy_enabled,
         request_charge_cap: config.request_charge_cap,
-        request_charge_cap_usd: pricing::credits_to_usd(config.request_charge_cap),
-        credits_per_usd: pricing::CREDITS_PER_USD,
+        request_charge_cap_usd: config
+            .native_billing
+            .is_none()
+            .then(|| pricing::credits_to_usd(config.request_charge_cap)),
+        credits_per_usd: config
+            .native_billing
+            .is_none()
+            .then_some(pricing::CREDITS_PER_USD),
+        billing_asset: if config.native_billing.is_some() {
+            "native_eth"
+        } else {
+            "erc20"
+        },
         state_signing_key: processor.state_signing_key(),
         clearance_signing_key: processor.clearance_signing_key(),
         openrouter_leases_enabled: processor.openrouter_leases_enabled(),
@@ -411,7 +460,9 @@ fn build_error_response(
         ServerError::InvalidProof(_)
         | ServerError::InvalidRequest(_)
         | ServerError::ProtocolMismatch(_) => StatusCode::BAD_REQUEST,
-        ServerError::StaleRoot { .. } => StatusCode::CONFLICT,
+        ServerError::StaleRoot { .. }
+        | ServerError::NativeQuoteExpired
+        | ServerError::NativeQuoteSuperseded => StatusCode::CONFLICT,
         ServerError::Replay | ServerError::NullifierUsed => StatusCode::CONFLICT,
         ServerError::LeasePending | ServerError::LeaseSettlementPending { .. } => {
             StatusCode::CONFLICT

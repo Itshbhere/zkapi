@@ -1,4 +1,6 @@
 import { browserSdkOptions, beginBrowserSdkInitialization, browserSdkTransport } from '../configure.js';
+import { isNativeEthFunding, assertNativeVault, validateNativeFunding, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, sameNativeQuote, requestBillingQuote } from './zkapiNativeEth.mjs';
+import { CHAT_SPENDING_TIER_USD } from './zkapiRequestCompat.mjs';
 import { sameFelt, waitForExpectedActiveRoot } from './zkapiWithdrawalRoot.mjs';
 import { isUnsubmittedParkedMutualWithdrawal } from './zkapiWithdrawalRecovery.mjs';
 import {
@@ -152,7 +154,7 @@ function isExplicitlyRetriableLeaseError(error) {
     // These responses require a new proof or local lost-key reconciliation;
     // repeatedly sending the same lease request cannot resolve either state.
     return explicitlyRetriable
-        && !['stale_root', 'lease_pending', 'lease_settlement_pending'].includes(error?.code);
+        && !['stale_root', 'native_quote_expired', 'native_quote_superseded', 'lease_pending', 'lease_settlement_pending'].includes(error?.code);
 }
 
 function isExplicitlyRetriableLeaseRetirementError(error) {
@@ -315,6 +317,7 @@ class BrowserWalletRuntime extends EventTarget {
         this.validateManifestTrust(this.manifest);
         localStorage.setItem('zkapi-browser-deployment', manifestUrl);
         this.config = this.buildClientConfig(this.manifest, this.browserConfig);
+        if (isNativeEthFunding(this.config.funding)) await assertNativeVault(this.config.funding);
         this.worker = new WorkerBridge();
         // Initialization participates in the same global lock as every later
         // mutation. This prevents two same-origin deployment tabs from both
@@ -395,6 +398,11 @@ class BrowserWalletRuntime extends EventTarget {
             || (manifest.billing_token_address && !/^0x[0-9a-fA-F]{40}$/.test(manifest.billing_token_address))) {
             throw new Error('The deployment manifest contains an invalid contract address.');
         }
+        if (manifest.billing_asset && !['native_eth', 'erc20'].includes(manifest.billing_asset)) throw new Error('Unsupported billing asset.');
+        if (isNativeEthFunding(manifest)) {
+            validateNativeFunding(manifest);
+            if (manifest.billing_token_address != null || manifest.demo_mint_enabled) throw new Error('Native ETH deployments cannot advertise a token or mint.');
+        }
         for (const field of ['protocol_server_url', 'indexer_url']) {
             const url = new URL(manifest[field]);
             if (url.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(url.hostname)) {
@@ -424,7 +432,20 @@ class BrowserWalletRuntime extends EventTarget {
         requireEqual(manifest.deployment_id, trusted.deployment_id, 'deployment id');
         requireEqual(manifest.chain_id, trusted.chain_id, 'chain id', Number);
         requireEqual(manifest.contract_address, trusted.contract_address, 'vault address', lowercase);
-        requireEqual(manifest.billing_token_address, trusted.billing_token_address, 'billing token', lowercase);
+        if (isNativeEthFunding(manifest) || isNativeEthFunding(trusted)) {
+            requireEqual(manifest.billing_asset, trusted.billing_asset, 'billing asset');
+            requireEqual(manifest.billing_unit, trusted.billing_unit, 'billing unit');
+            requireEqual(manifest.native_asset_wei_per_unit, trusted.native_asset_wei_per_unit, 'native asset scale');
+            requireEqual(manifest.native_price_feed_address, trusted.native_price_feed_address, 'ETH price feed', lowercase);
+            requireEqual(manifest.native_price_feed_decimals, trusted.native_price_feed_decimals, 'ETH price decimals', Number);
+            requireEqual(manifest.native_price_max_age_seconds, trusted.native_price_max_age_seconds, 'ETH price freshness', Number);
+            requireEqual(manifest.rpc_url, trusted.rpc_url, 'native asset RPC', normalizedUrl);
+            if (manifest.billing_token_address != null || trusted.billing_token_address != null) {
+                throw new Error('The native ETH deployment cannot advertise a billing token.');
+            }
+        } else {
+            requireEqual(manifest.billing_token_address, trusted.billing_token_address, 'billing token', lowercase);
+        }
         requireEqual(manifest.protocol_server_url, trusted.protocol_server_url, 'protocol server', normalizedUrl);
         requireEqual(manifest.indexer_url, trusted.indexer_url, 'indexer', normalizedUrl);
         requireEqual(manifest.request_charge_cap, trusted.request_charge_cap, 'request charge cap', Number);
@@ -469,12 +490,13 @@ class BrowserWalletRuntime extends EventTarget {
         const requestKey = new URL('request.pk', keyBase).href;
         const withdrawalKey = new URL('withdrawal.pk', keyBase).href;
         const requestCap = Number(manifest.request_charge_cap);
-        const creditsPerUsd = Number(browserConfig.credits_per_usd || 1_000_000);
+        const native = isNativeEthFunding(manifest);
+        const creditsPerUsd = native ? null : Number(browserConfig.credits_per_usd || 1_000_000);
         return {
             ux_proposal: String(browserConfig.ux_proposal || 'quiet'),
             credits_per_usd: creditsPerUsd,
             request_charge_cap: requestCap,
-            request_charge_cap_usd: requestCap / creditsPerUsd,
+            request_charge_cap_usd: native ? null : requestCap / creditsPerUsd,
             policy_charge_cap: Number(manifest.policy_charge_cap || requestCap),
             policy_enabled: Boolean(manifest.policy_enabled),
             upstream_kind: 'openrouter',
@@ -517,8 +539,16 @@ class BrowserWalletRuntime extends EventTarget {
                 suggested_deposit_amount: Number(browserConfig.suggested_deposit_amount || requestCap * 100),
                 demo_rpc_url: manifest.rpc_url || null,
                 demo_billing_token_address: manifest.billing_token_address || null,
-                billing_token_symbol: String(browserConfig.billing_token_symbol || 'TOKEN'),
-                billing_token_decimals: Number(browserConfig.billing_token_decimals || 6),
+                billing_token_symbol: native ? 'ETH' : String(browserConfig.billing_token_symbol || 'TOKEN'),
+                billing_token_decimals: native ? 9 : Number(browserConfig.billing_token_decimals || 6),
+                ...(native ? {
+                    billing_asset: manifest.billing_asset,
+                    billing_unit: manifest.billing_unit,
+                    native_asset_wei_per_unit: manifest.native_asset_wei_per_unit,
+                    native_price_feed_address: manifest.native_price_feed_address,
+                    native_price_feed_decimals: manifest.native_price_feed_decimals,
+                    native_price_max_age_seconds: manifest.native_price_max_age_seconds
+                } : {}),
                 demo_mint_enabled: Boolean(manifest.demo_mint_enabled),
                 demo_note_ttl_seconds: Number(manifest.note_ttl_seconds || 0) || null
             }
@@ -1442,6 +1472,39 @@ class BrowserWalletRuntime extends EventTarget {
         });
     }
 
+    async nativeBillingQuote(signal) {
+        const funding = this.config.funding;
+        const quoted = await this.remoteJson(`${funding.protocol_server_url}/v2/billing/quote`, { signal });
+        validateNativeQuote(quoted, funding);
+        const verified = await readNativeQuote(funding, { expected: quoted, signal });
+        this.ethUsdQuote = verified;
+        return verified;
+    }
+
+    leaseBudget(spendingLimitUsd, quote = null, { checkBalance = false } = {}) {
+        if (!isNativeEthFunding(this.config?.funding)) {
+            return checkBalance ? selectLeaseSpendingLimitCredits(this.runtime.state.current_balance,
+                this.config.request_charge_cap, this.config.credits_per_usd, spendingLimitUsd)
+                : leaseSpendingLimitCredits(spendingLimitUsd, this.config.credits_per_usd);
+        }
+        if (!CHAT_SPENDING_TIER_USD.includes(Number(spendingLimitUsd))) throw new Error('Invalid private-balance model budget configuration.');
+        validateNativeQuote(quote, this.config.funding, { allowExpired: true });
+        const amount = Number(nativeUnitsForUsd(spendingLimitUsd, quote));
+        if (checkBalance) {
+            const balance = Number(this.runtime.state.current_balance);
+            if (!Number.isSafeInteger(balance) || balance < 0) throw new Error('Invalid native ETH wallet balance.');
+            if (amount < Number(this.config.request_charge_cap)) throw new Error('This model budget is below the deployment’s minimum private-chat budget.');
+            if (balance < amount) {
+                const error = new Error(`This model requires at least $${Number(spendingLimitUsd).toFixed(2)} in private balance for a new key. Choose a lower-cap model, or fund a larger balance.`);
+                error.code = 'insufficient_chat_balance';
+                error.required_credits = amount;
+                error.required_balance_usd = Number(spendingLimitUsd);
+                throw error;
+            }
+        }
+        return amount;
+    }
+
     async prepareLeaseRequest(onProgress = () => {}, signal = null, spendingLimitUsd = 1) {
         throwIfAborted(signal);
         if (!this.runtime.state) throw new Error('Fund a private balance before starting a chat.');
@@ -1458,12 +1521,9 @@ class BrowserWalletRuntime extends EventTarget {
         const path = await this.treePath(this.runtime.state.note_id, true);
         throwIfAborted(signal);
         const now = Date.now();
-        const spendingLimitCredits = selectLeaseSpendingLimitCredits(
-            this.runtime.state.current_balance,
-            this.config.request_charge_cap,
-            this.config.credits_per_usd,
-            spendingLimitUsd
-        );
+        const quote = isNativeEthFunding(this.config.funding) ? await this.nativeBillingQuote(signal) : null;
+        throwIfAborted(signal);
+        const spendingLimitCredits = this.leaseBudget(spendingLimitUsd, quote, { checkBalance: true });
         onProgress('proving', 'Proving this chat is funded…');
         const prepared = await this.worker.call('prepareRequest', {
             config: {
@@ -1475,7 +1535,7 @@ class BrowserWalletRuntime extends EventTarget {
             },
             state: this.runtime.state,
             args: {
-                payload: LEASE_AUTHORIZATION,
+                payload: quote ? JSON.stringify({ mode: 'openrouter_ephemeral_lease', version: 1, billing_quote: quote }) : LEASE_AUTHORIZATION,
                 active_root: path.active_root,
                 merkle_siblings: path.siblings,
                 client_request_id: uuid(),
@@ -1489,7 +1549,7 @@ class BrowserWalletRuntime extends EventTarget {
         return prepared.request;
     }
 
-    async verifyLease(lease, expectedLimitCredits, expectedRequestId, onProgress = () => {}, signal = null) {
+    async verifyLease(lease, expectedLimitCredits, expectedRequestId, onProgress = () => {}, signal = null, expectedQuote = null) {
         throwIfAborted(signal);
         if (lease.status !== 'active'
             || lease.client_request_id !== expectedRequestId
@@ -1497,12 +1557,18 @@ class BrowserWalletRuntime extends EventTarget {
             || Number(lease.expires_at) <= Math.floor(Date.now() / 1000)) {
             throw new Error('The zkAPI server returned an unusable OpenRouter lease.');
         }
-        const returnedLimitCredits = Math.round(
-            Number(lease.spending_limit_usd) * this.config.credits_per_usd
-        );
-        if (!Number.isSafeInteger(returnedLimitCredits)
-            || returnedLimitCredits !== Number(expectedLimitCredits)) {
-            throw new Error('The zkAPI server returned a child key with the wrong spending cap.');
+        if (isNativeEthFunding(this.config.funding)) {
+            validateNativeQuote(expectedQuote, this.config.funding, { allowExpired: true });
+            if (!sameNativeQuote(lease.billing_quote, expectedQuote)
+                || Number(lease.spending_limit_usd) !== Number(nativeUsdMicros(expectedLimitCredits, expectedQuote)) / 1_000_000) {
+                throw new Error('The zkAPI server returned a child key with the wrong native ETH spending cap or quote.');
+            }
+        } else {
+            const returnedLimitCredits = Math.round(Number(lease.spending_limit_usd) * this.config.credits_per_usd);
+            if (lease.billing_quote || !Number.isSafeInteger(returnedLimitCredits)
+                || returnedLimitCredits !== Number(expectedLimitCredits)) {
+                throw new Error('The zkAPI server returned a child key with the wrong spending cap.');
+            }
         }
         exactTrustedUrl(lease.openrouter_api_base, this.config.openrouter.inference_base, 'OpenRouter inference origin');
         if (this.config.openrouter.require_oa_key_source && lease.key_source !== 'oa_org') {
@@ -1590,6 +1656,17 @@ class BrowserWalletRuntime extends EventTarget {
         }
     }
 
+    async requestLeaseWithQuoteRecovery(request, onProgress, signal) {
+        try {
+            return await this.requestLeaseWithRetry(request, onProgress, signal);
+        } catch (error) {
+            if (['native_quote_expired', 'native_quote_superseded'].includes(error?.code) && isNativeEthFunding(this.config.funding)) {
+                await this.recoverUnacceptedNativeQuote(request, signal);
+            }
+            throw error;
+        }
+    }
+
     async issueLease(sessionId, onProgress = () => {}, signal = null, spendingLimitUsd = 1) {
         return withBrowserWalletLock(this.manifest.deployment_id, async () => {
             throwIfAborted(signal);
@@ -1608,20 +1685,19 @@ class BrowserWalletRuntime extends EventTarget {
             // spending policy. Finish that byte-identical request safely, but
             // never expose its legacy-cap key to OA Chat. Settle it unused,
             // install the signed receipt, then prove the selected model budget.
-            const desiredLimitCredits = leaseSpendingLimitCredits(
-                spendingLimitUsd, this.config.credits_per_usd
-            );
+            const desiredLimitCredits = this.leaseBudget(spendingLimitUsd, requestBillingQuote(request));
             if (Number(request.public_inputs.solvency_bound) !== desiredLimitCredits) {
                 try {
                     this.legacyMigrationInProgress = true;
                     reportRecovery('settling', 'Updating an unfinished temporary key…');
-                    const legacyLease = await this.requestLeaseWithRetry(request, reportRecovery, signal);
+                    const legacyLease = await this.requestLeaseWithQuoteRecovery(request, reportRecovery, signal);
                     await this.verifyLease(
                         legacyLease,
                         request.public_inputs.solvency_bound,
                         request.client_request_id,
                         reportRecovery,
-                        signal
+                        signal,
+                        requestBillingQuote(request)
                     );
                     // Persist recovery metadata, but deliberately never assign
                     // this legacy-cap key to activeLease. It cannot be returned
@@ -1659,7 +1735,7 @@ class BrowserWalletRuntime extends EventTarget {
             }
             let lease;
             try {
-                lease = await this.requestLeaseWithRetry(request, onProgress, signal);
+                lease = await this.requestLeaseWithQuoteRecovery(request, onProgress, signal);
             } catch (error) {
                 if (error.code === 'stale_root') {
                     await this.commit({ ...this.runtime, journal: null });
@@ -1671,12 +1747,14 @@ class BrowserWalletRuntime extends EventTarget {
                 request.public_inputs.solvency_bound,
                 request.client_request_id,
                 onProgress,
-                signal
+                signal,
+                requestBillingQuote(request)
             );
             throwIfAborted(signal);
             const activeLease = {
                 ...lease,
                 sessionId,
+                selectedSpendingLimitUsd: Number(spendingLimitUsd),
                 inFlight: 0
             };
             await this.commit({
@@ -1780,9 +1858,9 @@ class BrowserWalletRuntime extends EventTarget {
         throwIfAborted(signal);
         const normalized = String(sessionId || 'default').slice(0, 160);
         spendingLimitUsd = Number(spendingLimitUsd);
-        const expectedLimitCredits = leaseSpendingLimitCredits(
-            spendingLimitUsd, this.config.credits_per_usd
-        );
+        const native = isNativeEthFunding(this.config?.funding);
+        if (native && !CHAT_SPENDING_TIER_USD.includes(spendingLimitUsd)) throw new Error('Invalid private-balance model budget configuration.');
+        const expectedLimitCredits = native ? null : leaseSpendingLimitCredits(spendingLimitUsd, this.config.credits_per_usd);
         if (this.leasePromise) {
             return this.waitForLeasePromise(normalized, onProgress, signal, spendingLimitUsd);
         }
@@ -1792,8 +1870,9 @@ class BrowserWalletRuntime extends EventTarget {
         const activeLimitCredits = this.activeLease
             ? Math.round(Number(this.activeLease.spending_limit_usd) * this.config.credits_per_usd)
             : null;
-        const activeLeaseMatchesPolicy = Number.isSafeInteger(activeLimitCredits)
-            && activeLimitCredits === expectedLimitCredits;
+        const activeLeaseMatchesPolicy = native
+            ? this.activeLease?.selectedSpendingLimitUsd === spendingLimitUsd
+            : Number.isSafeInteger(activeLimitCredits) && activeLimitCredits === expectedLimitCredits;
         if (this.activeLease
             && isSafeForNewRequest
             && activeLeaseMatchesPolicy
@@ -2032,6 +2111,13 @@ class BrowserWalletRuntime extends EventTarget {
         onProgress('applying', 'Updating your private balance…');
         const recovery = await this.remoteJson(`${this.config.funding.protocol_server_url}/v2/requests/${encodeURIComponent(clientRequestId)}`);
         if (!recovery.request_response) return false;
+        if (isNativeEthFunding(this.config.funding)) {
+            const quote = requestBillingQuote(this.runtime.journal?.prepared_request);
+            validateNativeQuote(quote, this.config.funding, { allowExpired: true });
+            let payload;
+            try { payload = JSON.parse(recovery.request_response.response_payload); } catch { /* Reject below. */ }
+            if (!sameNativeQuote(payload?.billing_quote, quote)) throw new Error('The settlement receipt changed the authorized ETH/USD quote.');
+        }
         const state = await this.worker.call('completeResponse', {
             config: this.config.wallet_core,
             args: {
@@ -2049,6 +2135,40 @@ class BrowserWalletRuntime extends EventTarget {
             await this.reload();
             return this.recoverPendingLocked(options);
         });
+    }
+
+    async recoverUnacceptedNativeQuote(request, signal = null) {
+        if (!isNativeEthFunding(this.config?.funding)) return false;
+        const journal = this.runtime?.journal;
+        const body = JSON.stringify(request);
+        if (!request?.client_request_id || request.payload_hash == null
+            || request.public_inputs?.request_nullifier == null
+            || !sameFelt(journal?.nullifier, request.public_inputs.request_nullifier)
+            || body !== JSON.stringify(journal?.prepared_request)) return false;
+        validateNativeQuote(requestBillingQuote(request), this.config.funding, { allowExpired: true });
+        // This endpoint only observes quote validity and acceptance under the server's
+        // issuance lock. Neither local time nor an unknown nullifier proves an
+        // older in-flight request can no longer reserve the note.
+        let recovery;
+        try {
+            recovery = await this.remoteJson(`${this.config.funding.protocol_server_url}/v2/openrouter/leases/${encodeURIComponent(request.client_request_id)}/expire`, {
+                method: 'POST', headers: { 'content-type': 'application/json' }, signal, body
+            });
+        } catch (error) {
+            if (error?.code === 'lease_pending') return false;
+            throw error;
+        }
+        if (!['expired_unaccepted', 'superseded_unaccepted'].includes(recovery?.status)) return false;
+        if (recovery.client_request_id !== request.client_request_id
+            || recovery.request_nullifier == null || recovery.payload_hash == null
+            || !sameFelt(recovery.request_nullifier, request.public_inputs.request_nullifier)
+            || !sameFelt(recovery.payload_hash, request.payload_hash)) {
+            throw new Error('The quote recovery response does not match the saved private request.');
+        }
+        if (body !== JSON.stringify(this.runtime?.journal?.prepared_request)
+            || !sameFelt(this.runtime.journal.nullifier, request.public_inputs.request_nullifier)) return false;
+        await this.commit({ ...this.runtime, journal: null, lease: null });
+        return true;
     }
 
     async recoverPendingLocked({ retireLostKey = false, quiet = false, onProgress = () => {}, signal = null } = {}) {
@@ -2076,6 +2196,14 @@ class BrowserWalletRuntime extends EventTarget {
             if (error.status === 404) {
                 const recovery = await this.remoteJson(`${this.config.funding.protocol_server_url}/v2/nullifiers/${encodeURIComponent(this.runtime.journal.nullifier)}`, { signal });
                 if (recovery.request_response) return this.installRecoveredResponse(request.client_request_id, onProgress);
+                if (isNativeEthFunding(this.config.funding) && recovery.status === 'not_found'
+                    && recovery.nullifier_status === 'unknown' && !recovery.request_response) {
+                    try { return await this.recoverUnacceptedNativeQuote(request, signal); }
+                    catch (recoveryError) {
+                        if (!quiet) throw recoveryError;
+                        return false;
+                    }
+                }
                 if (recovery.nullifier_status === 'clearance_reserved') {
                     // Mutual-close preparation owns this deterministic state
                     // nullifier. The lease was never accepted, so discard only

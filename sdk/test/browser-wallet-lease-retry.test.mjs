@@ -965,8 +965,8 @@ test('lease retirement crosses the OA finalization boundary with the exact origi
     assert.deepEqual(JSON.parse(bodies[0]), request);
 });
 
-for (const code of ['lease_pending', 'lease_settlement_pending']) {
-    test(`lease issuance never retries retirement-only ${code}`, async () => {
+for (const code of ['lease_pending', 'lease_settlement_pending', 'native_quote_expired', 'native_quote_superseded']) {
+    test(`lease issuance never retries a proof requiring reconciliation: ${code}`, async () => {
         const runtime = runtimeForLeaseRequests();
         const error = new BrowserWalletHttpError(
             'The previous lease is still settling.',

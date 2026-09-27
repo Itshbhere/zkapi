@@ -1,5 +1,8 @@
 # Deployment
 
+The commands below describe the historical ERC-20 deployment. Native ETH requires
+a fresh vault and matching SDK/server pins; see [Native ETH billing](native-eth-billing.md).
+
 This is the v2 deployment sequence. It deploys the real Groth16 adapter; there
 is no mock adapter or Stwo process in the public path.
 

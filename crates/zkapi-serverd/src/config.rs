@@ -210,6 +210,8 @@ pub struct ServerConfig {
     /// Prompt-private OpenRouter lease mode. `None` disables only this mode;
     /// ordinary provider proxying remains available.
     pub openrouter_leases: Option<OpenRouterLeaseConfig>,
+    /// Native ETH billing is opt-in and requires a separately deployed native vault.
+    pub native_billing: Option<crate::native_billing::NativeBillingConfig>,
     /// Retired v1 compatibility field; v2 always uses Groth16 BN254.
     pub proof_mode: String,
     /// Retired v1 compatibility field; ignored by the v2 processor.
@@ -253,6 +255,7 @@ impl Default for ServerConfig {
             trusted_epoch_roots: Vec::new(),
             metered: None,
             openrouter_leases: None,
+            native_billing: None,
             proof_mode: "groth16_bn254".to_string(),
             cairo_dir: "protocol/cairo".to_string(),
             proof_setup_dir: "protocol/setup/v2".to_string(),

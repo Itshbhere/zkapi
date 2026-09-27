@@ -5,6 +5,16 @@ use thiserror::Error;
 /// Errors that can occur during server-side request processing.
 #[derive(Error, Debug)]
 pub enum ServerError {
+    /// Emitted before a native request nullifier is reserved. Existing bound
+    /// requests retain their quote and never return this during recovery.
+    #[error("native billing quote expired before request acceptance")]
+    NativeQuoteExpired,
+
+    /// A newer finalized oracle round exists before request acceptance.
+    /// Recover this exact request before preparing another proof.
+    #[error("native billing quote superseded before request acceptance")]
+    NativeQuoteSuperseded,
+
     #[error("invalid proof: {0}")]
     InvalidProof(String),
 
@@ -56,6 +66,8 @@ impl ServerError {
     /// Return a machine-readable error code string for the error.
     pub fn error_code(&self) -> &str {
         match self {
+            ServerError::NativeQuoteExpired => "native_quote_expired",
+            ServerError::NativeQuoteSuperseded => "native_quote_superseded",
             ServerError::InvalidProof(_) => "invalid_proof",
             ServerError::StaleRoot { .. } => "stale_root",
             ServerError::Replay => "replay",
@@ -75,6 +87,8 @@ impl ServerError {
     /// Whether the client should retry the request.
     pub fn is_retriable(&self) -> bool {
         match self {
+            ServerError::NativeQuoteExpired => true,
+            ServerError::NativeQuoteSuperseded => false,
             ServerError::StaleRoot { .. } => true,
             ServerError::Internal(_) => true,
             ServerError::Database(_) => true,

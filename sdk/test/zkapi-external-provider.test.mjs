@@ -100,6 +100,31 @@ function recoveryHarness(t, kind = 'deposit') {
         resume: () => c.resumeExternalTransaction({ transaction, hash: HASH, context }) };
 }
 
+test('native deposit reload attaches only the exact saved payable amount and journal', async t => {
+    const h = recoveryHarness(t);
+    h.c.config.funding = { ...funding, demo_billing_token_address: null,
+        billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000',
+        native_price_feed_address: TOKEN, native_price_feed_decimals: 8,
+        native_price_max_age_seconds: 3600, demo_rpc_url: 'https://rpc.example' };
+    h.transaction.value = `0x${(BigInt(h.deposit.amount) * 1_000_000_000n).toString(16)}`;
+    h.actual.value = h.transaction.value;
+    await h.resume();
+    assert.equal(h.remembers.rememberPendingDepositTransaction.mock.calls.length, 1);
+    assert.deepEqual(h.p.acks, [HASH]);
+    h.actual.value = '0x0';
+    await assert.rejects(h.resume(), /does not match/);
+    assert.equal(h.remembers.rememberPendingDepositTransaction.mock.calls.length, 1);
+});
+
+test('native withdrawal reload still rejects any added transaction value', async t => {
+    const h = recoveryHarness(t, 'withdrawal');
+    h.c.config.funding = { ...funding, demo_billing_token_address: null,
+        billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000' };
+    h.transaction.value = h.actual.value = '0x1';
+    await assert.rejects(h.resume(), /does not match/);
+    assert.deepEqual(h.p.acks, []);
+});
+
 test('explicit providers are instance scoped and never change the injected provider', async t => {
     const old = globalThis.ethereum;
     const injected = provider({ eth_call: () => '0x2' });

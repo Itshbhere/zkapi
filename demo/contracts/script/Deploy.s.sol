@@ -54,15 +54,25 @@ contract DeployScript is Script {
         uint256 clearanceKeyX = vm.envUint("CLEARANCE_SIGNING_KEY_X");
         uint256 clearanceKeyY = vm.envUint("CLEARANCE_SIGNING_KEY_Y");
         address billingTokenAddress = vm.envOr("BILLING_TOKEN", address(0));
+        bool nativeEth = vm.envOr("NATIVE_ETH", false);
+        uint256 requestedChargeCap = vm.envOr("REQUEST_CHARGE_CAP", uint256(REQUEST_CHARGE_CAP));
+        require(requestedChargeCap <= type(uint128).max, "request cap overflows ledger");
+        uint128 requestChargeCap = uint128(requestedChargeCap);
+        require(vm.envOr("CHAIN_ID", block.chainid) == block.chainid, "wrong deployment chain");
+        if (nativeEth) require(billingTokenAddress == address(0) && mintAmount == 0, "native ETH cannot configure or mint an ERC20");
         uint64 challengePeriod = uint64(vm.envOr("CHALLENGE_PERIOD_SECONDS", uint256(24 hours)));
         address poseidonLibrary = vm.envOr("POSEIDON_ADDRESS", address(0));
         // Treasury receives the operator's consumed amount on settlement. Keep
         // it separate from the depositor so consumption is visible in the demo.
-        address treasury = vm.envOr("TREASURY", address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8));
+        address treasury = block.chainid == 31337
+            ? vm.envOr("TREASURY", address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8))
+            : vm.envAddress("TREASURY");
 
         vm.startBroadcast(deployerKey);
 
-        if (billingTokenAddress == address(0)) {
+        if (nativeEth) {
+            require(requestChargeCap > 0 && requestChargeCap <= 9_007_199_254_740_991, "invalid native gwei request cap");
+        } else if (billingTokenAddress == address(0)) {
             require(block.chainid != 1, "BILLING_TOKEN is required on Mainnet");
             DemoBillingToken demoToken = new DemoBillingToken();
             billingTokenAddress = address(demoToken);
@@ -80,7 +90,7 @@ contract DeployScript is Script {
             treasury,
             NOTE_TTL,
             challengePeriod,
-            REQUEST_CHARGE_CAP,
+            requestChargeCap,
             address(proofAdapter),
             stateKeyX,
             stateKeyY,
@@ -97,7 +107,10 @@ contract DeployScript is Script {
         vm.serializeAddress(manifest, "proofAdapter", address(proofAdapter));
         vm.serializeAddress(manifest, "poseidonLibrary", poseidonLibrary);
         vm.serializeAddress(manifest, "treasury", treasury);
-        vm.serializeUint(manifest, "requestChargeCap", REQUEST_CHARGE_CAP);
+        vm.serializeUint(manifest, "requestChargeCap", requestChargeCap);
+        vm.serializeString(manifest, "billing_asset", nativeEth ? "native_eth" : "erc20");
+        vm.serializeString(manifest, "billing_unit", nativeEth ? "gwei" : "token_base_unit");
+        vm.serializeUint(manifest, "nativeAssetWeiPerUnit", vault.nativeAssetWeiPerUnit());
         vm.serializeUint(manifest, "challengePeriod", challengePeriod);
         vm.serializeUint(manifest, "stateSigningKeyX", stateKeyX);
         vm.serializeUint(manifest, "stateSigningKeyY", stateKeyY);

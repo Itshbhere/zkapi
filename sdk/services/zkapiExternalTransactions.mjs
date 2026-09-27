@@ -29,7 +29,7 @@ export function externalTransactionNonce(value) {
     return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : null;
 }
 
-export function assertExternalTransaction(actual, expected, hash, chainId) {
+export function assertExternalTransaction(actual, expected, hash, chainId, expectedValue = 0n) {
     const nonce = externalTransactionNonce(expected?.nonce);
     if (!/^0x[0-9a-f]{64}$/i.test(hash || '') || !actual
         || String(actual.hash || '').toLowerCase() !== hash.toLowerCase()
@@ -38,7 +38,8 @@ export function assertExternalTransaction(actual, expected, hash, chainId) {
         || !/^0x(?:[0-9a-f]{2})+$/i.test(expected?.data || '')
         || String(actual.input ?? actual.data ?? '').toLowerCase() !== expected.data.toLowerCase()
         || nonce == null || externalTransactionNonce(actual.nonce) !== nonce
-        || BigInt(actual.value ?? '0x0') !== 0n || BigInt(expected.value ?? '0x0') !== 0n
+        || BigInt(actual.value ?? '0x0') !== BigInt(expectedValue)
+        || BigInt(expected.value ?? '0x0') !== BigInt(expectedValue)
         || (actual.chainId != null && BigInt(actual.chainId) !== BigInt(chainId))
         || (expected.chainId != null && BigInt(expected.chainId) !== BigInt(chainId))) {
         throw new Error('The external transaction does not match the saved wallet request.');

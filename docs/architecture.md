@@ -41,7 +41,7 @@ It exposes the current root, next note ID, and paths. A future privacy hardening
 should make full snapshots the normal client path so a third-party indexer does
 not learn which note ID a client queried.
 
-`ZkApiVault` escrows the billing token, maintains the active root, and handles
+`ZkApiVault` escrows the configured billing token or native ETH in a separate native deployment, maintains the active root, and handles
 mutual close, challengeable escape close, and expiry claims. Its proof adapter
 and state/clearance public keys are immutable. The real adapter verifies the
 same Groth16 statements checked off-chain.
@@ -61,3 +61,7 @@ ecosystems. The private client-to-server protocol is versioned independently
 and uses `/v2/*` routes.
 
 See [deployment.md](deployment.md) for operations.
+
+Native browser deployments use gwei ledger units and a proof-bound, frozen per-lease
+ETH/USD quote. See [Native ETH billing](native-eth-billing.md) for conversion,
+recovery, deployment pins and the explicit legacy/native boundaries.

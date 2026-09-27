@@ -1,4 +1,5 @@
 import walletCodec from '../wallet.js';
+import { isNativeEthFunding, assertNativeVault, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, nativeDepositValue, parseUnits, formatUnits } from './zkapiNativeEth.mjs';
 import { browserSdkOptions, beginBrowserSdkInitialization } from '../configure.js';
 import browserWalletRuntime from './browserWalletRuntime.js';
 import { contractEstimateError, contractRevertSelector } from './zkapiContractError.mjs';
@@ -625,6 +626,10 @@ class ZkapiClient extends EventTarget {
                 this.deposits = [];
             }
             this.lastError = null;
+            if (this.isNativeEthFunding && (!this.ethUsdCheckedAt || Date.now() - this.ethUsdCheckedAt > 60_000)) {
+                this.ethUsdCheckedAt = Date.now();
+                void this.refreshEthUsdPrice().catch(() => {});
+            }
 
             const prepared = this.config?.prepared_withdrawal;
             if (prepared) {
@@ -669,7 +674,45 @@ class ZkapiClient extends EventTarget {
         return this.snapshot();
     }
 
+    get isNativeEthFunding() {
+        return isNativeEthFunding(this.config?.funding);
+    }
+
+    get nativePriceQuote() {
+        for (const quote of [this.ethUsdQuote, browserWalletRuntime.ethUsdQuote]) {
+            try { return validateNativeQuote(quote, this.config?.funding); }
+            catch { /* Only a current quote from this deployment may value ETH. */ }
+        }
+        return null;
+    }
+
+    async refreshEthUsdPrice({ signal } = {}) {
+        if (!this.isNativeEthFunding) throw new Error('This deployment does not accept native ETH.');
+        const funding = this.config.funding;
+        const quote = await readNativeQuote(funding, { signal });
+        if (funding !== this.config.funding && funding.contract_address !== this.config.funding.contract_address) {
+            throw new Error('The payment deployment changed while checking the ETH price.');
+        }
+        this.ethUsdQuote = quote;
+        this.ethUsdCheckedAt = Date.now();
+        this.emitChange('price');
+        return quote;
+    }
+
+    async quoteDepositUsd(usd, { signal } = {}) {
+        const price = await this.refreshEthUsdPrice({ signal });
+        const amount = nativeUnitsForUsd(usd, price);
+        return Object.freeze({ amount: String(amount), ethAmount: formatUnits(amount, 9),
+            depositWei: String(nativeDepositValue(amount, this.config.funding)),
+            usdAmount: formatUnits(parseUnits(usd, 6), 6), priceUpdatedAt: price.updated_at,
+            price, chainId: this.config.funding.chain_id, contractAddress: this.config.funding.contract_address });
+    }
+
     get creditsPerUsd() {
+        if (this.isNativeEthFunding) {
+            const quote = this.nativePriceQuote;
+            return quote ? 1e9 * (10 ** quote.decimals) / Number(quote.answer) : Number.NaN;
+        }
         return Number(this.config?.credits_per_usd || 1_000_000);
     }
 
@@ -838,7 +881,7 @@ class ZkapiClient extends EventTarget {
     }
 
     get suggestedDeposit() {
-        return Number(this.config?.funding?.suggested_deposit_amount || 2_000_000) / this.creditsPerUsd;
+        return this.isNativeEthFunding ? 5 : Number(this.config?.funding?.suggested_deposit_amount || 2_000_000) / this.creditsPerUsd;
     }
 
     get billingTokenSymbol() {
@@ -895,7 +938,10 @@ class ZkapiClient extends EventTarget {
 
     formatMoney(credits) {
         if (credits == null) return '—';
-        const value = Number(credits) / this.creditsPerUsd;
+        if (this.isNativeEthFunding && !this.nativePriceQuote) return '—';
+        const value = this.isNativeEthFunding
+            ? Number(nativeUsdMicros(credits, this.nativePriceQuote)) / 1_000_000
+            : Number(credits) / this.creditsPerUsd;
         const digits = value > 0 && value < 0.01 ? 6 : 2;
         return new Intl.NumberFormat(undefined, {
             style: 'currency',
@@ -906,7 +952,7 @@ class ZkapiClient extends EventTarget {
     }
 
     formatBillingAmount(credits) {
-        return formatTokenAmount(BigInt(credits || 0));
+        return this.isNativeEthFunding ? formatUnits(credits || 0, 9) : formatTokenAmount(BigInt(credits || 0));
     }
 
     formatExpiry(timestamp) {
@@ -1186,7 +1232,9 @@ class ZkapiClient extends EventTarget {
         }
         await this.assertFundingChain();
         const actual = await this.ethereum.request({ method: 'eth_getTransactionByHash', params: [hash] });
-        const metadata = assertExternalTransaction(actual, transaction, hash, funding.chain_id);
+        const expectedValue = context.kind === 'deposit'
+            ? nativeDepositValue(context.amount, funding) : 0n;
+        const metadata = assertExternalTransaction(actual, transaction, hash, funding.chain_id, expectedValue);
         await this.assertFundingChain();
 
         if (context.kind === 'token') {
@@ -1317,7 +1365,8 @@ class ZkapiClient extends EventTarget {
         onSubmitted = null,
         onPrepared = null,
         preparedNonce = null,
-        externalRecovery = null
+        externalRecovery = null,
+        value = 0n
     ) {
         const normalizedPreparedNonce = preparedNonce == null
             ? null
@@ -1335,6 +1384,7 @@ class ZkapiClient extends EventTarget {
             from,
             to,
             data,
+            ...(BigInt(value) === 0n ? {} : { value: `0x${BigInt(value).toString(16)}` }),
             ...(normalizedPreparedNonce == null
                 ? {}
                 : { nonce: `0x${normalizedPreparedNonce.toString(16)}` })
@@ -1705,7 +1755,7 @@ class ZkapiClient extends EventTarget {
         await browserWalletRuntime.authorizePendingDepositRetry();
         await this.refresh({ quiet: true });
         onStatus('Retry authorized. Opening the same deposit in MetaMask…');
-        return this.deposit(formatTokenAmount(BigInt(pending.amount)), onStatus);
+        return this.deposit(this.formatBillingAmount(pending.amount), onStatus);
     }
 
     async retryDroppedDeposit(onStatus = () => {}) {
@@ -1749,7 +1799,8 @@ class ZkapiClient extends EventTarget {
                     );
                 },
                 submission.replacementNonce,
-                { kind: 'deposit', submission }
+                { kind: 'deposit', submission },
+                nativeDepositValue(plan.amount, this.config.funding)
             );
         } catch (error) {
             if (error?.transactionHash) {
@@ -1805,13 +1856,14 @@ class ZkapiClient extends EventTarget {
     async performDeposit(amountInput, onStatus = () => {}) {
         if (this.hasNote) throw new Error('This client already has an active private note.');
         const funding = this.config?.funding;
-        if (!funding?.demo_billing_token_address || !funding.contract_address) {
-            throw new Error('This deployment does not advertise an ERC-20 billing token.');
+        if (!funding?.contract_address || (!this.isNativeEthFunding && !funding.demo_billing_token_address)) {
+            throw new Error('This deployment does not advertise a supported funding asset.');
         }
 
+        if (this.isNativeEthFunding) await assertNativeVault(funding);
         onStatus('Connecting to MetaMask…');
         const address = await this.connectWallet();
-        const amount = parseTokenAmount(amountInput);
+        const amount = this.isNativeEthFunding ? parseUnits(amountInput, 9) : parseTokenAmount(amountInput);
         if (amount <= 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
             throw new Error('Choose a smaller positive deposit amount.');
         }
@@ -1838,28 +1890,34 @@ class ZkapiClient extends EventTarget {
                 throw new Error('MetaMask did not return a deposit transaction ID. Check its status before explicitly retrying the same deposit.');
             }
         }
-        let tokenBalance = await this.readContractUint(
-            tokenAddress,
-            callData(ABI.balanceOf, [addressWord(address)])
-        );
+        if (this.isNativeEthFunding) {
+            const balance = BigInt(await this.ethereum.request({ method: 'eth_getBalance', params: [address, 'latest'] }));
+            if (balance < nativeDepositValue(amount, funding)) throw new Error('Your wallet needs more ETH for this deposit and its network fee.');
+        } else {
+            let tokenBalance = await this.readContractUint(
+                tokenAddress,
+                callData(ABI.balanceOf, [addressWord(address)])
+            );
 
-        if (tokenBalance < amount) {
-            if (!funding.demo_mint_enabled) {
-                throw new Error(`Your wallet has ${formatTokenAmount(tokenBalance)} ${this.billingTokenSymbol}; this deposit needs ${formatTokenAmount(amount)} ${this.billingTokenSymbol}.`);
+            if (tokenBalance < amount) {
+                if (!funding.demo_mint_enabled) {
+                    throw new Error(`Your wallet has ${formatTokenAmount(tokenBalance)} ${this.billingTokenSymbol}; this deposit needs ${formatTokenAmount(amount)} ${this.billingTokenSymbol}.`);
+                }
+                onStatus('Minting free test billing tokens… confirm in MetaMask.');
+                const mintReceipt = await this.sendContractTransaction(
+                    address,
+                    tokenAddress,
+                    callData(ABI.mint, [addressWord(address), abiWord(amount - tokenBalance)])
+                );
+                onStatus('Test tokens minted. Checking the confirmed balance…');
+                tokenBalance = await this.readContractUintAtReceipt(
+                    tokenAddress,
+                    callData(ABI.balanceOf, [addressWord(address)]),
+                    mintReceipt,
+                    amount
+                );
             }
-            onStatus('Minting free test billing tokens… confirm in MetaMask.');
-            const mintReceipt = await this.sendContractTransaction(
-                address,
-                tokenAddress,
-                callData(ABI.mint, [addressWord(address), abiWord(amount - tokenBalance)])
-            );
-            onStatus('Test tokens minted. Checking the confirmed balance…');
-            tokenBalance = await this.readContractUintAtReceipt(
-                tokenAddress,
-                callData(ABI.balanceOf, [addressWord(address)]),
-                mintReceipt,
-                amount
-            );
+
         }
 
         onStatus('Generating the private note commitment locally…');
@@ -1870,25 +1928,28 @@ class ZkapiClient extends EventTarget {
                 body: JSON.stringify({ amount: Number(amount) })
             });
 
-        const allowance = await this.readContractUint(
-            tokenAddress,
-            callData(ABI.allowance, [addressWord(address), addressWord(vaultAddress)])
-        );
-        if (allowance < amount) {
-            if (allowance > 0n) {
-                onStatus('Resetting the existing token allowance… confirm in MetaMask.');
+        if (!this.isNativeEthFunding) {
+            const allowance = await this.readContractUint(
+                tokenAddress,
+                callData(ABI.allowance, [addressWord(address), addressWord(vaultAddress)])
+            );
+            if (allowance < amount) {
+                if (allowance > 0n) {
+                    onStatus('Resetting the existing token allowance… confirm in MetaMask.');
+                    await this.sendContractTransaction(
+                        address,
+                        tokenAddress,
+                        callData(ABI.approve, [addressWord(vaultAddress), abiWord(0n)])
+                    );
+                }
+                onStatus(`Approving ${this.billingTokenSymbol}… confirm in MetaMask.`);
                 await this.sendContractTransaction(
                     address,
                     tokenAddress,
-                    callData(ABI.approve, [addressWord(vaultAddress), abiWord(0n)])
+                    callData(ABI.approve, [addressWord(vaultAddress), abiWord(amount)])
                 );
             }
-            onStatus(`Approving ${this.billingTokenSymbol}… confirm in MetaMask.`);
-            await this.sendContractTransaction(
-                address,
-                tokenAddress,
-                callData(ABI.approve, [addressWord(vaultAddress), abiWord(amount)])
-            );
+
         }
 
         let receipt;
@@ -1943,7 +2004,8 @@ class ZkapiClient extends EventTarget {
                         }
                         : null,
                     null,
-                    { kind: 'deposit', submission }
+                    { kind: 'deposit', submission },
+                    nativeDepositValue(amount, funding)
                 );
                 break;
             } catch (error) {

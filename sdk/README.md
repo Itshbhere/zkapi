@@ -158,3 +158,58 @@ This does not alter mainnet token funding, deposit/withdrawal proof validation,
 allowance handling, or the durable transaction recovery journal. The regression
 suite exercises the real deposit path with stale provider reads and asserts
 that only one mint and one vault deposit are submitted.
+
+## Native ETH deployments
+
+Native ETH requires a separate, trusted native vault and billing-server
+deployment. Existing token manifests continue using their original token; no
+old note, transaction journal, or token balance is reinterpreted as ETH.
+Native manifests pin `billing_asset: "native_eth"`, `billing_unit: "gwei"`,
+`native_asset_wei_per_unit: "1000000000"`, a null `billing_token_address`,
+`rpc_url`, `native_price_feed_address`, `native_price_feed_decimals: 8`, and
+`native_price_max_age_seconds`. The browser config must pin the same values.
+Protocol amounts are whole gwei, bounded by JavaScript's safe-integer range.
+The payable deposit ABI is unchanged; `msg.value` must equal the exact ledger
+amount multiplied by one billion wei. Minting and ERC-20 approval are skipped.
+Withdrawals and all other protected calls retain zero transaction value.
+
+`client.isNativeEthFunding` identifies native deployments.
+`await client.quoteDepositUsd("10")` makes credential-free reads of the pinned
+Chainlink feed at a finalized block, without connecting a wallet, preparing a
+note, or signing. The finalized reference price can lag the latest block; the
+quote exposes the feed's actual update time. Native deployment freshness pins
+include the feed heartbeat plus a finality allowance (4,500 seconds for the
+reviewed one-hour ETH/USD feeds), and any longer delay fails closed.
+It returns `{ amount, ethAmount, depositWei, usdAmount, priceUpdatedAt, price,
+chainId, contractAddress }`. Amount and wei fields are exact decimal strings;
+`priceUpdatedAt` is Unix seconds. Persist this quote with the host's deposit
+intent. The ETH principal remains fixed while a user funds the address; a
+fresh quote must never silently change it. Fees are separate: the host's
+signer quotes its capped transaction reserve, polls receipt of funds, and
+requires an explicit Next action before calling
+`client.deposit(quote.ethAmount, onStatus)`. Native deposits accept up to nine
+ETH decimal places. Recovery validates the exact saved calldata and payable
+value, and keeps the same journal rules as token deposits.
+
+`client.formatBillingAmount(units)` returns decimal ETH on native deployments;
+`client.formatMoney(units)` uses the current verified quote, returning `—`
+when none is fresh. Normal wallet refreshes attempt a public price refresh at
+most once per minute; `refreshEthUsdPrice({ signal })` explicitly refreshes it.
+`creditsPerUsd` is only a display conversion on native deployments, may be
+fractional, and is `NaN` without a fresh quote. It is not an integer billing
+scale and must not be used to construct a payment or proof.
+
+For inference, the server's public `/v2/billing/quote` is checked against the
+pinned feed's exact round in finalized chain state. New issuance accepts only
+the latest finalized round. The complete quote is bound into the
+prompt-free authorization payload before generating its proof. Fixed USD
+model tiers round upward to whole gwei; the provider's USD limit rounds down
+to microdollars. The saved request, issued key, and settlement all retain that
+same quote, even if ETH's price subsequently changes. A quote that expires or
+is superseded before acceptance can be discarded only after the read-only
+`POST /v2/openrouter/leases/{id}/expire` endpoint confirms that exact saved
+request expired or was superseded without acceptance under the server’s
+issuance lock. The response must match the saved request ID, nullifier, and
+payload hash. Local wall-clock expiry, a changed market price, or a missing
+nullifier alone never clears a proof. Wallet balances continue to display their
+current USD value independently of a running key's frozen conversion.

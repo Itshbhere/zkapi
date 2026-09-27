@@ -193,6 +193,15 @@ enum Commands {
         openrouter_settlement_grace_seconds: u64,
         #[arg(long, default_value_t = 2)]
         openrouter_settlement_poll_seconds: u64,
+        /// Opt into native ETH gwei billing with a pinned oracle RPC.
+        #[arg(long, requires = "native_price_feed_address")]
+        native_billing_rpc_url: Option<String>,
+        #[arg(long, requires = "native_billing_rpc_url")]
+        native_price_feed_address: Option<String>,
+        #[arg(long, default_value_t = 8)]
+        native_price_feed_decimals: u8,
+        #[arg(long, default_value_t = 3600)]
+        native_price_max_age_seconds: u64,
         #[arg(long, default_value = "zkapi-server.db")]
         db_path: String,
         /// State-signing secret seed. Falls back to ZKAPI_STATE_SEED, then 0x1.
@@ -415,6 +424,10 @@ async fn main() -> anyhow::Result<()> {
             openrouter_lease_ttl_seconds,
             openrouter_settlement_grace_seconds,
             openrouter_settlement_poll_seconds,
+            native_billing_rpc_url,
+            native_price_feed_address,
+            native_price_feed_decimals,
+            native_price_max_age_seconds,
             db_path,
             state_seed,
             clear_seed,
@@ -481,6 +494,18 @@ async fn main() -> anyhow::Result<()> {
                 settlement_grace_seconds: openrouter_settlement_grace_seconds,
                 settlement_poll_seconds: openrouter_settlement_poll_seconds,
             });
+            let native_billing = match (native_billing_rpc_url, native_price_feed_address) {
+                (Some(rpc_url), Some(feed_address)) => {
+                    Some(zkapi_serverd::native_billing::NativeBillingConfig {
+                        rpc_url,
+                        feed_address: feed_address.to_lowercase(),
+                        decimals: native_price_feed_decimals,
+                        max_age_seconds: native_price_max_age_seconds,
+                    })
+                }
+                (None, None) => None,
+                _ => anyhow::bail!("native ETH requires both oracle RPC and pinned feed address"),
+            };
             let config = ServerConfig {
                 protocol_version: cli.protocol_version,
                 chain_id: cli.chain_id,
@@ -508,6 +533,7 @@ async fn main() -> anyhow::Result<()> {
                 trusted_epoch_roots: load_trusted_epoch_roots(cli.trusted_epoch_roots.as_deref())?,
                 metered,
                 openrouter_leases,
+                native_billing,
                 proof_setup_dir: cli.proof_setup_dir.clone(),
                 ..Default::default()
             };
@@ -2162,6 +2188,40 @@ mod tests {
             Commands::Serverd {
                 openrouter_management_key: Some(_),
                 openrouter_lease_ttl_seconds: 120,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn native_server_flags_require_both_rpc_and_feed() {
+        assert!(Cli::try_parse_from([
+            "zkapi",
+            "serverd",
+            "--native-billing-rpc-url",
+            "https://rpc.example"
+        ])
+        .is_err());
+        assert!(
+            Cli::try_parse_from(["zkapi", "serverd", "--native-price-feed-address", "0x1234"])
+                .is_err()
+        );
+        let cli = Cli::try_parse_from([
+            "zkapi",
+            "serverd",
+            "--native-billing-rpc-url",
+            "https://rpc.example",
+            "--native-price-feed-address",
+            "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Serverd {
+                native_billing_rpc_url: Some(_),
+                native_price_feed_address: Some(_),
+                native_price_feed_decimals: 8,
+                native_price_max_age_seconds: 3600,
                 ..
             }
         ));

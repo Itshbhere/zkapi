@@ -7,6 +7,7 @@ pub mod config;
 pub mod dashboard;
 pub mod error;
 pub mod metered_provider;
+pub mod native_billing;
 pub mod nullifier_store;
 pub mod oa_org;
 pub mod openrouter;
