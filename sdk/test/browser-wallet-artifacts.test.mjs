@@ -117,15 +117,15 @@ test('static proving keys match the note-bound development setup hashes', () => 
     );
 });
 
-test('browser config pins the fresh note-bound Sepolia deployment', () => {
+test('browser config pins the fresh native ETH note-bound Sepolia deployment', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/sepolia.json'), 'utf8'));
-    assert.equal(config.deployment_manifest_url, 'https://d24dltwirql2l5.cloudfront.net/config.json');
+    assert.equal(config.deployment_manifest_url, 'https://dptoa4nnlue6m.cloudfront.net/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);
     assert.equal(config.trusted_deployment.chain_id, 11155111);
-    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-sepolia-note-bound-20260922');
-    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x94b4e26b292db9a57a4b410e5b45b12ea14cbc1c');
-    assert.equal(config.trusted_deployment.billing_token_address.toLowerCase(), '0x046ba3224cb9c20e997456c4262f9376920283bc');
-    assert.equal(config.trusted_deployment.protocol_server_url, 'https://d24dltwirql2l5.cloudfront.net');
+    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-native-eth-sepolia-note-bound-v1-20260927');
+    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0xced1620189261dbedf8fb0860e33179642d39076');
+    assert.equal(config.trusted_deployment.billing_token_address, null);
+    assert.equal(config.trusted_deployment.protocol_server_url, 'https://dptoa4nnlue6m.cloudfront.net');
     assert.equal(config.trusted_deployment.indexer_url, config.trusted_deployment.protocol_server_url);
     assert.equal(config.trusted_deployment.circuit_id, 'zkapi-v2-note-bound-v1');
     assert.equal(config.deployment_status, undefined);
@@ -133,18 +133,29 @@ test('browser config pins the fresh note-bound Sepolia deployment', () => {
     assert.equal(config.trusted_deployment.withdrawal_proving_key_sha256, sha256(path.join(root, 'assets/proofs/withdrawal.pk')));
     assert.equal(config.proving_keys_base_url, './proofs/');
     assert.equal(config.deployment_api_proxy_path, '/zkapi-deployment/');
-    assert.equal(config.billing_token_symbol, 'ZKAPI');
-    assert.equal(config.billing_token_decimals, 6);
+    assert.equal(config.trusted_deployment.billing_asset, 'native_eth');
+    assert.equal(config.trusted_deployment.billing_unit, 'gwei');
+    assert.equal(config.trusted_deployment.native_asset_wei_per_unit, '1000000000');
+    assert.equal(config.trusted_deployment.rpc_url, 'https://ethereum-sepolia-rpc.publicnode.com');
+    assert.equal(config.trusted_deployment.native_price_feed_address.toLowerCase(), '0x694aa1769357215de4fac081bf1f309adc325306');
+    assert.equal(config.trusted_deployment.native_price_feed_decimals, 8);
+    assert.equal(config.trusted_deployment.native_price_max_age_seconds, 4500);
+    assert.equal(config.credits_per_usd, null);
+    assert.equal(config.suggested_deposit_amount, undefined);
+    assert.equal(config.billing_token_symbol, 'ETH');
+    assert.equal(config.billing_token_decimals, 9);
     assert.equal(config.require_oa_key_source, true);
     assert.equal(config.openrouter_requests_per_key, undefined);
 });
 
-test('mainnet browser config retains USDC and requires the new circuit', () => {
+test('mainnet browser config retains legacy pins behind the migration guard', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/mainnet.json'), 'utf8'));
     assert.equal(config.deployment_manifest_url, 'https://d27v1dvkaxfc09.cloudfront.net/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);
     assert.equal(config.trusted_deployment.deployment_id, 'zkapi-ef-mainnet-groth16-v2-20260812');
     assert.equal(config.trusted_deployment.chain_id, 1);
+    assert.equal(config.deployment_status, 'migration_required');
+    assert.equal(config.trusted_deployment.circuit_id, 'zkapi-v2-note-bound-v1');
     assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0xef88012d1a7f9d44e5f5afb8bc5e611dc3283709');
     assert.equal(config.trusted_deployment.billing_token_address.toLowerCase(), '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
     assert.equal(config.trusted_deployment.protocol_server_url, 'https://d27v1dvkaxfc09.cloudfront.net');

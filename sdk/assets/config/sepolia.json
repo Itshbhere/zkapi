@@ -1,35 +1,41 @@
 {
-  "deployment_manifest_url": "https://d24dltwirql2l5.cloudfront.net/config.json",
+  "deployment_manifest_url": "https://dptoa4nnlue6m.cloudfront.net/config.json",
   "allowed_deployment_manifest_urls": [
-    "https://d24dltwirql2l5.cloudfront.net/config.json"
+    "https://dptoa4nnlue6m.cloudfront.net/config.json"
   ],
   "deployment_api_proxy_path": "/zkapi-deployment/",
   "trusted_deployment": {
-    "deployment_id": "zkapi-sepolia-note-bound-20260922",
+    "deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-20260927",
     "chain_id": 11155111,
-    "contract_address": "0x94b4E26b292dB9A57A4B410E5b45B12eA14cbc1C",
-    "billing_token_address": "0x046BA3224cb9C20e997456c4262f9376920283bC",
-    "protocol_server_url": "https://d24dltwirql2l5.cloudfront.net",
-    "indexer_url": "https://d24dltwirql2l5.cloudfront.net",
+    "contract_address": "0xcEd1620189261DbeDf8fb0860E33179642D39076",
+    "billing_token_address": null,
+    "protocol_server_url": "https://dptoa4nnlue6m.cloudfront.net",
+    "indexer_url": "https://dptoa4nnlue6m.cloudfront.net",
     "request_charge_cap": 50000,
     "state_signing_key": {
-      "x": "0x12f7ba57082693eb7e8bb7640401f21f734eaa49d3b41c6bb00f566131cf1ec7",
-      "y": "0xeb33de8964a9240988211c35bc45e35c02b4b9ee59031848510e7b380509f6"
+      "x": "0x31ad956bae3844a92eddc2c051dd3b6467e14eebfda437f9d63b25384338f66",
+      "y": "0x1fa95e4abdc0f39595a8597020d26181216524c427734495ae51b99f1fa58baa"
     },
     "clearance_signing_key": {
-      "x": "0x3022342a95484eceb8afd4c5e64562a84707cbe7a61230f7d103259a28cf270d",
-      "y": "0x13da632f7f33876a8ed51118cd91ce96e48b83107f7638195f675a39024c3b08"
+      "x": "0xedfa6fa4405bab7020619c0e7187a8dd92e79539a327d4f5942d216a0c36a14",
+      "y": "0x2a05ee9051ed67b28148bb978470e8bf6cda9f3e6101ecefbf93951ba93aebb5"
     },
     "request_proving_key_sha256": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
     "withdrawal_proving_key_sha256": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
     "openrouter_inference_base": "https://openrouter.ai/api/v1",
     "verifier_url": "https://verifier2.openanonymity.ai",
-    "circuit_id": "zkapi-v2-note-bound-v1"
+    "circuit_id": "zkapi-v2-note-bound-v1",
+    "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
+    "billing_asset": "native_eth",
+    "billing_unit": "gwei",
+    "native_asset_wei_per_unit": "1000000000",
+    "native_price_feed_address": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    "native_price_feed_decimals": 8,
+    "native_price_max_age_seconds": 4500
   },
   "proving_keys_base_url": "./proofs/",
-  "credits_per_usd": 1000000,
-  "suggested_deposit_amount": 5000000,
-  "billing_token_symbol": "ZKAPI",
-  "billing_token_decimals": 6,
+  "credits_per_usd": null,
+  "billing_token_symbol": "ETH",
+  "billing_token_decimals": 9,
   "require_oa_key_source": true
 }

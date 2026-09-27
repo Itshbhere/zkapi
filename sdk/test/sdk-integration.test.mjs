@@ -101,6 +101,13 @@ test('packaged proof assets and host-built worker are independent of source subm
             assert.equal(result.configUrl, '/chat/zkapi/browser-config.json');
             assert.equal(result.workerUrl, '/chat/zkapi/assets/zkapiWasmWorker.js');
             assert.equal(result.config.trusted_deployment.chain_id, network === 'mainnet' ? 1 : 11155111);
+            if (network === 'sepolia') {
+                assert.equal(result.config.trusted_deployment.billing_asset, 'native_eth');
+                assert.equal(result.config.billing_token_symbol, 'ETH');
+                assert.equal(result.config.credits_per_usd, null);
+            } else {
+                assert.equal(result.config.deployment_status, 'migration_required');
+            }
             assert.equal(result.files['proofs/request.pk'], pinned.files['assets/proofs/request.pk']);
             assert.equal(result.files['wasm/zkapi_browser_bg.wasm'], pinned.files['wasm/zkapi_browser_bg.wasm']);
             const worker = await fs.readFile(path.join(result.directory, 'assets/zkapiWasmWorker.js'), 'utf8');

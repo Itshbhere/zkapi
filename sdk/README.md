@@ -161,6 +161,11 @@ that only one mint and one vault deposit are submitted.
 
 ## Native ETH deployments
 
+The bundled Sepolia configuration pins the September 27 native ETH deployment
+with the `zkapi-v2-note-bound-v1` circuit. The Mainnet configuration remains
+behind `deployment_status: "migration_required"` until a compatible deployment
+is separately reviewed and pinned.
+
 Native ETH requires a separate, trusted native vault and billing-server
 deployment. Existing token manifests continue using their original token; no
 old note, transaction journal, or token balance is reinterpreted as ETH.
