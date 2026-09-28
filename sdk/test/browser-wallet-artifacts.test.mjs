@@ -148,24 +148,45 @@ test('browser config pins the fresh native ETH note-bound Sepolia deployment', (
     assert.equal(config.openrouter_requests_per_key, undefined);
 });
 
-test('mainnet browser config retains legacy pins behind the migration guard', () => {
+test('mainnet browser config pins the finalized native ETH note-bound deployment', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/mainnet.json'), 'utf8'));
-    assert.equal(config.deployment_manifest_url, 'https://d27v1dvkaxfc09.cloudfront.net/config.json');
+    assert.equal(config.deployment_manifest_url, 'https://d3hmaz52qw22t.cloudfront.net/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);
-    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-ef-mainnet-groth16-v2-20260812');
+    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-native-eth-mainnet-note-bound-v1-20260928');
     assert.equal(config.trusted_deployment.chain_id, 1);
-    assert.equal(config.deployment_status, 'migration_required');
+    assert.equal(config.deployment_status, undefined);
     assert.equal(config.trusted_deployment.circuit_id, 'zkapi-v2-note-bound-v1');
-    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0xef88012d1a7f9d44e5f5afb8bc5e611dc3283709');
-    assert.equal(config.trusted_deployment.billing_token_address.toLowerCase(), '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
-    assert.equal(config.trusted_deployment.protocol_server_url, 'https://d27v1dvkaxfc09.cloudfront.net');
-    assert.equal(config.trusted_deployment.indexer_url, 'https://d27v1dvkaxfc09.cloudfront.net');
+    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x9e5570ae0f1fcb087c2dd0eac521ac067a6b6f42');
+    assert.equal(config.trusted_deployment.protocol_server_url, 'https://d3hmaz52qw22t.cloudfront.net');
+    assert.equal(config.trusted_deployment.indexer_url, config.trusted_deployment.protocol_server_url);
+    assert.deepEqual(config.trusted_deployment.state_signing_key, {
+        x: '0xa27b9251afdb9a3e8518474f999863b65789d557732fef891652589c7dacd61',
+        y: '0x11386a1d93bcf3664d50e1f9a6303e0096353b89a26be46a6d846fabb6fda23b'
+    });
+    assert.deepEqual(config.trusted_deployment.clearance_signing_key, {
+        x: '0x1141c1750b410037229a4a0cbc17603826018416eb4ed39d8629f8eea6dd485',
+        y: '0x25417156c0a965c5d1af5db42e4b518b49b17a0e42dfaf43c6cb84da1eabf014'
+    });
     assert.equal(config.trusted_deployment.request_proving_key_sha256, sha256(path.join(root, 'assets/proofs/request.pk')));
     assert.equal(config.trusted_deployment.withdrawal_proving_key_sha256, sha256(path.join(root, 'assets/proofs/withdrawal.pk')));
-    assert.equal(config.suggested_deposit_amount, 2_000_000);
-    assert.equal(config.billing_token_symbol, 'USDC');
-    assert.equal(config.billing_token_decimals, 6);
+    assert.equal(config.proving_keys_base_url, './proofs/');
+    assert.equal(config.deployment_api_proxy_path, '/zkapi-deployment/');
+    assert.equal(config.trusted_deployment.billing_asset, 'native_eth');
+    assert.equal(config.trusted_deployment.billing_unit, 'gwei');
+    assert.equal(config.trusted_deployment.billing_token_address, null);
+    assert.equal(config.trusted_deployment.native_asset_wei_per_unit, '1000000000');
+    assert.equal(config.trusted_deployment.rpc_url, 'https://ethereum-rpc.publicnode.com');
+    assert.equal(config.trusted_deployment.native_price_feed_address.toLowerCase(), '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419');
+    assert.equal(config.trusted_deployment.native_price_feed_decimals, 8);
+    assert.equal(config.trusted_deployment.native_price_max_age_seconds, 4500);
+    assert.equal(config.trusted_deployment.openrouter_inference_base, 'https://openrouter.ai/api/v1');
+    assert.equal(config.trusted_deployment.verifier_url, 'https://verifier2.openanonymity.ai');
+    assert.equal(config.credits_per_usd, null);
+    assert.equal(config.suggested_deposit_amount, undefined);
+    assert.equal(config.billing_token_symbol, 'ETH');
+    assert.equal(config.billing_token_decimals, 9);
     assert.equal(config.require_oa_key_source, true);
+    assert.equal(config.openrouter_requests_per_key, undefined);
 });
 
 test('browser chat leases prove only published model budgets without changing the deployment minimum', async () => {

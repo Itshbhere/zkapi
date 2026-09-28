@@ -38,7 +38,7 @@ submodule or installing Rust. See [SDK integration](sdk/README.md).
 npm ci
 npm test
 npm run build:browser # SDK assets for Sepolia, not a chat application
-npm run build:mainnet # SDK assets; historical Mainnet deployment remains guarded
+npm run build:mainnet # SDK assets for the separate native ETH Mainnet deployment
 npm pack             # installable browser SDK
 ```
 
@@ -46,9 +46,11 @@ The host's own build emits the SDK assets and configures its privacy transport,
 asset URLs, and selected network before wallet initialization. Sepolia pins the current [native ETH deployment](docs/native-eth-billing.md).
 The [September 22 acceptance](docs/deployments/sepolia-note-bound-20260922.md)
 describes a separate ERC20 review deployment.
-Mainnet uses real USDC and ETH; its historical configuration remains guarded
-until a reviewed note-bound vault and new client pins replace it. Legacy
-manifests are rejected before funding.
+Mainnet pins separate native ETH contracts verified at finalized chain state.
+The backend is active; public application publication is the next step. See the
+[Mainnet rollout record](docs/deployments/mainnet-native-eth-20260928.md).
+Legacy USDC wallets keep their original vault and recovery client; their notes
+cannot be converted or migrated by this SDK configuration change.
 
 ## Build and test the Rust clients
 

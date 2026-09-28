@@ -60,10 +60,13 @@ and OA direct-mode acceptance. This merged branch preserves the newer native
 ETH Sepolia vault and its independent pins; see [native ETH billing](native-eth-billing.md).
 Both deployments use the same repaired circuit/setup. Their vaults, denomination,
 signing keys and wallet state are separate and must never be interchanged.
-The Mainnet configuration still identifies the historical deployment; its
-legacy manifest is rejected before funding. The
-`deployment_status: "migration_required"` guard prevents relabeling an old
-manifest from enabling funding against an old pinned vault.
+The Mainnet configuration pins independent native ETH contracts verified at
+finalized chain state and removes that configuration's migration guard.
+The backend is active and verified; public application publication is next. See the
+[Mainnet rollout record](deployments/mainnet-native-eth-20260928.md).
+The generic migration guard remains available and tested: an old manifest
+cannot be relabeled to enable funding against a guarded vault. Legacy USDC
+recovery continues through its original deployment and client.
 
 ## Regression boundary
 

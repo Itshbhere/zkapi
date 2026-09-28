@@ -1,25 +1,32 @@
 {
-  "deployment_manifest_url": "https://d27v1dvkaxfc09.cloudfront.net/config.json",
+  "deployment_manifest_url": "https://d3hmaz52qw22t.cloudfront.net/config.json",
   "allowed_deployment_manifest_urls": [
-    "https://d27v1dvkaxfc09.cloudfront.net/config.json"
+    "https://d3hmaz52qw22t.cloudfront.net/config.json"
   ],
   "deployment_api_proxy_path": "/zkapi-deployment/",
   "trusted_deployment": {
-    "deployment_id": "zkapi-ef-mainnet-groth16-v2-20260812",
+    "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-20260928",
     "chain_id": 1,
-    "contract_address": "0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709",
-    "billing_token_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    "protocol_server_url": "https://d27v1dvkaxfc09.cloudfront.net",
-    "indexer_url": "https://d27v1dvkaxfc09.cloudfront.net",
+    "contract_address": "0x9e5570ae0F1FCB087c2dD0eac521aC067a6b6F42",
+    "billing_token_address": null,
+    "protocol_server_url": "https://d3hmaz52qw22t.cloudfront.net",
+    "indexer_url": "https://d3hmaz52qw22t.cloudfront.net",
     "request_charge_cap": 50000,
     "state_signing_key": {
-      "x": "0x68b03dd2caf06ee9496c41808866d50eebc6499dc6de33cc043a657bf852751",
-      "y": "0xa093a54ed79f4e88652b6bbe9bf4fc3794a0779e513045ed2a75699564792cb"
+      "x": "0xa27b9251afdb9a3e8518474f999863b65789d557732fef891652589c7dacd61",
+      "y": "0x11386a1d93bcf3664d50e1f9a6303e0096353b89a26be46a6d846fabb6fda23b"
     },
     "clearance_signing_key": {
-      "x": "0x1bec3c118854b4ffcde1fb6dead674808c0c38e4f45b54c33984460bb0fb8d2b",
-      "y": "0x239f4e558d7dfde57e0c23066e6cf94e628d7b6b49e728a5ce0b2d0ab0992898"
+      "x": "0x1141c1750b410037229a4a0cbc17603826018416eb4ed39d8629f8eea6dd485",
+      "y": "0x25417156c0a965c5d1af5db42e4b518b49b17a0e42dfaf43c6cb84da1eabf014"
     },
+    "rpc_url": "https://ethereum-rpc.publicnode.com",
+    "billing_asset": "native_eth",
+    "billing_unit": "gwei",
+    "native_asset_wei_per_unit": "1000000000",
+    "native_price_feed_address": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+    "native_price_feed_decimals": 8,
+    "native_price_max_age_seconds": 4500,
     "request_proving_key_sha256": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
     "withdrawal_proving_key_sha256": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
     "openrouter_inference_base": "https://openrouter.ai/api/v1",
@@ -27,10 +34,8 @@
     "circuit_id": "zkapi-v2-note-bound-v1"
   },
   "proving_keys_base_url": "./proofs/",
-  "credits_per_usd": 1000000,
-  "suggested_deposit_amount": 2000000,
-  "billing_token_symbol": "USDC",
-  "billing_token_decimals": 6,
-  "require_oa_key_source": true,
-  "deployment_status": "migration_required"
+  "credits_per_usd": null,
+  "billing_token_symbol": "ETH",
+  "billing_token_decimals": 9,
+  "require_oa_key_source": true
 }

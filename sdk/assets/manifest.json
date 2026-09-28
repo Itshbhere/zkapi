@@ -8,7 +8,7 @@
     "assets/proofs/request.pk": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
     "assets/proofs/withdrawal.pk": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
     "assets/config/sepolia.json": "3c03b9231a171621f32590103fd775afb0178db93ce3d9458978ba3166363350",
-    "assets/config/mainnet.json": "51007d8882352265e177c86ee445631c4cff75ba07832d3e3b605a29d4234166"
+    "assets/config/mainnet.json": "b3628cbf44d8fe15678af806d093212945d64f6c272395ffc08fc08c25ea4e6f"
   },
   "circuitId": "zkapi-v2-note-bound-v1"
 }

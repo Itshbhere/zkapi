@@ -162,7 +162,7 @@ chain. Temporarily unavailable or lagging state is retried for a bounded period;
 only state reads are retried, never the mint transaction. A reorganization or
 network change stops preparation for an explicit wallet status check.
 
-This does not alter mainnet token funding, deposit/withdrawal proof validation,
+This does not alter legacy token funding, deposit/withdrawal proof validation,
 allowance handling, or the durable transaction recovery journal. The regression
 suite exercises the real deposit path with stale provider reads and asserts
 that only one mint and one vault deposit are submitted.
@@ -170,9 +170,13 @@ that only one mint and one vault deposit are submitted.
 ## Native ETH deployments
 
 The bundled Sepolia configuration pins the September 27 native ETH deployment
-with the `zkapi-v2-note-bound-v1` circuit. The Mainnet configuration remains
-behind `deployment_status: "migration_required"` until a compatible deployment
-is separately reviewed and pinned.
+with the `zkapi-v2-note-bound-v1` circuit. The Mainnet configuration pins the
+September 28 native deployment with independent chain-1 vault, signing keys,
+RPC, ETH/USD feed and server origin. Its vault and proof adapter are verified
+at finalized chain state. The live manifest, finalized ETH/USD quote, private
+route restrictions and dedicated challenger checks passed. Mainnet's
+configuration guard is removed; public application publication is the next step.
+See the [Mainnet rollout record](../docs/deployments/mainnet-native-eth-20260928.md).
 
 Native ETH requires a separate, trusted native vault and billing-server
 deployment. Existing token manifests continue using their original token; no

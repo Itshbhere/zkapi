@@ -29,6 +29,10 @@ abandoned and must never be advertised or funded. Its first prepared image/sourc
 archive is also superseded; the native deployment needs a fresh vault with the
 note-bound adapter and the final reviewed source.
 
+The [September 28 Mainnet rollout record](deployments/mainnet-native-eth-20260928.md)
+tracks its independent native configuration and activation evidence. Preparing
+new pins does not itself deploy or enable a vault.
+
 ## Pinned configuration
 
 The public deployment manifest and browser trust configuration must agree on:
