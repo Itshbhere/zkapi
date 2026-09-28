@@ -1543,6 +1543,24 @@ class ZkapiClient extends EventTarget {
         } catch { return null; }
     }
 
+    async refreshConfirmedBrowserDeposit() {
+        // Called only after confirmDeposit has committed the exact durable
+        // pending operation. Keep refresh failures available to normal status
+        // recovery without reporting a completed deposit as failed.
+        try {
+            // Publish the committed history and cleared pending plan even if
+            // the separate worker projection of the balance is unavailable.
+            const snapshot = browserWalletRuntime.snapshot();
+            this.config = snapshot.config;
+            this.deposits = snapshot.deposits || [];
+            this.withdrawals = snapshot.withdrawals || [];
+            await this.refresh({ quiet: true });
+        } catch (error) {
+            this.lastError = error;
+        }
+        return Boolean(this.lastError);
+    }
+
     async confirmBrowserDepositReceipt(plan, receipt, vaultAddress, onStatus) {
         const deposited = parseNoteDeposited(receipt, vaultAddress);
         if (!deposited) {
@@ -1565,9 +1583,13 @@ class ZkapiClient extends EventTarget {
             receiptMetadata,
             expiry_ts: Number(deposited.expiryTs)
         });
-        await this.refresh();
-        onStatus('Private balance is ready.');
+        const balanceRefreshPending = await this.refreshConfirmedBrowserDeposit();
+        onStatus(balanceRefreshPending
+            ? 'Deposit confirmed and saved. The balance display will refresh when available.'
+            : 'Private balance is ready.');
         return {
+            status: 'confirmed',
+            balanceRefreshPending,
             noteId: Number(deposited.noteId),
             amount: Number(plan.amount),
             receipt,
@@ -1690,10 +1712,13 @@ class ZkapiClient extends EventTarget {
                 receiptMetadata,
                 expiry_ts: note.expiryTs
             });
-            await this.refresh();
-            onStatus('Deposit recovered. Your private balance is ready.');
+            const balanceRefreshPending = await this.refreshConfirmedBrowserDeposit();
+            onStatus(balanceRefreshPending
+                ? 'Deposit recovered and saved. The balance display will refresh when available.'
+                : 'Deposit recovered. Your private balance is ready.');
             return {
                 status: 'confirmed',
+                balanceRefreshPending,
                 noteId: Number(plan.next_note_id),
                 amount: Number(plan.amount),
                 receipt: confirmedReceipt,

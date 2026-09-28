@@ -76,6 +76,11 @@ authorization tag before proof verification. A successful response contains
 the provider response, charge, next anonymous commitment, next anchor, fresh
 blind delta, and next Schnorr state signature.
 
+Concurrent identical proxy retries share execution coordination for their
+nullifier and receive the same persisted response. This coordination is local
+to the server's store instance; provider-side idempotency by request ID is
+still required for ambiguous upstream failures or process crashes.
+
 The base64 proof decodes to exactly 256 bytes: `A.x, A.y, B.x.c0, B.x.c1,
 B.y.c0, B.y.c1, C.x, C.y`, each as a canonical 32-byte big-endian BN254
 base-field coordinate.
@@ -122,10 +127,15 @@ the same chat lease. There is no request-count or small token quota; the child
 key's cumulative USD limit is the boundary. Calls sharing a key are linkable to
 OpenRouter. At dollar-limit exhaustion, provider rejection, explicit close, or
 expiry, the client posts a retirement. For a directly managed key, the server
-disables the key, reads
-aggregate `usage` through OpenRouter's Management API, converts USD to credits,
-finalizes the original lease, and deletes the key. Expiry plus the configured
-usage-propagation grace period remains a crash-recovery fallback. The existing
+disables the key, waits the configured usage-propagation grace period, then
+reads aggregate `usage` and `byok_usage` through OpenRouter's Management API.
+It persists this usage before deleting the key and signs the next state only
+after deletion succeeds. Failures remain reserved and retryable through
+durable `retiring`, `disabled`, and `revoking` phases, including background
+recovery before the original expiry. Clients must treat these statuses as
+pending and preserve their request for recovery. OpenRouter's aggregate API
+does not provide a finalized usage receipt; this mode relies on the configured
+grace being sufficient for in-flight requests and delayed accounting. The existing
 `GET /v2/requests/{client_request_id}` recovery response then supplies the
 signed next state. Thus key issuance, multiple direct inference calls, usage
 polling, and state recovery are several HTTP operations but one zkAPI request

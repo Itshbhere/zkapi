@@ -25,6 +25,8 @@ COPY --from=builder /app/target/release/zkapi-indexerd /usr/local/bin/zkapi-inde
 COPY --from=builder /app/target/release/zkapi-challenged /usr/local/bin/zkapi-challenged
 COPY --from=builder /app/protocol/setup/v2 /srv/zkapi/protocol/setup/v2
 
+COPY --chmod=755 docker/aws/run-daemon.sh /usr/local/bin/zkapi-run
+
 USER zkapi
 
 ENV RUST_LOG=info

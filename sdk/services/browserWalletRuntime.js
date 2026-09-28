@@ -1588,7 +1588,16 @@ class BrowserWalletRuntime extends EventTarget {
                     ...(args.receiptMetadata || {})
                 }
             });
-            return this.walletStatus();
+            // The atomic note/history write is the confirmation boundary.
+            // A later worker status refresh must not turn this exact committed
+            // deposit into a reported funding failure or authorize resubmission.
+            return {
+                status: 'confirmed',
+                operationId: pending.operationId,
+                noteId: Number(args.note_id),
+                amount: Number(args.amount),
+                transactionHash: args.transactionHash || null
+            };
         });
     }
 

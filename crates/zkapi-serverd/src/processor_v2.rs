@@ -281,6 +281,12 @@ impl RequestProcessor {
             ));
         }
         let started = Instant::now();
+        let execution_lock = self
+            .store
+            .execution_lock(&request.public_inputs.request_nullifier)?;
+        let _execution_guard = execution_lock.lock().await;
+        // Re-check durable state after taking the lock: an identical request
+        // may have completed while this retry waited for the provider.
         if let Some(response) = self.validate_and_reserve(request, ReservationKind::Proxy)? {
             return Ok(response);
         }
@@ -684,14 +690,18 @@ impl RequestProcessor {
         }
         match lease.status.as_str() {
             "finalized" => {}
-            "active" => match lease.key_source.as_str() {
+            "active" | "retiring" | "disabled" | "revoking" => match lease.key_source.as_str() {
                 "openrouter" => {
                     let provisioner = self.openrouter.as_ref().ok_or_else(|| {
                         ServerError::Internal(
                             "direct OpenRouter settlement credential is unavailable".to_string(),
                         )
                     })?;
-                    self.settle_openrouter_lease(&lease, provisioner).await?;
+                    if let Err(error) = self.settle_openrouter_lease(&lease, provisioner).await {
+                        self.store
+                            .record_openrouter_lease_error(client_request_id, &error.to_string())?;
+                        return Err(error);
+                    }
                 }
                 "oa_org" => self.settle_oa_org_lease(&lease).await?,
                 source => {
@@ -822,6 +832,9 @@ impl RequestProcessor {
         lease: &crate::nullifier_store::OpenRouterLeaseRecord,
         provisioner: &OpenRouterProvisioner,
     ) -> Result<(), ServerError> {
+        let key_hash = lease.key_hash.as_deref().ok_or_else(|| {
+            ServerError::Internal("active OpenRouter lease has no key hash".to_string())
+        })?;
         if let Some(record) = self
             .store
             .lookup_by_nullifier(&lease.request_nullifier)
@@ -833,6 +846,9 @@ impl RequestProcessor {
                 .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
                 .and_then(|payload| payload["usage_usd"].as_f64())
                 .unwrap_or_default();
+            // Also reconcile a legacy/crash-window finalized transcript before
+            // retiring its lease record. Never abandon a failed revocation.
+            provisioner.delete_key(key_hash).await?;
             self.store.finalize_openrouter_lease(
                 &lease.client_request_id,
                 usage_usd,
@@ -840,17 +856,84 @@ impl RequestProcessor {
             )?;
             return Ok(());
         }
-        let key_hash = lease.key_hash.as_deref().ok_or_else(|| {
-            ServerError::Internal("active OpenRouter lease has no key hash".to_string())
-        })?;
-        let usage = provisioner.get_key_usage(key_hash).await?;
-        if !usage.usage_usd.is_finite() || usage.usage_usd < 0.0 {
-            return Err(ServerError::InvalidRequest(
-                "invalid upstream USD usage".into(),
-            ));
+        let mut phase = lease.status.as_str();
+        let mut settle_after = lease.settle_after;
+        if phase == "active" {
+            self.store.advance_openrouter_retirement(
+                &lease.client_request_id,
+                "active",
+                "retiring",
+                current_timestamp(),
+                None,
+            )?;
+            phase = "retiring";
         }
+        if phase == "retiring" {
+            provisioner.disable_key(key_hash).await?;
+            // OpenRouter does not issue a finalized receipt. Its aggregate
+            // accounting requires the configured drain/reconciliation interval
+            // after disabling, including when retiring a key before expiry.
+            let grace = self
+                .config
+                .openrouter_leases
+                .as_ref()
+                .ok_or_else(|| {
+                    ServerError::Internal(
+                        "OpenRouter lease configuration is unavailable".to_string(),
+                    )
+                })?
+                .settlement_grace_seconds;
+            settle_after = current_timestamp().saturating_add(grace);
+            self.store.advance_openrouter_retirement(
+                &lease.client_request_id,
+                "retiring",
+                "disabled",
+                settle_after,
+                None,
+            )?;
+            phase = "disabled";
+        }
+        let usage_usd = if phase == "disabled" {
+            let now = current_timestamp();
+            if now < settle_after {
+                return Err(ServerError::LeaseSettlementPending {
+                    retry_after_seconds: settle_after - now,
+                });
+            }
+            let usage = provisioner.get_key_usage(key_hash).await?;
+            if !usage.disabled {
+                self.store.advance_openrouter_retirement(
+                    &lease.client_request_id,
+                    "disabled",
+                    "retiring",
+                    now,
+                    None,
+                )?;
+                return Err(ServerError::Internal(
+                    "OpenRouter settlement key is still enabled".to_string(),
+                ));
+            }
+            // Capture usage durably before deletion makes it unavailable.
+            self.store.advance_openrouter_retirement(
+                &lease.client_request_id,
+                "disabled",
+                "revoking",
+                now,
+                Some(usage.usage_usd),
+            )?;
+            usage.usage_usd
+        } else if phase == "revoking" {
+            lease.usage_usd.ok_or_else(|| {
+                ServerError::Internal("OpenRouter revocation has no persisted usage".to_string())
+            })?
+        } else {
+            return Err(ServerError::LeasePending);
+        };
+        // Fail closed. A 503 or ambiguous DELETE leaves the nullifier reserved
+        // and the revoking lease visible to the background retry scanner.
+        provisioner.delete_key(key_hash).await?;
         let raw_charge =
-            self.lease_charge_units(&lease.api_request, pricing::usd_to_credits(usage.usage_usd))?;
+            self.lease_charge_units(&lease.api_request, pricing::usd_to_credits(usage_usd))?;
         let lease_charge_cap = lease.api_request.public_inputs.solvency_bound;
         let charge = raw_charge.min(lease_charge_cap);
         if charge != raw_charge {
@@ -867,7 +950,7 @@ impl RequestProcessor {
                 "type": "openrouter_ephemeral_lease_settlement",
                 "issued_at": lease.issued_at,
                 "expires_at": lease.expires_at,
-                "usage_usd": usage.usage_usd,
+                "usage_usd": usage_usd,
             }),
         )?;
         let provider_response = ProviderResponse {
@@ -880,7 +963,7 @@ impl RequestProcessor {
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 total_tokens: 0,
-                cost_usd: usage.usage_usd,
+                cost_usd: usage_usd,
                 cost_source: "openrouter_key_aggregate".to_string(),
             }),
             upstream_model: None,
@@ -888,14 +971,7 @@ impl RequestProcessor {
         };
         self.finalize_request(&lease.api_request, provider_response, 0, 0)?;
         self.store
-            .finalize_openrouter_lease(&lease.client_request_id, usage.usage_usd, charge)?;
-        if let Err(error) = provisioner.delete_key(key_hash).await {
-            tracing::warn!(
-                client_request_id = %lease.client_request_id,
-                error = %error,
-                "expired OpenRouter key could not be deleted"
-            );
-        }
+            .finalize_openrouter_lease(&lease.client_request_id, usage_usd, charge)?;
         Ok(())
     }
 
@@ -1402,6 +1478,374 @@ mod tests {
         let mut mutation = request.clone();
         mutate(&mut mutation);
         mutation
+    }
+
+    // These lifecycle tests start at the durable boundary immediately after
+    // proof verification. Proof/circuit tests separately cover admission.
+    fn reserved_request(processor: &RequestProcessor, lease: bool) -> ApiRequestV2 {
+        let mut request = unverified_lease_request(processor);
+        let commitment = zkapi_proof::compact::balance_commitment(
+            3_000_000,
+            &Felt252::from_u64(13),
+            &Felt252::from_u64(14),
+        );
+        request.public_inputs.anonymous_commitment_x = commitment.x;
+        request.public_inputs.anonymous_commitment_y = commitment.y;
+        request.proof.proof = base64::engine::general_purpose::STANDARD.encode(b"verified-proof");
+        if lease {
+            processor.store.reserve_openrouter_lease(&request).unwrap();
+        } else {
+            processor.store.reserve_v2(&request).unwrap();
+        }
+        request
+    }
+
+    #[tokio::test]
+    async fn concurrent_identical_proxy_retries_execute_once_and_recover_same_response() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct CountingProvider(AtomicUsize);
+        impl ApiProvider for CountingProvider {
+            fn execute<'a>(
+                &'a self,
+                id: &'a str,
+                payload: &'a str,
+                hash: &'a Felt252,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<ProviderResponse, ServerError>>
+                        + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async move {
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    EchoProvider::new(1).execute(id, payload, hash).await
+                })
+            }
+        }
+        let store = Arc::new(NullifierStore::in_memory().unwrap());
+        let mut processor = oa_lease_processor(store.clone());
+        let provider = Arc::new(CountingProvider(AtomicUsize::new(0)));
+        processor.provider = provider.clone();
+        // Exercise admission using an actual Groth16 proof accepted by the
+        // active processor, rather than seeding an already-reserved fake proof.
+        let (_, request) = crate::watcher::tests::finalized_v2_request().await;
+        processor.config.contract_address = request.public_inputs.contract_address;
+        processor.update_root(request.public_inputs.active_root);
+        // A second processor sharing the database also shares execution locks.
+        let mut second_processor = oa_lease_processor(store.clone());
+        second_processor.provider = provider.clone();
+        second_processor.config.contract_address = request.public_inputs.contract_address;
+        second_processor.update_root(request.public_inputs.active_root);
+        let results = futures_util::future::join_all((0..16).map(|index| {
+            if index % 2 == 0 {
+                processor.process_request(&request)
+            } else {
+                second_processor.process_request(&request)
+            }
+        }))
+        .await;
+        let first = serde_json::to_value(results[0].as_ref().unwrap()).unwrap();
+        for result in results {
+            assert_eq!(serde_json::to_value(result.unwrap()).unwrap(), first);
+        }
+        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            store
+                .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                .unwrap()
+                .status,
+            NullifierStatus::Finalized
+        );
+        let mutation = mutated_request(&request, |value| value.proof.proof.push('A'));
+        assert!(matches!(
+            processor.process_request(&mutation).await,
+            Err(ServerError::Replay)
+        ));
+        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[derive(Default)]
+    struct RetirementMock {
+        disabled: bool,
+        deleted: bool,
+        fail_disable: bool,
+        fail_delete: bool,
+        lose_delete_response: bool,
+        fail_usage: bool,
+        usage: f64,
+        events: Vec<&'static str>,
+    }
+
+    async fn retirement_processor(
+        state: Arc<std::sync::Mutex<RetirementMock>>,
+        grace: u64,
+        database_path: Option<&std::path::Path>,
+    ) -> (RequestProcessor, ApiRequestV2, tokio::task::JoinHandle<()>) {
+        use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+        type MockState = Arc<std::sync::Mutex<RetirementMock>>;
+        async fn disable(
+            State(state): State<MockState>,
+            Json(body): Json<serde_json::Value>,
+        ) -> Result<Json<serde_json::Value>, StatusCode> {
+            assert_eq!(body["disabled"], true);
+            let mut state = state.lock().unwrap();
+            state.events.push("disable");
+            if state.fail_disable {
+                state.fail_disable = false;
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+            state.disabled = true;
+            Ok(Json(serde_json::json!({"data": {"disabled": true}})))
+        }
+        async fn usage(
+            State(state): State<MockState>,
+        ) -> Result<Json<serde_json::Value>, StatusCode> {
+            let mut state = state.lock().unwrap();
+            state.events.push("usage");
+            assert!(state.disabled, "usage must be read after spending stops");
+            assert!(!state.deleted, "usage is unavailable after deletion");
+            if state.fail_usage {
+                state.fail_usage = false;
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+            Ok(Json(
+                serde_json::json!({"data": {"disabled": state.disabled, "usage": state.usage, "byok_usage": 0.0}}),
+            ))
+        }
+        async fn delete(State(state): State<MockState>) -> StatusCode {
+            let mut state = state.lock().unwrap();
+            state.events.push("delete");
+            assert!(state.disabled);
+            if state.fail_delete {
+                state.fail_delete = false;
+                state.deleted = state.lose_delete_response;
+                return StatusCode::SERVICE_UNAVAILABLE;
+            }
+            if state.deleted {
+                return StatusCode::NOT_FOUND;
+            }
+            state.deleted = true;
+            StatusCode::NO_CONTENT
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = Router::new()
+            .route(
+                "/v1/keys/test-hash",
+                get(usage).patch(disable).delete(delete),
+            )
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let store = Arc::new(match database_path {
+            Some(path) => NullifierStore::new(path).unwrap(),
+            None => NullifierStore::in_memory().unwrap(),
+        });
+        let mut processor = oa_lease_processor(store.clone());
+        let config = processor.config.openrouter_leases.as_mut().unwrap();
+        config.source = OpenRouterLeaseSourceConfig::OpenRouter {
+            management_key: "test".to_string(),
+            api_base: url.clone(),
+        };
+        config.settlement_grace_seconds = grace;
+        processor.openrouter = Some(Arc::new(
+            OpenRouterProvisioner::new("test".to_string(), url).unwrap(),
+        ));
+        processor.oa_org = None;
+        let request = reserved_request(&processor, true);
+        let now = current_timestamp();
+        store
+            .create_openrouter_lease(
+                &request,
+                "openrouter",
+                now,
+                now + 300,
+                now + 300 + grace,
+                3.0,
+            )
+            .unwrap();
+        store
+            .activate_openrouter_lease(&request.client_request_id, "test-hash")
+            .unwrap();
+        (processor, request, server)
+    }
+
+    #[tokio::test]
+    async fn failed_key_deletion_never_signs_and_background_retry_recovers() {
+        for lose_delete_response in [false, true] {
+            let state = Arc::new(std::sync::Mutex::new(RetirementMock {
+                usage: 0.000002,
+                fail_delete: true,
+                lose_delete_response,
+                ..Default::default()
+            }));
+            let db_path =
+                std::env::temp_dir().join(format!("zkapi-retirement-{}.db", uuid::Uuid::new_v4()));
+            let (processor, request, server) =
+                retirement_processor(state.clone(), 0, Some(&db_path)).await;
+            assert!(processor
+                .retire_openrouter_lease(&request.client_request_id, &request)
+                .await
+                .is_err());
+            let store = &processor.store;
+            assert_eq!(
+                store
+                    .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                    .unwrap()
+                    .status,
+                NullifierStatus::Reserved
+            );
+            let lease = store
+                .lookup_openrouter_lease(&request.client_request_id)
+                .unwrap();
+            assert_eq!(lease.status, "revoking");
+            assert_eq!(lease.usage_usd, Some(0.000002));
+            assert!(lease.last_error.is_some());
+            assert_eq!(store.due_openrouter_leases(current_timestamp()).len(), 1);
+            assert!(state.lock().unwrap().disabled);
+            assert_eq!(state.lock().unwrap().deleted, lose_delete_response);
+            // Reopen SQLite with a fresh processor: both a still-existing key
+            // and a lost successful DELETE must resume from durable usage.
+            let config = processor.config.clone();
+            let signer = processor.signer.clone();
+            drop(processor);
+            let store = Arc::new(NullifierStore::new(&db_path).unwrap());
+            let processor = RequestProcessor::try_new(
+                config,
+                store.clone(),
+                signer,
+                Arc::new(EchoProvider::new(1)),
+                Felt252::ZERO,
+            )
+            .unwrap();
+            processor.settle_due_openrouter_leases().await;
+            let response = processor
+                .retire_openrouter_lease(&request.client_request_id, &request)
+                .await
+                .unwrap();
+            assert_eq!(response.status, "finalized");
+            assert_eq!(
+                store
+                    .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                    .unwrap()
+                    .charge_applied,
+                Some(2)
+            );
+            assert_eq!(
+                state.lock().unwrap().events,
+                ["disable", "usage", "delete", "delete"]
+            );
+            server.abort();
+            drop(processor);
+            drop(store);
+            std::fs::remove_file(db_path).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn retirement_disable_and_usage_failures_remain_retryable() {
+        let state = Arc::new(std::sync::Mutex::new(RetirementMock {
+            usage: 0.000003,
+            fail_disable: true,
+            fail_usage: true,
+            ..Default::default()
+        }));
+        let (processor, request, server) = retirement_processor(state.clone(), 0, None).await;
+        assert!(processor
+            .retire_openrouter_lease(&request.client_request_id, &request)
+            .await
+            .is_err());
+        assert_eq!(
+            processor
+                .store
+                .lookup_openrouter_lease(&request.client_request_id)
+                .unwrap()
+                .status,
+            "retiring"
+        );
+        assert!(!state.lock().unwrap().disabled);
+        processor.settle_due_openrouter_leases().await;
+        assert_eq!(
+            processor
+                .store
+                .lookup_openrouter_lease(&request.client_request_id)
+                .unwrap()
+                .status,
+            "disabled"
+        );
+        assert_eq!(
+            processor
+                .store
+                .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                .unwrap()
+                .status,
+            NullifierStatus::Reserved
+        );
+        processor.settle_due_openrouter_leases().await;
+        assert_eq!(
+            processor
+                .store
+                .lookup_openrouter_lease(&request.client_request_id)
+                .unwrap()
+                .status,
+            "finalized"
+        );
+        assert_eq!(
+            state.lock().unwrap().events,
+            ["disable", "disable", "usage", "usage", "delete"]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn early_retirement_waits_for_usage_reconciliation_after_disabling() {
+        let state = Arc::new(std::sync::Mutex::new(RetirementMock::default()));
+        let (processor, request, server) = retirement_processor(state.clone(), 60, None).await;
+        assert!(matches!(
+            processor
+                .retire_openrouter_lease(&request.client_request_id, &request)
+                .await,
+            Err(ServerError::LeaseSettlementPending { .. })
+        ));
+        assert_eq!(state.lock().unwrap().events, ["disable"]);
+        assert!(processor
+            .store
+            .due_openrouter_leases(current_timestamp())
+            .is_empty());
+        assert_eq!(
+            processor
+                .store
+                .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                .unwrap()
+                .status,
+            NullifierStatus::Reserved
+        );
+        // Simulate delayed billing becoming visible during the drain interval.
+        state.lock().unwrap().usage = 0.000005;
+        processor
+            .store
+            .advance_openrouter_retirement(
+                &request.client_request_id,
+                "disabled",
+                "disabled",
+                0,
+                None,
+            )
+            .unwrap();
+        processor.settle_due_openrouter_leases().await;
+        assert_eq!(
+            processor
+                .store
+                .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                .unwrap()
+                .charge_applied,
+            Some(5)
+        );
+        assert_eq!(state.lock().unwrap().events, ["disable", "usage", "delete"]);
+        server.abort();
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -43,6 +43,7 @@ struct OpenRouterState {
     inference_attempts: Arc<Mutex<usize>>,
     inference_failures_remaining: Arc<Mutex<usize>>,
     key_usage: Arc<Mutex<HashMap<String, usize>>>,
+    disabled_keys: Arc<Mutex<HashSet<String>>>,
     in_flight: Arc<AtomicUsize>,
     max_in_flight: Arc<AtomicUsize>,
     successful_starts: Arc<AtomicUsize>,
@@ -162,6 +163,12 @@ fn openrouter_router(state: OpenRouterState) -> Router {
             }
         }
         let api_key = api_key.unwrap();
+        if state.disabled_keys.lock().unwrap().contains(&api_key) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "disabled key"})),
+            ));
+        }
         let prompt = body["messages"][0]["content"]
             .as_str()
             .unwrap_or_default()
@@ -235,8 +242,33 @@ fn openrouter_router(state: OpenRouterState) -> Router {
         let key = hash.replacen("runtime-hash-", "sk-or-v1-runtime-test-", 1);
         let calls = *state.key_usage.lock().unwrap().get(&key).unwrap_or(&0);
         Ok(Json(json!({
-            "data": { "hash": hash, "usage": 0.000006 * calls as f64, "limit": 0.001 }
+            "data": {
+                "hash": hash, "usage": 0.000006 * calls as f64, "byok_usage": 0.0,
+                "limit": 0.001, "disabled": state.disabled_keys.lock().unwrap().contains(&key)
+            }
         })))
+    }
+    async fn disable_key(
+        State(state): State<OpenRouterState>,
+        Path(hash): Path<String>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Result<Json<Value>, StatusCode> {
+        if !hash.starts_with("runtime-hash-")
+            || headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                != Some("Bearer management-test-key")
+            || body["disabled"] != true
+        {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        state.disabled_keys.lock().unwrap().insert(hash.replacen(
+            "runtime-hash-",
+            "sk-or-v1-runtime-test-",
+            1,
+        ));
+        Ok(Json(json!({"data": {"hash": hash, "disabled": true}})))
     }
     async fn delete_key(
         State(state): State<OpenRouterState>,
@@ -256,7 +288,10 @@ fn openrouter_router(state: OpenRouterState) -> Router {
     }
     Router::new()
         .route("/api/v1/keys", post(create_key))
-        .route("/api/v1/keys/{hash}", get(get_key).delete(delete_key))
+        .route(
+            "/api/v1/keys/{hash}",
+            get(get_key).patch(disable_key).delete(delete_key),
+        )
         .route("/api/v1/chat/completions", post(infer))
         .with_state(state)
 }

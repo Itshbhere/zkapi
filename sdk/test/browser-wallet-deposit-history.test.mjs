@@ -120,6 +120,8 @@ const {
     updateBrowserWithdrawal, writeBrowserWallet
 } = await import('../services/browserWalletStore.js');
 const { default: singleton } = await import('../services/browserWalletRuntime.js');
+const { ZkapiClient } = await import('../services/zkapiClient.js');
+const { ABI, abiWord } = await import('../wallet.js');
 
 const DEPLOYMENT = 'deployment:sepolia';
 const OTHER_DEPLOYMENT = 'deployment:mainnet';
@@ -220,6 +222,109 @@ test('confirmed deposits retain actual receipt identity across spending, closure
     assert.deepEqual(reloaded.snapshot().deposits.find(row => row.noteId === 7), confirmed[0]);
     assertSanitized(reloaded.snapshot().deposits);
 });
+
+test('exact deposit commit succeeds independently of worker status and survives reload', async () => {
+    seedRuntime({ pendingDeposit: plan() });
+    const runtime = makeRuntime();
+    runtime.walletStatus = async () => { throw new Error('Status worker unavailable'); };
+    const result = await runtime.confirmDeposit(confirmArgs({ transactionHash: HASH }));
+    assert.deepEqual(result, {
+        status: 'confirmed', operationId: 'deposit-operation', noteId: 7,
+        amount: 2_000_000, transactionHash: HASH
+    });
+    const reloaded = makeRuntime();
+    await reloaded.reload();
+    assert.equal(reloaded.snapshot().runtime.pendingDeposit, null);
+    assert.equal(reloaded.snapshot().runtime.state.note_id, 7);
+    assert.equal(reloaded.snapshot().deposits[0].status, 'confirmed');
+    assert.equal(reloaded.snapshot().deposits[0].transactionHash, HASH);
+});
+
+function confirmationClient(t, runtime) {
+    const client = new ZkapiClient();
+    client.browserMode = true;
+    client.config = runtime.config;
+    t.mock.method(singleton, 'confirmDeposit', runtime.confirmDeposit.bind(runtime));
+    t.mock.method(singleton, 'snapshot', runtime.snapshot.bind(runtime));
+    t.mock.method(singleton, 'walletStatus', async () => { throw new Error('Status worker unavailable'); });
+    return client;
+}
+
+function depositReceipt() {
+    const vault = `0x${'12'.repeat(20)}`;
+    return { vault, receipt: { status: '0x1', transactionHash: HASH, logs: [{
+        address: vault, topics: [ABI.noteDeposited, '0x7', '0x123'],
+        data: `0x${[2_000_000, 9999, 77].map(abiWord).join('')}`
+    }] } };
+}
+
+for (const recovery of [false, true]) {
+    test(`${recovery ? 'vault recovery' : 'receipt confirmation'} stays successful after commit when the balance refresh fails`, async t => {
+        seedRuntime({ pendingDeposit: plan() });
+        const runtime = makeRuntime();
+        const client = confirmationClient(t, runtime);
+        const statuses = [];
+        let result;
+        if (recovery) {
+            t.mock.method(singleton, 'pendingDeposit', async () => plan());
+            t.mock.method(singleton, 'treePath', async () => ({}));
+            t.mock.method(client, 'readBrowserNote', async () => ({
+                status: 1, amount: 2_000_000n, commitment: '0x123', expiryTs: 9999
+            }));
+            result = await client.recoverBrowserDeposit(message => statuses.push(message));
+        } else {
+            const { vault, receipt } = depositReceipt();
+            result = await client.confirmBrowserDepositReceipt(plan(), receipt, vault, message => statuses.push(message));
+        }
+        assert.equal(result.status, 'confirmed');
+        assert.equal(result.balanceRefreshPending, true);
+        assert.equal(result.noteId, 7);
+        assert.equal(result.amount, 2_000_000);
+        assert.match(statuses.at(-1), /saved.*display will refresh/);
+        assert.match(client.lastError.message, /Status worker unavailable/);
+        assert.equal(client.config.pending_deposit, null);
+        assert.equal(client.deposits[0].status, 'confirmed');
+        const persisted = await readBrowserWalletSnapshot(DEPLOYMENT);
+        assert.equal(persisted.runtime.pendingDeposit, null);
+        assert.equal(persisted.runtime.state.note_id, 7);
+        assert.equal(persisted.deposits[0].status, 'confirmed');
+        // Ordinary read-only refresh recovers the display without another
+        // confirmation, proof, signing request or transaction.
+        t.mock.method(singleton, 'walletStatus', async () => ({ has_note: true, note: state() }));
+        await client.refresh({ quiet: true });
+        assert.equal(client.lastError, null);
+        assert.equal(client.wallet.has_note, true);
+        assert.equal(client.config.pending_deposit, null);
+    });
+}
+
+for (const failure of ['worker', 'storage', 'indexer', 'old-note']) {
+    test(`a ${failure} failure before this deposit commit is never classified as confirmed`, async t => {
+        seedRuntime({ pendingDeposit: plan(), ...(failure === 'old-note' ? { state: state(6) } : {}) });
+        const runtime = makeRuntime();
+        const client = confirmationClient(t, runtime);
+        let refreshes = 0;
+        t.mock.method(client, 'refresh', async () => { refreshes += 1; });
+        if (failure === 'worker') runtime.worker.call = async () => { throw new Error('Invalid confirmation'); };
+        if (failure === 'storage') indexedDB.failNextDepositWrite();
+        if (failure === 'indexer') {
+            t.mock.method(singleton, 'pendingDeposit', async () => plan());
+            t.mock.method(singleton, 'treePath', async () => { throw new Error('Indexer unavailable'); });
+            t.mock.method(client, 'readBrowserNote', async () => ({
+                status: 1, amount: 2_000_000n, commitment: '0x123', expiryTs: 9999
+            }));
+            await assert.rejects(client.recoverBrowserDeposit(), /Indexer unavailable/);
+        } else {
+            const { vault, receipt } = depositReceipt();
+            await assert.rejects(client.confirmBrowserDepositReceipt(plan(), receipt, vault, () => {}),
+                failure === 'worker' ? /Invalid confirmation/ : failure === 'storage' ? /history storage failure/ : /already has an active/);
+        }
+        assert.equal(refreshes, 0, 'only an actual successful commit reaches best-effort display refresh');
+        const persisted = await readBrowserWalletSnapshot(DEPLOYMENT);
+        assert.equal(persisted.runtime.pendingDeposit.operationId, plan().operationId);
+        assert.ok(!persisted.deposits.some(row => row.noteId === 7 && row.status === 'confirmed'));
+    });
+}
 
 test('unsigned preparations are omitted and durable wallet/receipt recovery remains pending until confirmation', async () => {
     const pending = plan({ phase: 'prepared', transactionHash: null });

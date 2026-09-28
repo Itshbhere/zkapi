@@ -93,8 +93,12 @@ impl ChallengeWatcher {
         let id = record.client_request_id.as_deref()?;
         let lease = self.store.lookup_openrouter_lease(id)?;
         let request = &lease.api_request;
-        if lease.status != "active"
-            || lease.key_hash.is_none()
+        // Retirement has already stopped or is stopping future key use, but
+        // the issued authorization remains consumed until settlement completes.
+        if !matches!(
+            lease.status.as_str(),
+            "active" | "retiring" | "disabled" | "revoking"
+        ) || lease.key_hash.is_none()
             || lease.client_request_id != id
             || request.client_request_id != id
             || lease.request_nullifier != *nullifier
@@ -123,7 +127,7 @@ impl ChallengeWatcher {
     ) -> Result<ChallengeAction, String> {
         let record = self
             .challenge_transcript(nullifier)
-            .ok_or_else(|| "no finalized or active-lease evidence for nullifier".to_string())?;
+            .ok_or_else(|| "no finalized or issued-lease evidence for nullifier".to_string())?;
         let request_inputs: RequestPublicInputsV2 = serde_json::from_str(
             &record
                 .request_inputs_json
@@ -302,6 +306,46 @@ pub(crate) mod tests {
         assert!(ChallengeWatcher::new(changed_store)
             .challenge_transcript(&nullifier)
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn direct_key_retirement_preserves_challenge_evidence_until_finalization() {
+        let (_, request) = finalized_v2_request().await;
+        let store = Arc::new(NullifierStore::in_memory().unwrap());
+        store.reserve_openrouter_lease(&request).unwrap();
+        store
+            .create_openrouter_lease(&request, "openrouter", 1, 2, 3, 1.0)
+            .unwrap();
+        store
+            .activate_openrouter_lease(&request.client_request_id, "issued-key-hash")
+            .unwrap();
+        let watcher = ChallengeWatcher::new(store.clone());
+        let nullifier = request.public_inputs.request_nullifier;
+        for (from, to) in [
+            ("active", "retiring"),
+            ("retiring", "disabled"),
+            ("disabled", "revoking"),
+        ] {
+            store
+                .advance_openrouter_retirement(&request.client_request_id, from, to, 0, None)
+                .unwrap();
+            let action = watcher
+                .build_challenge_action(0, &nullifier, [Felt252::ZERO; MERKLE_DEPTH])
+                .unwrap_or_else(|error| panic!("{to} must remain challengeable: {error}"));
+            assert_eq!(
+                action.request_inputs.active_root,
+                request.public_inputs.active_root
+            );
+            assert_eq!(
+                action.proof_artifact,
+                base64::engine::general_purpose::STANDARD
+                    .decode(&request.proof.proof)
+                    .unwrap()
+            );
+            let reservation = store.lookup_by_nullifier(&nullifier).unwrap();
+            assert_eq!(reservation.status, zkapi_types::NullifierStatus::Reserved);
+            assert!(reservation.response_hash.is_none());
+        }
     }
 
     #[tokio::test]

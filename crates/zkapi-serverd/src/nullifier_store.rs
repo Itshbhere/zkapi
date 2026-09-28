@@ -5,8 +5,9 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use sha3::{Digest, Keccak256};
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zkapi_types::wire::ApiRequestV2;
@@ -69,6 +70,7 @@ pub struct OpenRouterLeaseRecord {
 /// SQLite-backed nullifier store.
 pub struct NullifierStore {
     conn: Mutex<Connection>,
+    execution_locks: Mutex<HashMap<Felt252, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 /// Bind the complete semantically decoded v2 wire request. Serde emits struct
@@ -164,12 +166,33 @@ impl NullifierStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            execution_locks: Mutex::new(HashMap::new()),
         })
     }
 
     /// Create an in-memory store (for testing).
     pub fn in_memory() -> Result<Self, ServerError> {
         Self::new(":memory:")
+    }
+
+    /// Coordinate provider execution for a nullifier across processors sharing
+    /// this store. Weak entries keep completed requests from growing the map.
+    /// Crash/transport ambiguity still requires upstream idempotency by request ID.
+    pub fn execution_lock(
+        &self,
+        nullifier: &Felt252,
+    ) -> Result<Arc<tokio::sync::Mutex<()>>, ServerError> {
+        let mut locks = self
+            .execution_locks
+            .lock()
+            .map_err(|error| ServerError::Internal(format!("execution lock poisoned: {error}")))?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(nullifier).and_then(Weak::upgrade) {
+            return Ok(lock);
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(*nullifier, Arc::downgrade(&lock));
+        Ok(lock)
     }
 
     /// Reserve a nullifier. Returns Ok(()) if the nullifier was successfully reserved.
@@ -584,7 +607,7 @@ impl NullifierStore {
         };
         let mut statement = match conn.prepare(
             "SELECT * FROM openrouter_leases
-             WHERE status = 'active' AND settle_after <= ?1
+             WHERE status IN ('active', 'retiring', 'disabled', 'revoking') AND settle_after <= ?1
              ORDER BY settle_after ASC",
         ) {
             Ok(statement) => statement,
@@ -608,10 +631,49 @@ impl NullifierStore {
             .map_err(|cause| ServerError::Database(format!("lock poisoned: {cause}")))?;
         conn.execute(
             "UPDATE openrouter_leases SET last_error = ?1, updated_at = ?2
-             WHERE client_request_id = ?3 AND status = 'active'",
+             WHERE client_request_id = ?3 AND status IN ('active', 'retiring', 'disabled', 'revoking')",
             params![error, current_timestamp() as i64, client_request_id],
         )
         .map_err(|cause| ServerError::Database(format!("lease error update failed: {cause}")))?;
+        Ok(())
+    }
+
+    /// Persist the direct-key retirement state before each external side
+    /// effect, so revocation and settlement resume after failures or restarts.
+    pub fn advance_openrouter_retirement(
+        &self,
+        client_request_id: &str,
+        from: &str,
+        to: &str,
+        settle_after: u64,
+        usage_usd: Option<f64>,
+    ) -> Result<(), ServerError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|error| ServerError::Database(format!("lock poisoned: {error}")))?;
+        let rows = conn
+            .execute(
+                "UPDATE openrouter_leases SET status = ?1, settle_after = ?2,
+                usage_usd = COALESCE(?3, usage_usd), last_error = NULL, updated_at = ?4
+             WHERE client_request_id = ?5 AND key_source = 'openrouter' AND status = ?6",
+                params![
+                    to,
+                    settle_after as i64,
+                    usage_usd,
+                    current_timestamp() as i64,
+                    client_request_id,
+                    from
+                ],
+            )
+            .map_err(|error| {
+                ServerError::Database(format!("lease retirement update failed: {error}"))
+            })?;
+        if rows != 1 {
+            return Err(ServerError::Internal(
+                "lease retirement state changed".to_string(),
+            ));
+        }
         Ok(())
     }
 

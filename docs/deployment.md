@@ -7,6 +7,11 @@ See [Note-bound migration](note-binding-review.md). Do not use the abandoned fir
 native Sepolia vault or legacy unbound verifier. Existing legacy wallets require
 their corresponding legacy recovery tools; they cannot be silently migrated.
 
+The [September 22 deployment record](deployments/sepolia-note-bound-20260922.md)
+and acceptance helpers describe the separate ERC-20 review stack. The packaged
+browser configuration retains the current native ETH deployment; importing the
+review fixes does not replace its vault, signing keys or note storage.
+
 The commands below are ERC-20 examples. Native ETH adds a fresh native vault and
 matching SDK/server pins; see [Native ETH billing](native-eth-billing.md).
 
