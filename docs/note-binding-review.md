@@ -62,7 +62,7 @@ Both deployments use the same repaired circuit/setup. Their vaults, denomination
 signing keys and wallet state are separate and must never be interchanged.
 The Mainnet configuration pins independent native ETH contracts verified at
 finalized chain state and removes that configuration's migration guard.
-The backend is active and verified; public application publication is next. See the
+The backend and separate native Mainnet application are published. See the
 [Mainnet rollout record](deployments/mainnet-native-eth-20260928.md).
 The generic migration guard remains available and tested: an old manifest
 cannot be relabeled to enable funding against a guarded vault. Legacy USDC

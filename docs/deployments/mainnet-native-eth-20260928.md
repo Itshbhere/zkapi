@@ -1,14 +1,14 @@
 # Native ETH Mainnet rollout — September 28, 2026
 
-## Contracts finalized and backend active; public application publication next
+## Contracts finalized; backend and public application published
 
 The user explicitly authorized public Mainnet deposits on September 28 after
 reviewing the experimental deployment limitations. The native vault and proof
 adapter are deployed and verified at finalized chain state. The live backend,
 dedicated challenger, public manifest and oracle checks passed. The SDK now
 removes Mainnet's `deployment_status: "migration_required"` guard. The host
-application can pin this immutable SDK revision and publish its separate native
-Mainnet origin next; this record does not claim that frontend publication.
+application pins that immutable SDK release at its separate native Mainnet
+origin below.
 
 | Field | Verified value |
 |---|---|
@@ -74,6 +74,35 @@ configuration guard, all 24 focused artifact, packaging and migration tests
 passed, along with artifact verification and the Mainnet SDK build. A fresh
 adversarial review approved the source. The backend checks above were read-only;
 they did not submit a user deposit, inference request or challenge transaction.
+
+## Published application
+
+The canonical native Mainnet application is
+**https://oa-wallet-eth-mainnet.vercel.app**, Vercel deployment
+`dpl_EfvfCXhrcPYR5DVh8aQ8UCb5HXso`, build `K2DVDIBU`, app revision
+`c81405722608a32f2883c115a8ed8e522e6ba12b`, SDK revision
+`cf56d67e0c1dd4bc3f3c32392478ce242c746446`. All 486 published artifact hashes
+matched that build at `2026-09-28T08:58:52Z`; canonical config, health,
+attestation/root and independently verified finalized native quote checks
+passed. Operator-only routes remained inaccessible.
+
+A fresh unfunded browser profile opened zkAPI without account sign-in, showed
+both wallet choices, and rendered the Mainnet address, ETH total and approximate
+USD total with fee details closed by default. Four USD/ETH switches completed
+in 9.3–15.5 ms and preserved the exact principal. An explicitly entered
+0.002345678 ETH amount, its input denomination and funding address survived both
+a page reload and a full browser restart. Next remained disabled; public RPC
+reported zero balance and zero confirmed/pending nonces for the test address.
+No uncaught JavaScript page errors appeared. A bounded reopen/reload follow-up
+identified a handled proxy-preference warning: the app could not disable the
+proxy while requests were in progress. Funding quotes and input recovery still
+worked. Two console errors from an earlier restart did not reproduce; their
+cause was not established. This does not establish a console-clean or
+reliable-proxy run.
+
+No Mainnet deposit, withdrawal, inference request or extension confirmation was
+performed during that browser check. These results establish onboarding,
+quotation and local persistence, not a paid Mainnet end-to-end happy path.
 
 ## Separation and limitations
 

@@ -47,7 +47,8 @@ asset URLs, and selected network before wallet initialization. Sepolia pins the 
 The [September 22 acceptance](docs/deployments/sepolia-note-bound-20260922.md)
 describes a separate ERC20 review deployment.
 Mainnet pins separate native ETH contracts verified at finalized chain state.
-The backend is active; public application publication is the next step. See the
+The backend and [native Mainnet application](https://oa-wallet-eth-mainnet.vercel.app)
+are published. See the
 [Mainnet rollout record](docs/deployments/mainnet-native-eth-20260928.md).
 Legacy USDC wallets keep their original vault and recovery client; their notes
 cannot be converted or migrated by this SDK configuration change.
