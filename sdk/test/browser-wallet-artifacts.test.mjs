@@ -89,7 +89,7 @@ test('browser worker retains the decoded request prover and retries failed initi
     assert.match(runtime, /prewarmRequestProver\(\)/);
     assert.match(runtime, /this\.worker\.call\('preloadRequestProver'/);
     assert.match(runtime, /if \(this\.runtime\.state \|\| this\.runtime\.pendingDeposit\)/);
-    const prepareDeposit = sourceMethodAt(runtime, 'async prepareDeposit(amount)');
+    const prepareDeposit = sourceMethodAt(runtime, 'async prepareDeposit(amount,');
     const walletStatus = sourceMethodAt(runtime, 'async walletStatus()');
     assert.match(prepareDeposit, /void this\.prewarmRequestProver\(\)/);
     assert.ok(
@@ -322,7 +322,7 @@ test('browser deposits refresh an unsigned Merkle path after token approval', ()
     const runtime = fs.readFileSync(path.join(__dirname, 'services/browserWalletRuntime.js'), 'utf8');
     const client = fs.readFileSync(path.join(__dirname, 'services/zkapiClient.js'), 'utf8');
     const refresh = sourceMethodAt(runtime, 'async refreshPendingDeposit(');
-    assert.match(refresh, /async refreshPendingDeposit\(amount, expectedActiveRoot = null\)/);
+    assert.match(refresh, /async refreshPendingDeposit\(amount, expectedActiveRoot = null,/);
     assert.match(refresh, /const refreshed = \{[\s\S]*\.\.\.pending,[\s\S]*next_note_id: path\.note_id,[\s\S]*active_root: path\.active_root,[\s\S]*zero_path: path\.siblings/);
     assert.doesNotMatch(refresh, /secret:/);
     assert.match(client, /await browserWalletRuntime\.refreshPendingDeposit\([\s\S]*Number\(amount\),[\s\S]*expectedActiveRoot/);

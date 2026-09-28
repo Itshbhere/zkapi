@@ -708,6 +708,37 @@ class ZkapiClient extends EventTarget {
             price, chainId: this.config.funding.chain_id, contractAddress: this.config.funding.contract_address });
     }
 
+    async prepareDepositQuote(amountInput, { from } = {}) {
+        if (!this.initialized) await this.init();
+        if (!this.browserMode || !this.isNativeEthFunding) {
+            throw new Error('Prefunding deposit quotes require a native ETH browser wallet.');
+        }
+        if (typeof from !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(from) || /^0x0{40}$/i.test(from)) {
+            throw new Error('Choose a valid funding address before estimating this deposit.');
+        }
+        const funding = this.config.funding;
+        const amount = parseUnits(amountInput, 9);
+        if (amount <= 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+            throw new Error('Choose a smaller positive deposit amount.');
+        }
+        await assertNativeVault(funding);
+        const root = await this.readContractUint(funding.contract_address, `0x${ABI.currentRoot}`);
+        const plan = await browserWalletRuntime.prepareDepositQuote(Number(amount), root);
+        await this.assertFundingChain();
+        const value = nativeDepositValue(amount, funding);
+        // Never return the durable secret, note witness, or runtime object.
+        return Object.freeze({
+            operationId: plan.operationId,
+            commitment: plan.commitment,
+            amount: String(amount),
+            depositWei: String(value),
+            chainId: Number(funding.chain_id),
+            contractAddress: funding.contract_address,
+            transaction: Object.freeze({ from: from.toLowerCase(), to: funding.contract_address,
+                data: encodeDeposit(plan, amount), value: `0x${value.toString(16)}` })
+        });
+    }
+
     get creditsPerUsd() {
         if (this.isNativeEthFunding) {
             const quote = this.nativePriceQuote;
@@ -1472,6 +1503,46 @@ class ZkapiClient extends EventTarget {
         }
     }
 
+    async readDepositReceiptMetadata(plan, receipt) {
+        // Fee display must use a mined transaction, never its estimated limit
+        // or an unverified cached receipt. Failure only makes fees unavailable.
+        try {
+            if (BigInt(receipt?.status || 0) !== 1n
+                || !/^0x[0-9a-fA-F]{64}$/.test(receipt.transactionHash || '')
+                || !/^0x[0-9a-fA-F]{64}$/.test(receipt.blockHash || '')
+                || !/^0x[0-9a-fA-F]+$/.test(receipt.blockNumber || '')) return null;
+            const funding = this.config.funding;
+            await this.assertFundingChain();
+            const deposited = parseNoteDeposited(receipt, funding.contract_address);
+            if (!deposited || deposited.noteId !== BigInt(plan.next_note_id)
+                || deposited.amount !== BigInt(plan.amount)
+                || BigInt(deposited.commitment) !== BigInt(plan.commitment)) return null;
+            const transaction = await this.ethereum.request({ method: 'eth_getTransactionByHash',
+                params: [receipt.transactionHash] });
+            const hash = receipt.transactionHash.toLowerCase();
+            if (!transaction || String(transaction.hash).toLowerCase() !== hash
+                || String(transaction.blockHash).toLowerCase() !== receipt.blockHash.toLowerCase()
+                || BigInt(transaction.blockNumber) !== BigInt(receipt.blockNumber)
+                || !sameAddress(transaction.to, funding.contract_address)
+                || !/^0x[0-9a-fA-F]{40}$/.test(transaction.from || '')
+                || (transaction.chainId != null && BigInt(transaction.chainId) !== BigInt(funding.chain_id))
+                || String(transaction.input ?? transaction.data).toLowerCase() !== encodeDeposit(plan, BigInt(plan.amount)).toLowerCase()
+                || BigInt(transaction.value || 0) !== nativeDepositValue(plan.amount, funding)) return null;
+            const block = await this.ethereum.request({ method: 'eth_getBlockByNumber',
+                params: [receipt.blockNumber, false] });
+            if (String(block?.hash).toLowerCase() !== receipt.blockHash.toLowerCase()) return null;
+            await this.assertFundingChain();
+            const gasUsed = BigInt(receipt.gasUsed);
+            const effectiveGasPrice = BigInt(receipt.effectiveGasPrice);
+            const blockNumber = Number(BigInt(receipt.blockNumber));
+            if (gasUsed <= 0n || effectiveGasPrice <= 0n || !Number.isSafeInteger(blockNumber) || blockNumber <= 0) return null;
+            return { transactionHash: hash, fundingAddress: transaction.from.toLowerCase(),
+                feeWei: String(gasUsed * effectiveGasPrice), gasUsed: String(gasUsed),
+                effectiveGasPrice: String(effectiveGasPrice), receiptBlockNumber: blockNumber,
+                receiptBlockHash: receipt.blockHash.toLowerCase() };
+        } catch { return null; }
+    }
+
     async confirmBrowserDepositReceipt(plan, receipt, vaultAddress, onStatus) {
         const deposited = parseNoteDeposited(receipt, vaultAddress);
         if (!deposited) {
@@ -1482,6 +1553,7 @@ class ZkapiClient extends EventTarget {
             || BigInt(deposited.commitment) !== BigInt(plan.commitment)) {
             throw new Error('The mined deposit did not match this browser’s durable private note.');
         }
+        const receiptMetadata = this.isNativeEthFunding ? await this.readDepositReceiptMetadata(plan, receipt) : null;
         onStatus('Saving the private note securely in this browser…');
         await browserWalletRuntime.confirmDeposit({
             operationId: plan.operationId,
@@ -1490,6 +1562,7 @@ class ZkapiClient extends EventTarget {
             amount: Number(plan.amount),
             commitment: plan.commitment,
             transactionHash: receipt.transactionHash,
+            receiptMetadata,
             expiry_ts: Number(deposited.expiryTs)
         });
         await this.refresh();
@@ -1497,7 +1570,8 @@ class ZkapiClient extends EventTarget {
         return {
             noteId: Number(deposited.noteId),
             amount: Number(plan.amount),
-            receipt
+            receipt,
+            ...(receiptMetadata || {})
         };
     }
 
@@ -1593,12 +1667,27 @@ class ZkapiClient extends EventTarget {
             // Wait for the privacy-preserving whole-tree mirror before making
             // the recovered note available to chat requests.
             await browserWalletRuntime.treePath(Number(plan.next_note_id), true);
+            let receiptMetadata = null;
+            let confirmedReceipt = null;
+            if (this.isNativeEthFunding) {
+                const hashes = plan.transactionHashes || (plan.transactionHash ? [plan.transactionHash] : []);
+                for (const hash of hashes) {
+                    try {
+                        const candidate = await this.ethereum.request({ method: 'eth_getTransactionReceipt', params: [hash] });
+                        if (String(candidate?.transactionHash).toLowerCase() !== String(hash).toLowerCase()) continue;
+                        receiptMetadata = await this.readDepositReceiptMetadata(plan, candidate);
+                        if (receiptMetadata) { confirmedReceipt = candidate; break; }
+                    } catch { /* Vault recovery remains available when fee evidence is temporarily unavailable. */ }
+                }
+            }
             await browserWalletRuntime.confirmDeposit({
                 operationId: plan.operationId,
                 secret: plan.secret,
                 note_id: Number(plan.next_note_id),
                 amount: Number(plan.amount),
                 commitment: plan.commitment,
+                transactionHash: receiptMetadata?.transactionHash || null,
+                receiptMetadata,
                 expiry_ts: note.expiryTs
             });
             await this.refresh();
@@ -1607,7 +1696,8 @@ class ZkapiClient extends EventTarget {
                 status: 'confirmed',
                 noteId: Number(plan.next_note_id),
                 amount: Number(plan.amount),
-                receipt: null
+                receipt: confirmedReceipt,
+                ...(receiptMetadata || {})
             };
         }
         if (note.status !== 0) {
@@ -1744,6 +1834,23 @@ class ZkapiClient extends EventTarget {
         return this.config?.pending_deposit || null;
     }
 
+    async prepareDepositRetry(onStatus = () => {}) {
+        if (!this.browserMode || !this.isNativeEthFunding) {
+            throw new Error('Funding-address retry quotes require a native ETH browser wallet.');
+        }
+        const recovery = await this.recoverBrowserDeposit(onStatus);
+        if (recovery?.status === 'confirmed') return recovery;
+        const pending = await browserWalletRuntime.pendingDeposit();
+        if (pending?.phase === 'prepared' && browserWalletRuntime.canQuotePendingDeposit(pending)) {
+            await this.refresh({ quiet: true });
+            return { status: 'prepared', operationId: pending.operationId };
+        }
+        const retry = await browserWalletRuntime.authorizePendingDepositRetry({ forFundingQuote: true });
+        await this.refresh({ quiet: true });
+        onStatus('Review the network fee for the saved deposit before continuing.');
+        return { status: 'retry_exact', operationId: retry.operationId };
+    }
+
     async retryUnknownDeposit(onStatus = () => {}) {
         if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
         const recovery = await this.recoverBrowserDeposit(onStatus);
@@ -1834,13 +1941,13 @@ class ZkapiClient extends EventTarget {
         );
     }
 
-    async deposit(amountInput, onStatus = () => {}) {
-        const key = String(amountInput).trim();
+    async deposit(amountInput, onStatus = () => {}, { preparedOperationId = null } = {}) {
+        const key = JSON.stringify([String(amountInput).trim(), preparedOperationId]);
         if (this.depositPromise) {
             if (this.depositPromiseKey === key) return this.depositPromise;
             throw new Error('A different deposit action is already running.');
         }
-        const operation = this.performDeposit(amountInput, onStatus);
+        const operation = this.performDeposit(amountInput, onStatus, { preparedOperationId });
         this.depositPromise = operation;
         this.depositPromiseKey = key;
         try {
@@ -1853,7 +1960,7 @@ class ZkapiClient extends EventTarget {
         }
     }
 
-    async performDeposit(amountInput, onStatus = () => {}) {
+    async performDeposit(amountInput, onStatus = () => {}, { preparedOperationId = null } = {}) {
         if (this.hasNote) throw new Error('This client already has an active private note.');
         const funding = this.config?.funding;
         if (!funding?.contract_address || (!this.isNativeEthFunding && !funding.demo_billing_token_address)) {
@@ -1874,6 +1981,9 @@ class ZkapiClient extends EventTarget {
             ? await browserWalletRuntime.pendingDeposit()
             : null;
         if (pendingDeposit) {
+            if (preparedOperationId && pendingDeposit.operationId !== preparedOperationId) {
+                throw new Error('The deposit quote changed in another tab. Check the pending deposit before continuing.');
+            }
             const recovery = await this.recoverBrowserDeposit(onStatus);
             if (recovery?.status === 'confirmed') return recovery;
             pendingDeposit = await browserWalletRuntime.pendingDeposit();
@@ -1922,7 +2032,7 @@ class ZkapiClient extends EventTarget {
 
         onStatus('Generating the private note commitment locally…');
         let plan = this.browserMode
-            ? await browserWalletRuntime.prepareDeposit(Number(amount))
+            ? await browserWalletRuntime.prepareDeposit(Number(amount), { preparedOperationId })
             : await this.apiJson('/deposit/prepare', {
                 method: 'POST',
                 body: JSON.stringify({ amount: Number(amount) })
@@ -1967,11 +2077,15 @@ class ZkapiClient extends EventTarget {
                 );
                 plan = await browserWalletRuntime.refreshPendingDeposit(
                     Number(amount),
-                    expectedActiveRoot
+                    expectedActiveRoot,
+                    { expectedOperationId: plan.operationId }
                 );
             }
             if (this.browserMode) {
-                submission = await browserWalletRuntime.claimPendingDepositSubmission();
+                submission = await browserWalletRuntime.claimPendingDepositSubmission(plan.operationId);
+                // Another read-only preparation can refresh the append path;
+                // send exactly the plan frozen by the atomic submission claim.
+                if (submission.plan) plan = submission.plan;
                 if (submission.transactionHash) {
                     onStatus(`Checking submitted deposit ${this.compact(submission.transactionHash)}…`);
                     receipt = await this.waitForReceipt(submission.transactionHash);

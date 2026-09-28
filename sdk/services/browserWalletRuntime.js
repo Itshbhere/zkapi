@@ -625,6 +625,8 @@ class BrowserWalletRuntime extends EventTarget {
                 operation_id: pendingDeposit.operationId || null,
                 phase: pendingDeposit.phase || (pendingDeposit.transactionHash ? 'submitted' : 'ambiguous'),
                 amount: Number(pendingDeposit.amount),
+                funding_quote_available: isNativeEthFunding(this.config?.funding)
+                    && this.canQuotePendingDeposit(pendingDeposit),
                 next_note_id: Number(pendingDeposit.next_note_id),
                 transaction_hash: pendingDeposit.transactionHash || null,
                 transaction_hashes: Array.isArray(pendingDeposit.transactionHashes)
@@ -678,6 +680,7 @@ class BrowserWalletRuntime extends EventTarget {
             storedRuntime.state
             || storedRuntime.journal
             || storedRuntime.pendingDeposit
+            || storedRuntime.depositQuote
             || storedRuntime.preparedWithdrawal
             || storedRuntime.lease
             || (Array.isArray(storedRuntime.lateWithdrawalAttempts)
@@ -849,11 +852,87 @@ class BrowserWalletRuntime extends EventTarget {
         }, expectedActiveRoot, { sleep: milliseconds => delay(milliseconds) });
     }
 
-    async prepareDeposit(amount) {
+    canQuotePendingDeposit(pending = this.runtime?.pendingDeposit) {
+        const noActiveAttempt = pending && typeof pending.operationId === 'string' && pending.operationId
+            && !pending.submissionId && !pending.transactionHash
+            && !pending.transactionHashes?.length && !pending.transactionAttempts?.length
+            && !pending.submissionFrom && pending.submissionNonce == null
+            && !(this.runtime?.lateDepositAttempts || []).some(attempt =>
+                attempt.operationId === pending.operationId
+                && !LATE_DEPOSIT_TERMINAL_STATUSES.has(attempt.status));
+        if (!noActiveAttempt) return false;
+        if (pending.phase === 'retry_exact') {
+            return pending.fundingQuoteRetryAuthorized === true && Boolean(pending.ambiguousSubmissions?.length);
+        }
+        return pending.phase === 'prepared' && !pending.legacyRecovery
+            && !(pending.ambiguousSubmissions || []).some(attempt =>
+                !(pending.resolvedAmbiguousSubmissionIds || []).includes(attempt.submissionId));
+    }
+
+    async prepareDepositQuote(amount, expectedActiveRoot) {
+        await this.init();
+        return withBrowserWalletLock(this.manifest.deployment_id, async () => {
+            await this.reload();
+            const pending = this.runtime.pendingDeposit;
+            if (this.runtime.state || (pending && !this.canQuotePendingDeposit(pending))) {
+                throw new Error('Recover the existing private balance or deposit before preparing another quote.');
+            }
+            if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Invalid deposit amount.');
+            if (pending && pending.amount !== amount) {
+                throw new Error('The prepared deposit amount is fixed. Refresh its existing funding quote.');
+            }
+            if (pending?.phase === 'retry_exact') {
+                // An explicit retry may coexist with an unknown old send. Its
+                // exact calldata must remain fixed until chain recovery proves
+                // the old slot cannot execute; quoting never rebases it.
+                return { ...pending };
+            }
+            const previous = pending || this.runtime.depositQuote;
+            const params = previous?.amount === amount ? previous
+                : await this.worker.call('generateDeposit');
+            const path = await this.nextDepositPath(expectedActiveRoot);
+            const draft = {
+                ...(pending || {}),
+                operationId: previous?.amount === amount ? previous.operationId : uuid(),
+                createdAt: previous?.amount === amount ? previous.createdAt : Date.now(),
+                amount,
+                secret: params.secret,
+                commitment: params.commitment || params.registration_commitment,
+                next_note_id: path.note_id,
+                active_root: path.active_root,
+                zero_path: path.siblings
+            };
+            // A new quote is only a draft. A rejected-before-broadcast pending
+            // plan can be requoted, but only for its original amount and identity.
+            // Neither path creates a claim, history entry or transaction.
+            await this.commit(pending
+                ? { ...this.runtime, depositQuote: null, pendingDeposit: draft }
+                : { ...this.runtime, depositQuote: draft });
+            return draft;
+        });
+    }
+
+    async prepareDeposit(amount, { preparedOperationId = null } = {}) {
         await this.init();
         const plan = await withBrowserWalletLock(this.manifest.deployment_id, async () => {
             await this.reload();
             if (this.runtime.state) throw new Error('This browser already has an active private note.');
+            if (preparedOperationId && this.runtime.pendingDeposit?.operationId === preparedOperationId
+                && this.runtime.pendingDeposit.amount !== amount) {
+                throw new Error('The prepared deposit amount does not match the selected quote.');
+            }
+            if (preparedOperationId && this.runtime.pendingDeposit?.operationId !== preparedOperationId) {
+                const draft = this.runtime.depositQuote;
+                if (this.runtime.pendingDeposit || !draft || draft.operationId !== preparedOperationId
+                    || draft.amount !== amount) {
+                    throw new Error('The deposit quote changed in another tab. Refresh the quote before continuing.');
+                }
+                const promoted = { ...draft, phase: 'prepared' };
+                // Promotion is the explicit deposit action, atomic with the
+                // stale-quote check under the same cross-tab wallet lock.
+                await this.commit({ ...this.runtime, depositQuote: null, pendingDeposit: promoted });
+                return promoted;
+            }
             if (this.runtime.pendingDeposit) {
                 let pending = this.runtime.pendingDeposit;
                 if (!pending.operationId || !pending.phase) {
@@ -894,7 +973,7 @@ class BrowserWalletRuntime extends EventTarget {
             // Persist the note secret before MetaMask is opened. If the tab is
             // closed after the transaction is submitted, the deposit can still
             // be confirmed from its on-chain receipt without losing funds.
-            await this.commit({ ...this.runtime, pendingDeposit: plan });
+            await this.commit({ ...this.runtime, depositQuote: null, pendingDeposit: plan });
             return plan;
         });
         // Start only after deposit preparation's small WASM calls have left the
@@ -904,13 +983,16 @@ class BrowserWalletRuntime extends EventTarget {
         return plan;
     }
 
-    async refreshPendingDeposit(amount, expectedActiveRoot = null) {
+    async refreshPendingDeposit(amount, expectedActiveRoot = null, { expectedOperationId = null } = {}) {
         await this.init();
         return withBrowserWalletLock(this.manifest.deployment_id, async () => {
             await this.reload();
             if (this.runtime.state) throw new Error('This browser already has an active private note.');
             const pending = this.runtime.pendingDeposit;
             if (!pending) throw new Error('The durable pending deposit is missing.');
+            if (expectedOperationId && pending.operationId !== expectedOperationId) {
+                throw new Error('The pending deposit changed in another tab. Check its status before continuing.');
+            }
             if (Number(pending.amount) !== Number(amount)) {
                 throw new Error('The prepared private note has a different deposit amount.');
             }
@@ -942,12 +1024,15 @@ class BrowserWalletRuntime extends EventTarget {
         });
     }
 
-    async claimPendingDepositSubmission() {
+    async claimPendingDepositSubmission(expectedOperationId = null) {
         await this.init();
         return withBrowserWalletLock(this.manifest.deployment_id, async () => {
             await this.reload();
             const pending = this.runtime.pendingDeposit;
             if (!pending) throw new Error('The durable pending deposit is missing.');
+            if (expectedOperationId && pending.operationId !== expectedOperationId) {
+                throw new Error('The pending deposit changed in another tab. Check its status before continuing.');
+            }
             const hashes = Array.isArray(pending.transactionHashes)
                 ? pending.transactionHashes
                 : pending.transactionHash ? [pending.transactionHash] : [];
@@ -994,6 +1079,7 @@ class BrowserWalletRuntime extends EventTarget {
             await this.commit({ ...this.runtime, pendingDeposit: next });
             return {
                 status: 'claimed',
+                plan: { ...next },
                 transactionHash: null,
                 operationId: next.operationId,
                 submissionId,
@@ -1235,7 +1321,8 @@ class BrowserWalletRuntime extends EventTarget {
                     ? 'submitted'
                     : pending.submissionId && !releasesClaim
                         ? (pending.phase === 'ambiguous' ? 'ambiguous' : 'awaiting_wallet')
-                        : 'prepared',
+                        : pending.fundingQuoteRetryAuthorized === true && pending.ambiguousSubmissions?.length
+                            ? 'retry_exact' : 'prepared',
                 transactionHashes: remaining,
                 transactionAttempts: Array.isArray(pending.transactionAttempts)
                     ? pending.transactionAttempts.filter(attempt => !expectedTransactionHash
@@ -1363,7 +1450,7 @@ class BrowserWalletRuntime extends EventTarget {
         });
     }
 
-    async authorizePendingDepositRetry() {
+    async authorizePendingDepositRetry({ forFundingQuote = false } = {}) {
         await this.init();
         return withBrowserWalletLock(this.manifest.deployment_id, async () => {
             await this.reload();
@@ -1371,6 +1458,15 @@ class BrowserWalletRuntime extends EventTarget {
             const hashes = Array.isArray(pending?.transactionHashes)
                 ? pending.transactionHashes
                 : pending?.transactionHash ? [pending.transactionHash] : [];
+            if (forFundingQuote && pending?.phase === 'retry_exact' && !pending.submissionId
+                && !hashes.length && !pending.transactionAttempts?.length && pending.ambiguousSubmissions?.length) {
+                const authorized = { ...pending, fundingQuoteRetryAuthorized: true };
+                if (!this.canQuotePendingDeposit(authorized)) {
+                    throw new Error('Check the unresolved deposit transaction before reviewing retry fees.');
+                }
+                await this.commit({ ...this.runtime, pendingDeposit: authorized });
+                return authorized;
+            }
             if (!pending || pending.phase !== 'ambiguous' || !pending.submissionId || hashes.length) {
                 throw new Error('There is no unknown deposit request to retry.');
             }
@@ -1380,6 +1476,7 @@ class BrowserWalletRuntime extends EventTarget {
             const next = {
                 ...pending,
                 phase: 'retry_exact',
+                fundingQuoteRetryAuthorized: forFundingQuote,
                 ambiguousSubmissions: [...history, {
                     submissionId: pending.submissionId,
                     startedAt: pending.submissionStartedAt,
@@ -1392,6 +1489,9 @@ class BrowserWalletRuntime extends EventTarget {
             delete next.submissionFrom;
             delete next.submissionNonce;
             delete next.submissionError;
+            if (forFundingQuote && !this.canQuotePendingDeposit(next)) {
+                throw new Error('Check the unresolved deposit transaction before reviewing retry fees.');
+            }
             await this.commit({ ...this.runtime, pendingDeposit: next });
             return next;
         });
@@ -1426,11 +1526,20 @@ class BrowserWalletRuntime extends EventTarget {
             const next = {
                 ...pending,
                 phase: 'prepared',
-                previousSlot: Number(pending.next_note_id)
+                previousSlot: Number(pending.next_note_id),
+                // Finalized occupation by another commitment proves every old
+                // ambiguous call for this append slot can no longer succeed.
+                // Retain those claims for late recovery, while recording exactly
+                // which ambiguity was resolved before allowing a fresh quote.
+                resolvedAmbiguousSubmissionIds: (pending.ambiguousSubmissions || []).map(attempt => attempt.submissionId),
+                legacyRecovery: false,
+                fundingQuoteRetryAuthorized: false
             };
             delete next.submissionId;
             delete next.submissionOwner;
             delete next.submissionStartedAt;
+            delete next.submissionFrom;
+            delete next.submissionNonce;
             delete next.transactionHash;
             delete next.transactionHashes;
             delete next.transactionAttempts;
@@ -1475,7 +1584,8 @@ class BrowserWalletRuntime extends EventTarget {
                     // A saved attempt may have been replaced. Only the receipt
                     // caller identifies the actual mined transaction; recovery
                     // from the vault alone intentionally leaves it unknown.
-                    transactionHash: args.transactionHash || null
+                    transactionHash: args.transactionHash || null,
+                    ...(args.receiptMetadata || {})
                 }
             });
             return this.walletStatus();

@@ -22,6 +22,7 @@ const EMPTY_RUNTIME = Object.freeze({
     state: null,
     journal: null,
     pendingDeposit: null,
+    depositQuote: null,
     preparedWithdrawal: null,
     lease: null,
     lateWithdrawalAttempts: [],
@@ -127,6 +128,19 @@ function sanitizedExpiryClaim(claim, amount, expiryTs) {
     };
 }
 
+function sanitizedDepositFee(metadata) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(metadata.transactionHash || '')
+        || !/^0x[0-9a-fA-F]{40}$/.test(metadata.fundingAddress || '')
+        || !/^0x[0-9a-fA-F]{64}$/.test(metadata.receiptBlockHash || '')
+        || !positiveTimestamp(metadata.receiptBlockNumber)
+        || !['feeWei', 'gasUsed', 'effectiveGasPrice'].every(key =>
+            typeof metadata[key] === 'string' && /^[1-9][0-9]{0,77}$/.test(metadata[key]))) return null;
+    if (BigInt(metadata.feeWei) !== BigInt(metadata.gasUsed) * BigInt(metadata.effectiveGasPrice)) return null;
+    return { feeWei: metadata.feeWei, gasUsed: metadata.gasUsed, effectiveGasPrice: metadata.effectiveGasPrice,
+        fundingAddress: metadata.fundingAddress.toLowerCase(), receiptBlockNumber: Number(metadata.receiptBlockNumber),
+        receiptBlockHash: metadata.receiptBlockHash.toLowerCase() };
+}
+
 function depositRecord(state, deploymentId, metadata = {}) {
     const noteId = Number(state?.note_id);
     const amount = Number(state?.deposit_amount);
@@ -149,7 +163,8 @@ function depositRecord(state, deploymentId, metadata = {}) {
         confirmedAt: positiveTimestamp(metadata.confirmedAt),
         transactionHash: /^0x[0-9a-fA-F]{64}$/.test(metadata.transactionHash || '')
             ? metadata.transactionHash.toLowerCase() : null,
-        ...(expiryClaim ? { expiryClaim } : {})
+        ...(expiryClaim ? { expiryClaim } : {}),
+        ...(sanitizedDepositFee(metadata) || {})
     };
 }
 
@@ -166,8 +181,14 @@ function mergeDepositRecord(records, candidate, store) {
         transactionHash: previous.transactionHash || candidate.transactionHash,
         operationId: previous.operationId || candidate.operationId,
         expiryTs: previous.expiryTs || candidate.expiryTs,
-        ...(previous.expiryClaim ? { expiryClaim: previous.expiryClaim } : {})
+        ...(previous.expiryClaim ? { expiryClaim: previous.expiryClaim } : {}),
+        ...(sanitizedDepositFee(previous) || {})
     } : candidate;
+    // Do not pair a newer candidate's fee with an older retained receipt hash.
+    if (previous?.transactionHash && previous.transactionHash !== candidate.transactionHash
+        && !sanitizedDepositFee(previous)) {
+        for (const key of ['feeWei', 'gasUsed', 'effectiveGasPrice', 'fundingAddress', 'receiptBlockNumber', 'receiptBlockHash']) delete next[key];
+    }
     if (JSON.stringify(previous) !== JSON.stringify(next)) store?.put(next);
     records.set(next.recordId, next);
 }

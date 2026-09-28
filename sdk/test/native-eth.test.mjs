@@ -426,3 +426,186 @@ test('native settlement validates the frozen billing quote before installing a s
     assert.equal(runtime.runtime.state.current_balance, 123);
     assert.equal(runtime.runtime.journal, null);
 });
+
+test('prefunding quote exposes only the exact public native call and never connects or submits', async t => {
+    priceRpc(t);
+    const { default: runtime } = await import('../services/browserWalletRuntime.js');
+    const client = new ZkapiClient();
+    client.initialized = true;
+    client.browserMode = true;
+    client.config = { funding };
+    const calls = [];
+    client.setWalletProvider({ request: async ({ method, params }) => {
+        calls.push(method);
+        if (method === 'eth_chainId') return '0xaa36a7';
+        assert.equal(method, 'eth_call', 'quoting cannot connect, sign or broadcast');
+        assert.equal(params[0].data, `0x${codec.ABI.currentRoot}`);
+        return '0x77';
+    } });
+    const draft = { operationId: 'prefunding-quote', amount: 3333334, commitment: '0x1', secret: 'never-expose-this',
+        next_note_id: 2, active_root: '0x77', zero_path: Array(32).fill('0x0') };
+    t.mock.method(runtime, 'prepareDepositQuote', async (amount, root) => {
+        assert.equal(amount, 3333334);
+        assert.equal(root, 0x77n);
+        return draft;
+    });
+    const result = await client.prepareDepositQuote('0.003333334', { from: FROM });
+    assert.deepEqual(result, { operationId: draft.operationId, commitment: draft.commitment, amount: '3333334',
+        depositWei: '3333334000000000', chainId: funding.chain_id, contractAddress: VAULT,
+        transaction: { from: FROM, to: VAULT, data: codec.encodeDeposit(draft, 3333334n), value: `0x${3333334000000000n.toString(16)}` } });
+    assert.doesNotMatch(JSON.stringify(result), /never-expose-this|secret|zero_path|active_root/);
+    assert.deepEqual(new Set(calls), new Set(['eth_chainId', 'eth_call']));
+    assert.ok(Object.isFrozen(result));
+    assert.ok(Object.isFrozen(result.transaction));
+    for (const from of [undefined, '0x0', `0x${'00'.repeat(20)}`]) {
+        await assert.rejects(client.prepareDepositQuote('0.1', { from }), /valid funding address/);
+    }
+    client.browserMode = false;
+    await assert.rejects(client.prepareDepositQuote('0.1', { from: FROM }), /browser wallet/);
+});
+
+function nativeReceiptHarness() {
+    const client = new ZkapiClient();
+    client.config = { funding };
+    const plan = { operationId: 'deposit', next_note_id: 1, commitment: '0x1', amount: 123,
+        active_root: '0x77', zero_path: Array(32).fill('0x0') };
+    const blockHash = `0x${'55'.repeat(32)}`;
+    const receipt = { status: '0x1', transactionHash: HASH, blockHash, blockNumber: '0x123',
+        gasUsed: '0x64', effectiveGasPrice: '0x3b9aca00', logs: [{ address: VAULT,
+            topics: [codec.ABI.noteDeposited, '0x1', '0x1'], data: `0x${[123, 2_000_000_000, 7].map(word).join('')}` }] };
+    const transaction = { hash: HASH, blockHash, blockNumber: '0x123', from: FROM, to: VAULT,
+        chainId: '0xaa36a7', value: `0x${123000000000n.toString(16)}`, input: codec.encodeDeposit(plan, 123n) };
+    const chain = { id: '0xaa36a7', blockHash };
+    client.setWalletProvider({ request: async ({ method, params }) => {
+        if (method === 'eth_chainId') return chain.id;
+        if (method === 'eth_getTransactionByHash') { assert.equal(params[0], HASH); return transaction; }
+        if (method === 'eth_getBlockByNumber') { assert.equal(params[0], receipt.blockNumber); return { hash: chain.blockHash }; }
+        assert.fail(`Unexpected RPC ${method}`);
+    } });
+    return { client, plan, receipt, transaction, chain };
+}
+
+test('deposit fee uses actual mined gas and verified funding sender, with canonical block evidence', async () => {
+    const { client, plan, receipt } = nativeReceiptHarness();
+    assert.deepEqual(await client.readDepositReceiptMetadata(plan, receipt), { transactionHash: HASH,
+        fundingAddress: FROM, feeWei: '100000000000', gasUsed: '100', effectiveGasPrice: '1000000000',
+        receiptBlockNumber: 0x123, receiptBlockHash: receipt.blockHash });
+});
+
+for (const field of ['value', 'to', 'input', 'from', 'chainId', 'hash', 'blockHash', 'blockNumber']) {
+    test(`deposit fee does not trust a receipt whose mined transaction has mismatched ${field}`, async () => {
+        const { client, plan, receipt, transaction } = nativeReceiptHarness();
+        transaction[field] = field === 'from' ? 'missing' : '0x99';
+        assert.equal(await client.readDepositReceiptMetadata(plan, receipt), null);
+    });
+}
+
+test('reverted, unavailable, reorganized, cross-chain or wrong-note receipt fees remain unavailable', async () => {
+    for (const alter of [
+        ({ receipt }) => { receipt.status = '0x0'; },
+        ({ receipt }) => { delete receipt.gasUsed; },
+        ({ receipt }) => { delete receipt.effectiveGasPrice; },
+        ({ receipt }) => { receipt.effectiveGasPrice = '-1'; },
+        ({ chain }) => { chain.blockHash = `0x${'66'.repeat(32)}`; },
+        ({ chain }) => { chain.id = '0x1'; },
+        ({ plan }) => { plan.commitment = '0x2'; },
+        ({ plan }) => { plan.amount = 456; }
+    ]) {
+        const fixture = nativeReceiptHarness();
+        alter(fixture);
+        assert.equal(await fixture.client.readDepositReceiptMetadata(fixture.plan, fixture.receipt), null);
+    }
+});
+
+test('native deposit recovery saves actual mined fee before the pending journal is cleared', async t => {
+    const { default: runtime } = await import('../services/browserWalletRuntime.js');
+    const { client, plan, receipt } = nativeReceiptHarness();
+    client.browserMode = true;
+    plan.transactionHash = HASH;
+    t.mock.method(runtime, 'pendingDeposit', async () => plan);
+    t.mock.method(runtime, 'treePath', async () => ({}));
+    t.mock.method(client, 'readBrowserNote', async () => ({ status: 1, amount: 123n, commitment: '0x1', expiryTs: 2_000_000_000 }));
+    t.mock.method(client, 'refresh', async () => {});
+    const originalRequest = client.ethereum.request;
+    client.ethereum.request = async request => request.method === 'eth_getTransactionReceipt' ? receipt : originalRequest(request);
+    let saved;
+    t.mock.method(runtime, 'confirmDeposit', async args => { saved = args; });
+    const result = await client.recoverBrowserDeposit();
+    assert.equal(result.status, 'confirmed');
+    assert.equal(result.receipt, receipt);
+    assert.equal(result.feeWei, '100000000000');
+    assert.equal(saved.transactionHash, HASH);
+    assert.equal(saved.receiptMetadata.feeWei, result.feeWei);
+    assert.equal(saved.receiptMetadata.fundingAddress, FROM);
+});
+
+test('provider fee changes rejected before signing release the SDK claim for a safe new quote', async t => {
+    priceRpc(t);
+    const { default: runtime } = await import('../services/browserWalletRuntime.js');
+    const client = new ZkapiClient();
+    client.browserMode = true;
+    client.config = { funding };
+    const plan = { operationId: 'quote-operation', phase: 'prepared', next_note_id: 1,
+        commitment: '0x1', secret: 'local-only', amount: 3333334, active_root: '0x77', zero_path: Array(32).fill('0x0') };
+    const submission = { operationId: plan.operationId, submissionId: 'claim' };
+    t.mock.method(client, 'connectWallet', async () => FROM);
+    t.mock.method(client, 'refresh', async () => {});
+    t.mock.method(runtime, 'pendingDeposit', async () => null);
+    t.mock.method(runtime, 'prepareDeposit', async (amount, options) => {
+        assert.equal(amount, plan.amount);
+        assert.equal(options.preparedOperationId, plan.operationId);
+        return plan;
+    });
+    t.mock.method(runtime, 'refreshPendingDeposit', async (_amount, _root, options) => {
+        assert.equal(options.expectedOperationId, plan.operationId);
+        return plan;
+    });
+    t.mock.method(runtime, 'claimPendingDepositSubmission', async expected => {
+        assert.equal(expected, plan.operationId);
+        return submission;
+    });
+    t.mock.method(runtime, 'rememberPendingDepositSubmissionMetadata', async () => {});
+    t.mock.method(runtime, 'rememberPendingDepositTransaction', async () => assert.fail('No transaction was signed'));
+    t.mock.method(runtime, 'markPendingDepositAmbiguous', async () => assert.fail('A known pre-sign rejection is not ambiguous'));
+    let released = 0;
+    t.mock.method(runtime, 'markPendingDepositRetryable', async (hash, claim) => {
+        assert.equal(hash, null);
+        assert.equal(claim, submission);
+        released += 1;
+    });
+    client.setWalletProvider({ request: async ({ method }) => {
+        if (method === 'eth_chainId') return '0xaa36a7';
+        if (method === 'eth_getBalance') return '0xde0b6b3a7640000';
+        if (method === 'eth_call') return '0x77';
+        if (method === 'eth_estimateGas') return '0x100000';
+        if (method === 'eth_getTransactionCount') return '0x0';
+        assert.equal(method, 'eth_sendTransaction');
+        throw Object.assign(new Error('Network fees changed. Refresh the quote before continuing.'),
+            { code: 4100, addressCode: 'address_fee_quote_changed', broadcastPossible: false });
+    } });
+    await assert.rejects(client.deposit('0.003333334', () => {}, { preparedOperationId: plan.operationId }),
+        error => error.code === 4100 && error.broadcastPossible === false && error.transactionStage === 'send');
+    assert.equal(released, 1);
+});
+
+test('preparing an address retry only checks recovery and authorizes exact fee review without signing', async t => {
+    const { default: runtime } = await import('../services/browserWalletRuntime.js');
+    const client = new ZkapiClient();
+    client.browserMode = true;
+    client.config = { funding };
+    client.setWalletProvider({ request: async () => assert.fail('The retry preparation must not open the signer') });
+    t.mock.method(client, 'recoverBrowserDeposit', async () => ({ status: 'ambiguous' }));
+    t.mock.method(runtime, 'pendingDeposit', async () => ({ phase: 'ambiguous' }));
+    let authorized = 0;
+    t.mock.method(runtime, 'authorizePendingDepositRetry', async options => {
+        assert.deepEqual(options, { forFundingQuote: true });
+        authorized += 1;
+        return { phase: 'retry_exact', operationId: 'saved-operation' };
+    });
+    t.mock.method(client, 'refresh', async () => {});
+    assert.deepEqual(await client.prepareDepositRetry(), { status: 'retry_exact', operationId: 'saved-operation' });
+    assert.equal(authorized, 1);
+    t.mock.method(client, 'recoverBrowserDeposit', async () => ({ status: 'confirmed', feeWei: '123' }));
+    assert.deepEqual(await client.prepareDepositRetry(), { status: 'confirmed', feeWei: '123' });
+    assert.equal(authorized, 1);
+});

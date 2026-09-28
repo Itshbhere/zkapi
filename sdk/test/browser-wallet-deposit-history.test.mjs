@@ -475,3 +475,223 @@ test('explicit claimed-note archive preserves private recovery material and dura
     assert.equal(rows.find(row => row.noteId === 7).expiryClaim.transactionHash, HASH);
     assertSanitized(rows);
 });
+
+
+function quoteRuntime() {
+    const runtime = makeRuntime();
+    runtime.config.funding = { billing_asset: 'native_eth', chain_id: 11155111, contract_address: `0x${'22'.repeat(20)}` };
+    let generation = 0;
+    runtime.worker = { call: async operation => {
+        assert.equal(operation, 'generateDeposit');
+        return { secret: `private-note-secret-${++generation}`, registration_commitment: `0x${generation}` };
+    } };
+    runtime.nextDepositPath = async root => ({ note_id: Number(root || 1), active_root: `0x${root || 1}`,
+        siblings: Array(32).fill('0x0') });
+    runtime.prewarmRequestProver = async () => {};
+    return runtime;
+}
+
+test('prefunding drafts persist and rebase across reload without pending deposits, payment history or secret regeneration', async () => {
+    const first = quoteRuntime();
+    const draft = await first.prepareDepositQuote(123, 1n);
+    assert.equal((await readBrowserWallet()).depositQuote.operationId, draft.operationId);
+    assert.equal((await readBrowserWallet()).pendingDeposit, null);
+    assert.equal(first.snapshot().config.pending_deposit, null);
+    assert.equal(first.snapshot().deposits.length, 0);
+    const reloaded = quoteRuntime();
+    reloaded.worker.call = () => assert.fail('Reusing a quote must not generate a second note');
+    const refreshed = await reloaded.prepareDepositQuote(123, 2n);
+    assert.equal(refreshed.operationId, draft.operationId);
+    assert.equal(refreshed.secret, draft.secret);
+    assert.equal(refreshed.commitment, draft.commitment);
+    assert.equal(refreshed.next_note_id, 2);
+    assert.equal(refreshed.active_root, '0x2');
+    assert.equal((await readBrowserWallet()).pendingDeposit, null);
+    assert.equal((await readBrowserWalletSnapshot(DEPLOYMENT)).deposits.length, 0);
+});
+
+test('changing a quote amount atomically replaces only the draft and rejects an old explicit action', async () => {
+    const runtime = quoteRuntime();
+    const first = await runtime.prepareDepositQuote(123, 1n);
+    const replacement = await runtime.prepareDepositQuote(456, 2n);
+    assert.notEqual(first.operationId, replacement.operationId);
+    assert.notEqual(first.secret, replacement.secret);
+    await assert.rejects(runtime.prepareDeposit(123, { preparedOperationId: first.operationId }), /changed in another tab/);
+    assert.equal((await readBrowserWallet()).pendingDeposit, null);
+    const promoted = await runtime.prepareDeposit(456, { preparedOperationId: replacement.operationId });
+    assert.equal(promoted.operationId, replacement.operationId);
+    assert.equal(promoted.secret, replacement.secret);
+    assert.equal(promoted.phase, 'prepared');
+    assert.equal((await readBrowserWallet()).depositQuote, null);
+    await assert.rejects(runtime.prepareDeposit(123, { preparedOperationId: replacement.operationId }), /amount does not match/);
+    assert.equal((await runtime.prepareDepositQuote(456, 2n)).operationId, replacement.operationId);
+    await assert.rejects(runtime.prepareDepositQuote(123, 2n), /amount is fixed/);
+    assert.equal((await readBrowserWallet()).pendingDeposit.amount, 456);
+});
+
+test('concurrent tabs cannot promote a superseded quote or refresh and claim a different deposit', async () => {
+    const first = quoteRuntime();
+    const second = quoteRuntime();
+    const [older, newer] = await Promise.all([first.prepareDepositQuote(123, 1n), second.prepareDepositQuote(456, 2n)]);
+    await assert.rejects(first.prepareDeposit(123, { preparedOperationId: older.operationId }), /changed in another tab/);
+    const current = await second.prepareDeposit(456, { preparedOperationId: newer.operationId });
+    await assert.rejects(first.refreshPendingDeposit(456, 2n, { expectedOperationId: older.operationId }), /changed in another tab/);
+    await assert.rejects(first.claimPendingDepositSubmission(older.operationId), /changed in another tab/);
+    const claimed = await second.claimPendingDepositSubmission(current.operationId);
+    assert.equal(claimed.plan.secret, newer.secret);
+    assert.equal(claimed.plan.active_root, newer.active_root);
+    assert.equal((await readBrowserWallet()).pendingDeposit.submissionId, claimed.submissionId);
+    await assert.rejects(first.claimPendingDepositSubmission(current.operationId), /already awaiting/);
+});
+
+test('an ordinary wallet deposit discards an unused address quote and active notes never prepare another quote', async () => {
+    const runtime = quoteRuntime();
+    const draft = await runtime.prepareDepositQuote(123, 1n);
+    const ordinary = await runtime.prepareDeposit(123);
+    assert.notEqual(ordinary.operationId, draft.operationId);
+    assert.equal((await readBrowserWallet()).depositQuote, null);
+    await assert.rejects(runtime.prepareDeposit(123, { preparedOperationId: draft.operationId }), /changed in another tab/);
+    seedRuntime({ state: state() });
+    await assert.rejects(runtime.prepareDepositQuote(456, 2n), /Recover/);
+});
+
+test('actual receipt fee and funding account survive reload and closure without becoming private history', async () => {
+    seedRuntime({ pendingDeposit: plan() });
+    const runtime = makeRuntime();
+    const fee = { transactionHash: HASH, feeWei: '123000000000', gasUsed: '123', effectiveGasPrice: '1000000000',
+        fundingAddress: `0x${'11'.repeat(20)}`, receiptBlockNumber: 1234, receiptBlockHash: `0x${'22'.repeat(32)}` };
+    await runtime.confirmDeposit(confirmArgs({ transactionHash: HASH, receiptMetadata: fee }));
+    const original = runtime.snapshot().deposits[0];
+    for (const [key, value] of Object.entries(fee)) assert.equal(original[key], value);
+    assertSanitized([original]);
+    const reloaded = makeRuntime();
+    await reloaded.reload();
+    assert.deepEqual(reloaded.snapshot().deposits[0], original);
+    await archiveBrowserWallet('closed', 7);
+    assert.deepEqual((await readBrowserWalletSnapshot(DEPLOYMENT)).deposits[0], original);
+});
+
+test('incomplete or arithmetically invalid fee metadata is omitted instead of displayed as zero', async () => {
+    for (const fee of [null, { feeWei: '0' }, { transactionHash: HASH, feeWei: '12', gasUsed: '123', effectiveGasPrice: '1000000000',
+        fundingAddress: `0x${'11'.repeat(20)}`, receiptBlockNumber: 1234, receiptBlockHash: `0x${'22'.repeat(32)}` }]) {
+        indexedDB.clear();
+        seedRuntime({ pendingDeposit: plan() });
+        const runtime = makeRuntime();
+        await runtime.confirmDeposit(confirmArgs({ transactionHash: HASH, receiptMetadata: fee }));
+        assert.equal(runtime.snapshot().deposits[0].feeWei, undefined);
+        assert.equal(runtime.snapshot().deposits[0].fundingAddress, undefined);
+    }
+});
+
+
+test('a proven pre-broadcast failure can refresh its funding quote without changing the pending operation', async () => {
+    const runtime = quoteRuntime();
+    const draft = await runtime.prepareDepositQuote(123, 1n);
+    await runtime.prepareDeposit(123, { preparedOperationId: draft.operationId });
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, true);
+    const claim = await runtime.claimPendingDepositSubmission(draft.operationId);
+    await runtime.rememberPendingDepositSubmissionMetadata(claim, { from: `0x${'11'.repeat(20)}`, nonce: 0 });
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, false);
+    await assert.rejects(runtime.prepareDepositQuote(123, 2n), /Recover/);
+    await runtime.markPendingDepositRetryable(null, claim);
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, true);
+    const fresh = await runtime.prepareDepositQuote(123, 2n);
+    assert.equal(fresh.operationId, draft.operationId);
+    assert.equal(fresh.secret, draft.secret);
+    assert.equal(fresh.commitment, draft.commitment);
+    assert.equal(fresh.next_note_id, 2);
+    assert.equal((await readBrowserWallet()).depositQuote, null);
+    assert.equal((await runtime.prepareDeposit(123, { preparedOperationId: draft.operationId })).operationId, draft.operationId);
+});
+
+test('signed, ambiguous, legacy, exact-retry and uncertain prepared attempts never become funding quotes', async () => {
+    for (const change of [
+        { phase: 'submitted', transactionHash: HASH },
+        { phase: 'ambiguous' }, { phase: 'retry_exact' },
+        { phase: 'prepared', submissionId: 'claim' },
+        { phase: 'prepared', transactionHashes: [HASH] },
+        { phase: 'prepared', transactionAttempts: [{ hash: HASH }] },
+        { phase: 'prepared', ambiguousSubmissions: [{ submissionId: 'old' }] },
+        { phase: 'prepared', legacyRecovery: true },
+        { phase: 'prepared', submissionFrom: `0x${'11'.repeat(20)}`, submissionNonce: 0 }
+    ]) {
+        indexedDB.clear();
+        seedRuntime({ pendingDeposit: plan({ transactionHash: null, ...change }) });
+        const runtime = quoteRuntime();
+        await runtime.reload();
+        assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, false);
+        await assert.rejects(runtime.prepareDepositQuote(2_000_000, 2n), /Recover/);
+        assert.deepEqual((await readBrowserWallet()).pendingDeposit, plan({ transactionHash: null, ...change }));
+    }
+});
+
+test('explicit retry fee review keeps the exact uncertain calldata across quotes and pre-broadcast failures', async () => {
+    const runtime = quoteRuntime();
+    const pending = plan({ transactionHash: null, phase: 'ambiguous', submissionId: 'unknown-send',
+        submissionFrom: `0x${'11'.repeat(20)}`, submissionNonce: 0,
+        active_root: '0x1', zero_path: Array(32).fill('0x2') });
+    seedRuntime({ pendingDeposit: pending });
+    await assert.rejects(runtime.prepareDepositQuote(pending.amount, 999n), /Recover/);
+    const authorized = await runtime.authorizePendingDepositRetry({ forFundingQuote: true });
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, true);
+    runtime.nextDepositPath = async () => assert.fail('Uncertain exact retry must never refresh its Merkle path');
+    const quoted = await runtime.prepareDepositQuote(pending.amount, 999n);
+    assert.deepEqual(quoted, authorized);
+    assert.equal(quoted.active_root, pending.active_root);
+    assert.deepEqual(quoted.zero_path, pending.zero_path);
+    assert.equal((await runtime.prepareDeposit(pending.amount, { preparedOperationId: pending.operationId })).phase, 'retry_exact');
+    const claim = await runtime.claimPendingDepositSubmission(pending.operationId);
+    assert.equal(claim.plan.phase, 'awaiting_wallet');
+    await runtime.markPendingDepositRetryable(null, claim);
+    assert.equal((await readBrowserWallet()).pendingDeposit.phase, 'retry_exact');
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, true);
+    assert.deepEqual((await runtime.prepareDepositQuote(pending.amount, 123n)).zero_path, pending.zero_path);
+    assert.equal((await readBrowserWallet()).pendingDeposit.ambiguousSubmissions[0].submissionId, 'unknown-send');
+});
+
+test('an existing exact retry needs an explicit fee review before it can be quoted', async () => {
+    const runtime = quoteRuntime();
+    const pending = plan({ transactionHash: null, phase: 'retry_exact', legacyRecovery: true,
+        ambiguousSubmissions: [{ submissionId: 'old-unknown-send' }], zero_path: Array(32).fill('0x2') });
+    seedRuntime({ pendingDeposit: pending });
+    await runtime.reload();
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, false);
+    await assert.rejects(runtime.prepareDepositQuote(pending.amount, 1n), /Recover/);
+    await runtime.authorizePendingDepositRetry({ forFundingQuote: true });
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, true);
+    runtime.nextDepositPath = async () => assert.fail('Do not rebase a legacy exact retry');
+    assert.deepEqual((await runtime.prepareDepositQuote(pending.amount, 999n)).zero_path, pending.zero_path);
+});
+
+test('finalized consumed-slot recovery permits rebasing only the ambiguity it actually resolved', async () => {
+    const runtime = quoteRuntime();
+    const pending = plan({ transactionHash: null, phase: 'retry_exact', legacyRecovery: true,
+        fundingQuoteRetryAuthorized: true, ambiguousSubmissions: [{ submissionId: 'old-unknown-send' }],
+        zero_path: Array(32).fill('0x2'), submissionFrom: `0x${'11'.repeat(20)}`, submissionNonce: 0 });
+    seedRuntime({ pendingDeposit: pending });
+    await runtime.resolvePendingDepositSlotConflict({ operationId: pending.operationId, noteId: pending.next_note_id,
+        amount: pending.amount, commitment: pending.commitment, phase: pending.phase, transactionHashes: [] });
+    assert.equal(runtime.snapshot().config.pending_deposit.funding_quote_available, true);
+    const rebased = await runtime.prepareDepositQuote(pending.amount, 999n);
+    assert.equal(rebased.next_note_id, 999);
+    assert.equal(rebased.operationId, pending.operationId);
+    assert.equal(rebased.secret, pending.secret);
+    assert.deepEqual(rebased.resolvedAmbiguousSubmissionIds, ['old-unknown-send']);
+    assert.deepEqual(rebased.ambiguousSubmissions, pending.ambiguousSubmissions, 'late recovery claims remain saved');
+    assert.equal(runtime.canQuotePendingDeposit({ ...rebased, ambiguousSubmissions:
+        [...rebased.ambiguousSubmissions, { submissionId: 'new-unknown-send' }] }), false);
+});
+
+test('an unresolved late callback blocks both prepared and authorized exact funding quotes', async () => {
+    const runtime = quoteRuntime();
+    for (const phase of ['prepared', 'retry_exact']) {
+        const pending = plan({ transactionHash: null, phase, fundingQuoteRetryAuthorized: true,
+            ...(phase === 'retry_exact' ? { ambiguousSubmissions: [{ submissionId: 'old' }] } : {}) });
+        seedRuntime({ pendingDeposit: pending, lateDepositAttempts: [{ operationId: pending.operationId,
+            status: 'submitted_late', transactionHash: HASH }] });
+        await runtime.reload();
+        assert.equal(runtime.canQuotePendingDeposit(pending), false);
+        await assert.rejects(runtime.prepareDepositQuote(pending.amount, 999n), /Recover/);
+        if (phase === 'retry_exact') await assert.rejects(runtime.authorizePendingDepositRetry({ forFundingQuote: true }), /unresolved/);
+    }
+});

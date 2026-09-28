@@ -189,12 +189,74 @@ It returns `{ amount, ethAmount, depositWei, usdAmount, priceUpdatedAt, price,
 chainId, contractAddress }`. Amount and wei fields are exact decimal strings;
 `priceUpdatedAt` is Unix seconds. Persist this quote with the host's deposit
 intent. The ETH principal remains fixed while a user funds the address; a
-fresh quote must never silently change it. Fees are separate: the host's
-signer quotes its capped transaction reserve, polls receipt of funds, and
-requires an explicit Next action before calling
-`client.deposit(quote.ethAmount, onStatus)`. Native deposits accept up to nine
+fresh quote must never silently change it. Native deposits accept up to nine
 ETH decimal places. Recovery validates the exact saved calldata and payable
 value, and keeps the same journal rules as token deposits.
+
+For a browser-controlled funding address, prepare the actual native deposit
+before quoting its fee:
+
+```js
+const prepared = await client.prepareDepositQuote(quote.ethAmount, { from: fundingAddress });
+// Simulate prepared.transaction using the host's public RPC. When the address
+// is unfunded, override only that sender's balance, never contract storage.
+// Show estimated fee, additional buffer and principal + reserved fee separately.
+// Refresh the preparation and fee quote before the explicit Next action.
+await client.deposit(quote.ethAmount, onStatus, { preparedOperationId: prepared.operationId });
+```
+
+`prepareDepositQuote` is available only for native ETH browser wallets. It
+returns `{ operationId, commitment, amount, depositWei, chainId,
+contractAddress, transaction: { from, to, data, value } }`; it never returns
+note secrets, connects a wallet, claims a submission, signs, or broadcasts.
+It stores the note secret in a separate durable `depositQuote` draft, which is
+not a pending deposit or payment-history entry. Read-only polling and reload
+cannot promote it. Same-amount refreshes retain the commitment and operation
+identity while updating the Merkle append path. Changing the amount replaces
+only the unused draft. An active note or unresolved deposit must be recovered
+before another quote is prepared. After a proven pre-broadcast rejection, an
+existing pending deposit can be requoted only when
+`config.pending_deposit.funding_quote_available === true`. Its principal,
+commitment and operation remain fixed. Claimed, signed and ambiguous
+transactions are excluded; hosts must use this authoritative flag rather than
+infer safety from the visible transaction hash. SDK storage keeps drafts
+deployment-bound.
+
+For an ambiguous funding-address deposit, an explicit user action may call
+`await client.prepareDepositRetry(onStatus)` to review retry fees. This checks
+for a mined deposit first and returns `status: "confirmed"` if recovered.
+Otherwise it authorizes only an exact retry fee review, including an existing
+saved `retry_exact` from an older client. It does not sign or submit. The
+funding-quote flag then permits simulation of the saved calldata without
+refreshing its Merkle path. After the quote is shown, a separate explicit Next
+uses the same `preparedOperationId`. A pre-broadcast fee rejection keeps that
+exact path for the next quote. Only finalized consumed-slot recovery permits
+rebasing an uncertain old operation, and it records which ambiguity was
+resolved while retaining the original claims for late recovery. Ordinary
+MetaMask retry behavior remains unchanged.
+
+An explicit deposit with `preparedOperationId` atomically promotes that exact
+draft under the wallet's cross-tab lock. A stale operation or changed principal
+fails before any submission. An ordinary deposit without the option (including
+MetaMask) discards an unused draft. Refreshing a Merkle path never changes the
+principal or commitment. The host must bind its displayed fee authorization to
+the returned operation and commitment and enforce that ceiling again on the
+actual transaction; a quote is not permission to sign. The actual transaction
+continues to simulate the current vault state and may need a new quote/top-up
+if network fees increase. Unsupported balance overrides must fail with a clear
+estimation error rather than silently substituting a fixed reserve.
+
+After native deposit confirmation, `client.snapshot().deposits` may include
+`feeWei`, `fundingAddress`, `gasUsed`, `effectiveGasPrice`,
+`receiptBlockNumber`, and `receiptBlockHash`. These fields are stored with the
+existing public deposit history, including across reload or note closure.
+`feeWei` is mined `gasUsed * effectiveGasPrice`, not the maximum gas limit or
+fee quote. The SDK verifies the receipt event, exact mined transaction and
+canonical block before recording it. Deposit recovery checks saved transaction
+hashes for that same evidence before clearing its journal. Missing or historical
+fee evidence leaves these fields absent; hosts must show unavailable rather
+than zero. The public funding-address balance is read separately: it may include
+previous funds and is not necessarily only this deposit's unused fee buffer.
 
 `client.formatBillingAmount(units)` returns decimal ETH on native deployments;
 `client.formatMoney(units)` uses the current verified quote, returning `—`
