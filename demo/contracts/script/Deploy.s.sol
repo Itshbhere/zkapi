@@ -31,7 +31,7 @@ contract DemoBillingToken is ERC20 {
 ///         verifier, and the ZkApiVault, then writes a
 ///         deployment manifest JSON to $OUTPUT_PATH with the exact keys the
 ///         demo harness reads: {vault, billingToken, treasury, noteTtl}.
-/// @dev    Reads four environment variables:
+/// @dev    Reads these environment variables:
 ///           PRIVATE_KEY – deployer key (becomes vault owner).
 ///           TREASURY    – operator payout address.
 ///           MINT_AMOUNT – billing tokens minted to the deployer (depositor).
@@ -40,11 +40,13 @@ contract DemoBillingToken is ERC20 {
 ///           CLEARANCE_SIGNING_KEY_X/Y – deployment-pinned Baby-JubJub key.
 ///           BILLING_TOKEN – existing 6-decimal token; required on Mainnet.
 ///           CHALLENGE_PERIOD_SECONDS – escape delay; defaults to 24 hours.
+///           CHAIN_ID – optional expected chain ID; mismatches abort deployment.
+///           REQUEST_CHARGE_CAP – positive per-request credit limit; defaults to 1,000,000.
 contract DeployScript is Script {
     uint64 internal constant NOTE_TTL = 30 days;
-    uint128 internal constant REQUEST_CHARGE_CAP = 1_000_000;
 
     function run() external {
+        require(block.chainid == vm.envOr("CHAIN_ID", block.chainid), "CHAIN_ID does not match RPC");
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         uint256 mintAmount = vm.envOr("MINT_AMOUNT", uint256(0));
         string memory outputPath = vm.envString("OUTPUT_PATH");
@@ -54,11 +56,25 @@ contract DeployScript is Script {
         uint256 clearanceKeyX = vm.envUint("CLEARANCE_SIGNING_KEY_X");
         uint256 clearanceKeyY = vm.envUint("CLEARANCE_SIGNING_KEY_Y");
         address billingTokenAddress = vm.envOr("BILLING_TOKEN", address(0));
-        uint64 challengePeriod = uint64(vm.envOr("CHALLENGE_PERIOD_SECONDS", uint256(24 hours)));
+        uint256 challengePeriodValue = vm.envOr("CHALLENGE_PERIOD_SECONDS", uint256(24 hours));
+        require(
+            challengePeriodValue > 0 && challengePeriodValue <= type(uint64).max,
+            "CHALLENGE_PERIOD_SECONDS must fit a positive uint64"
+        );
+        uint64 challengePeriod = uint64(challengePeriodValue);
+        uint256 requestChargeCapValue = vm.envOr("REQUEST_CHARGE_CAP", uint256(1_000_000));
+        require(
+            requestChargeCapValue > 0 && requestChargeCapValue <= type(uint128).max,
+            "REQUEST_CHARGE_CAP must fit a positive uint128"
+        );
+        uint128 requestChargeCap = uint128(requestChargeCapValue);
         address poseidonLibrary = vm.envOr("POSEIDON_ADDRESS", address(0));
         // Treasury receives the operator's consumed amount on settlement. Keep
         // it separate from the depositor so consumption is visible in the demo.
-        address treasury = vm.envOr("TREASURY", address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8));
+        address treasury = (block.chainid == 31337 || block.chainid == 1337)
+            ? vm.envOr("TREASURY", address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8))
+            : vm.envAddress("TREASURY");
+        require(treasury != address(0), "TREASURY must be nonzero");
 
         vm.startBroadcast(deployerKey);
 
@@ -80,7 +96,7 @@ contract DeployScript is Script {
             treasury,
             NOTE_TTL,
             challengePeriod,
-            REQUEST_CHARGE_CAP,
+            requestChargeCap,
             address(proofAdapter),
             stateKeyX,
             stateKeyY,
@@ -92,12 +108,16 @@ contract DeployScript is Script {
         vm.stopBroadcast();
 
         string memory manifest = "deployment";
+        vm.serializeUint(manifest, "chainId", block.chainid);
+        vm.serializeUint(manifest, "protocolVersion", 2);
+        vm.serializeString(manifest, "circuitId", "zkapi-v2-note-bound-v1");
+        vm.serializeAddress(manifest, "owner", deployer);
         vm.serializeAddress(manifest, "vault", address(vault));
         vm.serializeAddress(manifest, "billingToken", billingTokenAddress);
         vm.serializeAddress(manifest, "proofAdapter", address(proofAdapter));
         vm.serializeAddress(manifest, "poseidonLibrary", poseidonLibrary);
         vm.serializeAddress(manifest, "treasury", treasury);
-        vm.serializeUint(manifest, "requestChargeCap", REQUEST_CHARGE_CAP);
+        vm.serializeUint(manifest, "requestChargeCap", requestChargeCap);
         vm.serializeUint(manifest, "challengePeriod", challengePeriod);
         vm.serializeUint(manifest, "stateSigningKeyX", stateKeyX);
         vm.serializeUint(manifest, "stateSigningKeyY", stateKeyY);

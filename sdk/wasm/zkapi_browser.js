@@ -59,6 +59,22 @@ export class BrowserRequestProver {
 if (Symbol.dispose) BrowserRequestProver.prototype[Symbol.dispose] = BrowserRequestProver.prototype.free;
 
 /**
+ * @returns {string}
+ */
+export function browser_circuit_id() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.browser_circuit_id();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * @param {string} config_json
  * @param {string} args_json
  * @returns {string}

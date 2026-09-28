@@ -669,18 +669,27 @@ impl AuthService {
         .await
     }
 
-    /// Build the integration config for the client UI, probing the server's
-    /// dashboard summary for upstream metadata and credit scale.
+    /// Build the integration config for the client UI. Capabilities come from
+    /// public health, as at startup; the optional operator dashboard supplies
+    /// only upstream metadata and credit scale.
     pub async fn zkapi_config(&self) -> ZkapiConfig {
         let summary_url = format!(
             "{}/v1/dashboard/summary",
             self.config.protocol_server_url.trim_end_matches('/')
         );
-        let summary =
-            tokio::time::timeout(Duration::from_secs(2), fetch_json::<Value>(&summary_url))
-                .await
-                .ok()
-                .and_then(Result::ok);
+        let health_url = format!(
+            "{}/health",
+            self.config.protocol_server_url.trim_end_matches('/')
+        );
+        let (summary, health) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(2), fetch_json::<Value>(&summary_url)),
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                fetch_json::<ServerHealthSnapshot>(&health_url)
+            ),
+        );
+        let summary = summary.ok().and_then(Result::ok);
+        let health = health.ok().and_then(Result::ok);
         let server = summary.as_ref().map(|s| &s["server"]);
         let upstream_kind = server
             .and_then(|s| s["upstream_kind"].as_str())
@@ -689,9 +698,12 @@ impl AuthService {
             .and_then(|s| s["credits_per_usd"].as_f64())
             .filter(|v| *v > 0.0)
             .unwrap_or(CREDITS_PER_USD);
-        let direct_openrouter_available = server
-            .and_then(|server| server["openrouter_leases_enabled"].as_bool())
-            .unwrap_or(false);
+        let direct_openrouter_available = health.as_ref().is_some_and(|health| {
+            health
+                .request_modes
+                .iter()
+                .any(|mode| mode == "direct_openrouter")
+        });
         let active_lease = self
             .direct_lease
             .lock()
@@ -2950,6 +2962,62 @@ mod wallet_lifecycle_tests {
         ));
         assert!(pending_directory.path().join("note_state.json").exists());
         assert!(!pending_directory.path().join("retired").exists());
+    }
+}
+
+#[cfg(test)]
+mod deployment_capability_tests {
+    use axum::{routing::get, Json, Router};
+    use serde_json::json;
+
+    use super::{AuthConfig, AuthService, RequestMode};
+
+    #[tokio::test]
+    async fn direct_capability_matches_public_health_even_when_dashboard_is_private_or_stale() {
+        // Reproduce a public deployment that blocks all dashboard routes, and
+        // ensure a stale positive dashboard flag cannot enable absent health
+        // capabilities (including a failed health request).
+        for (health_modes, public_dashboard, expected) in [
+            (Some(vec!["proxy", "direct_openrouter"]), false, true),
+            (Some(vec!["proxy"]), true, false),
+            (None, true, false),
+        ] {
+            let mut router = Router::new();
+            if let Some(modes) = health_modes {
+                let health = json!({
+                    "status": "ok", "protocol_version": 2, "chain_id": 11155111,
+                    "contract_address": "0x1234", "current_root": "0x0",
+                    "provider": "metered", "policy_enabled": false,
+                    "request_modes": modes,
+                });
+                router = router.route("/health", get(move || async move { Json(health) }));
+            }
+            if public_dashboard {
+                router = router.route(
+                    "/v1/dashboard/summary",
+                    get(|| async { Json(json!({"server": {"openrouter_leases_enabled": true}})) }),
+                );
+            }
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let state_dir = tempfile::tempdir().unwrap();
+            let service = AuthService::new(AuthConfig {
+                state_dir: state_dir.path().to_path_buf(),
+                protocol_server_url: url,
+                request_mode: RequestMode::DirectOpenrouter,
+                ..Default::default()
+            })
+            .unwrap();
+            assert_eq!(
+                service.ensure_request_mode_available().await.is_ok(),
+                expected
+            );
+            let config = service.zkapi_config().await;
+            assert_eq!(config.request_mode, RequestMode::DirectOpenrouter);
+            assert_eq!(config.direct_openrouter_available, expected);
+            server.abort();
+        }
     }
 }
 

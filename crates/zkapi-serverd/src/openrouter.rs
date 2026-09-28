@@ -16,6 +16,7 @@ pub struct CreatedKey {
 #[derive(Debug, Clone, Default)]
 pub struct KeyUsage {
     pub usage_usd: f64,
+    pub disabled: bool,
 }
 
 pub struct OpenRouterProvisioner {
@@ -45,9 +46,9 @@ struct KeyData {
     #[serde(default)]
     hash: String,
     #[serde(default)]
-    usage: f64,
+    usage: Option<f64>,
     #[serde(default)]
-    byok_usage: f64,
+    byok_usage: Option<f64>,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -56,6 +57,8 @@ struct KeyData {
     expires_at: Option<String>,
     #[serde(default)]
     include_byok_in_limit: bool,
+    #[serde(default)]
+    disabled: bool,
 }
 
 impl OpenRouterProvisioner {
@@ -173,11 +176,63 @@ impl OpenRouterProvisioner {
         let envelope: GetKeyEnvelope = serde_json::from_str(&text).map_err(|error| {
             ServerError::Internal(format!("invalid OpenRouter usage response: {error}"))
         })?;
+        let usage = envelope
+            .data
+            .usage
+            .filter(|usage| usage.is_finite() && *usage >= 0.0);
+        let byok_usage = envelope
+            .data
+            .byok_usage
+            .filter(|usage| usage.is_finite() && *usage >= 0.0);
+        let usage_usd = match (usage, byok_usage) {
+            (Some(usage), Some(byok_usage)) if (usage + byok_usage).is_finite() => {
+                usage + byok_usage
+            }
+            _ => {
+                return Err(ServerError::Internal(
+                    "OpenRouter returned incomplete or invalid usage".to_string(),
+                ))
+            }
+        };
         Ok(KeyUsage {
             // `include_byok_in_limit` is true for these keys, and OpenRouter
             // reports BYOK usage separately from ordinary credit usage.
-            usage_usd: envelope.data.usage.max(0.0) + envelope.data.byok_usage.max(0.0),
+            usage_usd,
+            disabled: envelope.data.disabled,
         })
+    }
+
+    /// Stop new spending while retaining the usage record for settlement.
+    pub async fn disable_key(&self, hash: &str) -> Result<(), ServerError> {
+        let response = self
+            .http
+            .patch(self.key_url(hash))
+            .bearer_auth(&self.management_key)
+            .json(&json!({ "disabled": true }))
+            .send()
+            .await
+            .map_err(|error| {
+                ServerError::Internal(format!("OpenRouter key disable failed: {error}"))
+            })?;
+        let status = response.status();
+        let text = response.text().await.map_err(|error| {
+            ServerError::Internal(format!("OpenRouter key disable response failed: {error}"))
+        })?;
+        if !status.is_success() {
+            return Err(ServerError::Internal(format!(
+                "OpenRouter key disable returned {status}: {}",
+                truncate(&text, 200)
+            )));
+        }
+        let envelope: GetKeyEnvelope = serde_json::from_str(&text).map_err(|error| {
+            ServerError::Internal(format!("invalid OpenRouter key disable response: {error}"))
+        })?;
+        if !envelope.data.disabled {
+            return Err(ServerError::Internal(
+                "OpenRouter did not disable the key".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     pub async fn delete_key(&self, hash: &str) -> Result<(), ServerError> {
@@ -190,13 +245,24 @@ impl OpenRouterProvisioner {
             .map_err(|error| {
                 ServerError::Internal(format!("OpenRouter key deletion failed: {error}"))
             })?;
-        if !response.status().is_success() {
+        // Deletion is idempotent: a lost success response must be recoverable.
+        if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(ServerError::Internal(format!(
                 "OpenRouter key deletion returned {status}: {}",
                 truncate(&text, 200)
             )));
+        }
+        if response.status().is_success() && response.status() != reqwest::StatusCode::NO_CONTENT {
+            let body: serde_json::Value = response.json().await.map_err(|error| {
+                ServerError::Internal(format!("invalid OpenRouter key deletion response: {error}"))
+            })?;
+            if body["deleted"] != true {
+                return Err(ServerError::Internal(
+                    "OpenRouter did not confirm key deletion".to_string(),
+                ));
+            }
         }
         Ok(())
     }

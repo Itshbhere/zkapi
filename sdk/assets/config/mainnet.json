@@ -20,15 +20,17 @@
       "x": "0x1bec3c118854b4ffcde1fb6dead674808c0c38e4f45b54c33984460bb0fb8d2b",
       "y": "0x239f4e558d7dfde57e0c23066e6cf94e628d7b6b49e728a5ce0b2d0ab0992898"
     },
-    "request_proving_key_sha256": "faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e",
-    "withdrawal_proving_key_sha256": "92a90139c87ae0e331fddc92a36e231047e1b4ae95474521d9a75f9b5a7bd0ab",
+    "request_proving_key_sha256": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
+    "withdrawal_proving_key_sha256": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
     "openrouter_inference_base": "https://openrouter.ai/api/v1",
-    "verifier_url": "https://verifier2.openanonymity.ai"
+    "verifier_url": "https://verifier2.openanonymity.ai",
+    "circuit_id": "zkapi-v2-note-bound-v1"
   },
   "proving_keys_base_url": "./proofs/",
   "credits_per_usd": 1000000,
   "suggested_deposit_amount": 2000000,
   "billing_token_symbol": "USDC",
   "billing_token_decimals": 6,
-  "require_oa_key_source": true
+  "require_oa_key_source": true,
+  "deployment_status": "migration_required"
 }

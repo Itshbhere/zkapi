@@ -10,25 +10,33 @@ git submodule update --init --recursive
 cargo build --release --bin zkapi
 ```
 
-Start the prompt-private local API on Ethereum Mainnet (real USDC and ETH for gas):
+The current note-bound test deployment is Sepolia, shown below. The historical
+Mainnet deployment has not migrated: current clients reject its legacy circuit.
+Keep the original client and wallet data for existing Mainnet withdrawals.
+
+The Mainnet command below is a reference for a future compatible deployment;
+it cannot currently fund the historical vault with the new client:
 
 ```bash
 ./target/release/zkapi --require-oa-org-key-source client \
   --mode direct-openrouter --initial-credits 2000000 --fund-with-cast
 ```
 
-The suggested deposit is 2,000,000 base units (`2 USDC`). The selected wallet must
-already hold at least that much USDC plus Mainnet ETH for approve, deposit,
-and withdrawal gas. For a small test, `0.003 ETH` provides reasonable
-headroom at low gas prices; check the current gas price before funding.
+For a future compatible Mainnet deployment, this command would require
+2,000,000 base units (`2 USDC`) plus ETH for approval, deposit and withdrawal
+gas. Estimate those transactions against its deployed contracts before funding.
 
-Or use Sepolia (free test token, but Sepolia ETH is needed for gas):
+Use the fresh Sepolia deployment (free test token, but Sepolia ETH is needed for gas):
 
 ```bash
 ./target/release/zkapi --require-oa-org-key-source client \
-  --deployment https://d33l4w2z2nh4cg.cloudfront.net/config.json \
+  --deployment https://d24dltwirql2l5.cloudfront.net/config.json \
   --mode direct-openrouter --initial-credits 5000000 --fund-with-cast
 ```
+
+This Sepolia manifest selects the fresh September 22 vault and the
+`zkapi-v2-note-bound-v1` circuit. Start a new wallet for this deployment; retain
+the old deployment manifest and wallet data to recover any legacy notes.
 
 Follow the terminal funding prompts. The default `http://127.0.0.1:11434/`
 page contains local-client help and links to status; OA Chat is a separate app.
@@ -38,8 +46,10 @@ the funding flow can mint free test credits when needed; the address still needs
 Sepolia ETH for gas. Preserve the deployment and state-directory settings when
 restarting an existing wallet.
 
-The larger Sepolia test-token deposit supports proof-backed, cumulative
-dollar-budget lease windows. A child key belongs to one chat session. Its
+The native Sepolia flow reserves 50,000 credits ($0.05) per lease with a
+five-minute lifetime. This is the tested native reservation, not an asserted
+universal limit for browser-selected budgets. The remaining deposit stays
+available for subsequent leases. A child key belongs to one chat session. Its
 answer, title generation, and follow-up requests reuse that key and may run in
 parallel. The client replaces it only on expiry, explicit settlement, provider
 rejection, or dollar-cap exhaustion. Requests sharing a key are linkable to
@@ -84,7 +94,7 @@ For a client running against Sepolia, select the same manifest:
 
 ```bash
 ./target/release/zkapi withdraw \
-  --deployment https://d33l4w2z2nh4cg.cloudfront.net/config.json \
+  --deployment https://d24dltwirql2l5.cloudfront.net/config.json \
   --destination 0xYourPayoutAddress
 ```
 

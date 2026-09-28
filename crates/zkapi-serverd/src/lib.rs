@@ -3,6 +3,7 @@
 //! This crate implements proof verification, nullifier storage, API execution,
 //! XMSS signing, and HTTP routes for the zkAPI server.
 
+pub mod challenge_service;
 pub mod config;
 pub mod dashboard;
 pub mod error;

@@ -1,0 +1,5 @@
+FROM nginx:1.28-alpine
+
+# Public proving artifacts must come from the same checkout as the daemon image.
+COPY protocol/setup/v2/request.pk protocol/setup/v2/withdrawal.pk protocol/setup/v2/manifest.json /srv/zkapi/proofs/
+COPY docker/aws/nginx.conf /etc/nginx/nginx.conf

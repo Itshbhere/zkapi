@@ -119,8 +119,8 @@ pub struct OpenRouterLeaseConfig {
     pub source: OpenRouterLeaseSourceConfig,
     /// Runtime-key validity window.
     pub ttl_seconds: u64,
-    /// Delay after key expiry before reading aggregate usage, allowing the
-    /// provider's usage counters to become consistent.
+    /// Delay after expiry (and after disabling directly managed keys) before
+    /// reading aggregate usage, allowing in-flight calls and accounting to drain.
     pub settlement_grace_seconds: u64,
     /// Background settlement scan interval.
     pub settlement_poll_seconds: u64,

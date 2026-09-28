@@ -8,7 +8,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY protocol ./protocol
 
-RUN cargo build --release -p zkapi-cli -p zkapi-clientd -p zkapi-indexerd
+RUN cargo build --locked --release -p zkapi-cli -p zkapi-clientd -p zkapi-indexerd -p zkapi-serverd
 
 FROM debian:bookworm-slim
 
@@ -22,10 +22,14 @@ WORKDIR /srv/zkapi
 COPY --from=builder /app/target/release/zkapi /usr/local/bin/zkapi
 COPY --from=builder /app/target/release/zkapi-clientd /usr/local/bin/zkapi-clientd
 COPY --from=builder /app/target/release/zkapi-indexerd /usr/local/bin/zkapi-indexerd
+COPY --from=builder /app/target/release/zkapi-challenged /usr/local/bin/zkapi-challenged
+COPY --from=builder /app/protocol/setup/v2 /srv/zkapi/protocol/setup/v2
+COPY --chmod=755 docker/aws/run-daemon.sh /usr/local/bin/zkapi-run
 
 USER zkapi
 
 ENV RUST_LOG=info
+ENV ZKAPI_PROOF_SETUP_DIR=/srv/zkapi/protocol/setup/v2
 VOLUME ["/data"]
 
 ENTRYPOINT ["zkapi-clientd"]

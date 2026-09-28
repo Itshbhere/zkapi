@@ -42,6 +42,14 @@ private proof or key issuance requests.
 Never include note secrets, key values, proof bodies, or wallet transactions
 in host logs.
 
+This SDK requires `proof_setup.circuit_id: "zkapi-v2-note-bound-v1"` in the
+deployment manifest and matching `trusted_deployment.circuit_id` in the host
+config. Legacy unbound deployments are rejected before funding. This circuit
+change requires new setup/verifier artifacts and a newly deployed vault;
+changing only the manifest label does not migrate a deployment or its notes.
+Retain legacy wallet data and the corresponding legacy recovery client for
+existing funds until that deployment has been safely retired.
+
 In the host build:
 
 ```js

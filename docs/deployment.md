@@ -1,7 +1,27 @@
 # Deployment
 
-This is the v2 deployment sequence. It deploys the real Groth16 adapter; there
+This is the v2 wire-format deployment sequence for circuit
+`zkapi-v2-note-bound-v1`. This repair requires a fresh verifier and vault; do
+not reuse the historical Mainnet/Sepolia vault addresses. A packaged browser
+config retains `deployment_status: "migration_required"` until its addresses,
+URLs, deployment ID and key hashes are replaced and independently verified.
+Sepolia now pins the accepted fresh deployment; Mainnet remains guarded.
+See [circuit migration and setup trust](note-binding-review.md).
+The [September 22 Sepolia deployment record](deployments/sepolia-note-bound-20260922.md)
+contains the running test endpoint, addresses and completed acceptance evidence.
+The commands below describe provisioning a separate fresh deployment; their
+example limits are configurable and are not the live Sepolia deployment's pins.
+
+This sequence deploys the real Groth16 adapter; there
 is no mock adapter or Stwo process in the public path.
+
+The note-binding revision requires a fresh vault and matching setup, adapter,
+server, and client artifacts. Publish `proof_setup.circuit_id` as
+`zkapi-v2-note-bound-v1` only for that deployment; browser configurations must
+also pin `trusted_deployment.circuit_id` to the same value. Updated CLI and
+browser clients reject missing or legacy circuit IDs before funding. Existing
+unbound notes are incompatible with the new circuit: preserve the old wallet
+and recovery tools for legacy funds rather than relabeling the old deployment.
 
 ## 1. Build and choose server keys
 
@@ -31,7 +51,9 @@ export CLEARANCE_SIGNING_KEY_X='0x...'
 export CLEARANCE_SIGNING_KEY_Y='0x...'
 export MINT_AMOUNT='1000000000'
 export RPC_URL='https://...'
-export CHAIN_ID='1'
+export CHAIN_ID='11155111'
+export REQUEST_CHARGE_CAP='1000000'
+mkdir -p "$PWD/../../.demo"
 export OUTPUT_PATH="$PWD/../../.demo/deployment-v2.json"
 
 export POSEIDON_ADDRESS=$(forge create \
@@ -47,7 +69,9 @@ forge script script/Deploy.s.sol:DeployScript \
 The script deploys the 6-decimal demo billing token, circuit-specific
 `Groth16ProofAdapter`, and immutable-key `ZkApiVault`, then writes their
 addresses and client parameters to `OUTPUT_PATH`. The demo token has a public
-`mint` and has no value.
+`mint` and has no value. `CHAIN_ID` is checked against the connected RPC, and
+`TREASURY` is required outside local development chains. Keep the configured
+request cap identical in the vault, server, and client manifest.
 
 For Ethereum Mainnet, set `BILLING_TOKEN` to an existing 6-decimal production
 token and leave `MINT_AMOUNT=0`. The script refuses to create the freely
@@ -57,6 +81,7 @@ before deployment:
 
 ```bash
 export BILLING_TOKEN='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+export CHAIN_ID='1'
 export MINT_AMOUNT=0
 ```
 
@@ -92,7 +117,7 @@ export ZKAPI_CLEAR_SEED='0x...'
   --protocol-version 2 \
   --chain-id "$CHAIN_ID" \
   --contract-address "$VAULT" \
-  --request-charge-cap 1000000 \
+  --request-charge-cap "$REQUEST_CHARGE_CAP" \
   --proof-setup-dir "$PWD/protocol/setup/v2" \
   serverd --listen 127.0.0.1:3000 --provider metered \
   --indexer-url http://127.0.0.1:3001 \
@@ -115,8 +140,18 @@ route `/v1/tree/*` to indexerd. Never expose `/v1/dashboard/recent` or
 decoded prompts and responses in memory. Keep them reachable only from a
 loopback-bound local daemon. Do not expose the OpenRouter key or signing seeds
 in the client manifest, image, shell history, or repository. The management
-key must have permission to create, list, inspect, and delete OpenRouter API
+key must have permission to create, list, inspect, disable, and delete OpenRouter API
 keys.
+
+Direct OpenRouter retirement disables the key before collecting usage, waits
+the configured settlement grace, and requires successful deletion before
+signing the next state. Keep background settlement running: disable, usage,
+and deletion failures remain pending and are retried. The provider's aggregate
+API has no finalized-receipt guarantee; set the grace to cover in-flight
+requests and accounting delay, and use the OA receipt path when that
+assumption is unacceptable. Audit/revoke outstanding keys from deployments
+that finalized leases before deleting keys; already-finalized legacy rows
+cannot retroactively correct their signed balance.
 
 As a verifier-backed alternative, configure a dedicated credential on an OA
 org and start serverd with the org source instead of
@@ -129,7 +164,7 @@ export ZKAPI_OA_ORG_SHARED_SECRET='...'
   --protocol-version 2 \
   --chain-id "$CHAIN_ID" \
   --contract-address "$VAULT" \
-  --request-charge-cap 1000000 \
+  --request-charge-cap "$REQUEST_CHARGE_CAP" \
   --proof-setup-dir "$PWD/protocol/setup/v2" \
   serverd --listen 127.0.0.1:3000 \
   --oa-org-url https://org.example \
@@ -156,6 +191,12 @@ daemon rejects redirects and any lease that attempts to substitute either
 origin or downgrade to a direct key.
 
 ## 4. Publish client parameters
+
+Publish `proof_setup.circuit_id: "zkapi-v2-note-bound-v1"` plus the SHA-256
+hashes of the exact new request and withdrawal proving keys. Pin that circuit
+ID in `trusted_deployment.circuit_id` too. Replace the packaged deployment pins
+and remove `deployment_status: "migration_required"` only after the new vault,
+server, indexer and challenge service pass the deployment acceptance run.
 
 Publish the vault address, chain ID, request cap, the four public signing-key
 coordinates, public base URL, exact Git revision, and exact setup files. Client

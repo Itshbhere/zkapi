@@ -8,6 +8,8 @@ export class BrowserRequestProver {
     prepare_request(config_json: string, state_json: string, args_json: string): string;
 }
 
+export function browser_circuit_id(): string;
+
 export function browser_complete_response(config_json: string, args_json: string): string;
 
 export function browser_confirm_deposit(config_json: string, args_json: string): string;
@@ -31,6 +33,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_browserrequestprover_free: (a: number, b: number) => void;
+    readonly browser_circuit_id: () => [number, number];
     readonly browser_complete_response: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly browser_confirm_deposit: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly browser_generate_deposit: () => [number, number, number, number];

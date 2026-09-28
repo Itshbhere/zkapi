@@ -1,5 +1,10 @@
 # zkAPI EF
 
+This checkout includes the candidate repairs from the September 22 review.
+The note-bound circuits require a fresh vault and setup; the historical public
+deployments are not upgraded by these source changes. See the [migration and
+security assumptions](docs/note-binding-review.md) and [challenge service](docs/challenge-service.md).
+
 zkAPI is a private, prepaid API client. A user deposits billing credits into an
 Ethereum vault, then proves locally that an unlinkable private note can pay for
 each request. It supports the existing server-proxy mode and a prompt-private
@@ -33,14 +38,16 @@ submodule or installing Rust. See [SDK integration](sdk/README.md).
 npm ci
 npm test
 npm run build:browser # SDK assets for Sepolia, not a chat application
-npm run build:mainnet # SDK assets for the existing mainnet vault
+npm run build:mainnet # SDK assets; historical Mainnet deployment remains guarded
 npm pack             # installable browser SDK
 ```
 
 The host's own build emits the SDK assets and configures its privacy transport,
-asset URLs, and selected network before wallet initialization. Mainnet uses
-real USDC and ETH; the existing contract and expiry behavior are unchanged.
-No setup ceremony or on-chain deployment is needed for this extraction.
+asset URLs, and selected network before wallet initialization. Sepolia pins the
+[fresh test deployment](docs/deployments/sepolia-note-bound-20260922.md).
+Mainnet uses real USDC and ETH; its historical configuration remains guarded
+until a reviewed note-bound vault and new client pins replace it. Legacy
+manifests are rejected before funding.
 
 ## Build and test the Rust clients
 

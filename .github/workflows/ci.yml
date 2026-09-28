@@ -42,10 +42,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Build app crates
-        run: cargo build --workspace --exclude zkapi-integration-tests
+        run: cargo build --release --workspace
 
       - name: Test app crates
-        run: cargo test --workspace --exclude zkapi-integration-tests
+        run: cargo test --release --workspace
+
+      - name: Verify proofs from the shipped browser WASM
+        run: cargo run --release --manifest-path protocol/rust/Cargo.toml -p zkapi-proof --example wasm_roundtrip -- "$PWD/scripts/prove-browser-fixture.mjs" "$PWD/sdk"
 
       - name: Clippy app crates
         run: cargo clippy --workspace --exclude zkapi-integration-tests -- -D warnings
@@ -83,7 +86,7 @@ jobs:
         run: cargo clippy --manifest-path protocol/rust/Cargo.toml --workspace -- -D warnings
 
       - name: Test protocol Rust workspace
-        run: cargo test --manifest-path protocol/rust/Cargo.toml --workspace -- --test-threads=1
+        run: cargo test --release --manifest-path protocol/rust/Cargo.toml --workspace -- --test-threads=1
 
   contracts:
     runs-on: ubuntu-latest
