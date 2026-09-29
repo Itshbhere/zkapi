@@ -630,6 +630,7 @@ class ZkapiClient extends EventTarget {
 
     async prepareDepositQuote(amountInput, { from } = {}) {
         if (!this.initialized) await this.init();
+        await this.ensureTestnetAccess();
         if (!this.isNativeEthFunding) {
             throw new Error('Prefunding deposit quotes require a native ETH browser wallet.');
         }
@@ -678,6 +679,7 @@ class ZkapiClient extends EventTarget {
         };
         throwIfCancelled();
         if (!this.initialized) await this.init();
+        await this.ensureTestnetAccess({ signal, interactive: true });
         throwIfCancelled();
         const activityId = this.beginActivity('access', {
             phase: 'checking',
@@ -1780,6 +1782,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async performDeposit(amountInput, onStatus = () => {}, { preparedOperationId = null } = {}) {
+        await this.ensureTestnetAccess({ interactive: true });
         if (this.hasNote) throw new Error('This client already has an active private note.');
         const funding = this.config?.funding;
         validateNativeFunding(funding);
@@ -1908,6 +1911,9 @@ class ZkapiClient extends EventTarget {
     }
 
     async withdraw(mode, onStatus = () => {}, { destination } = {}) {
+        // Unilateral escape remains independent of the service credential.
+        // Only cooperative withdrawal requests the server's authorization.
+        if (mode === 'mutual') await this.ensureTestnetAccess({ interactive: true });
         const requestedDestination = normalizeWithdrawalDestination(destination, this.config?.funding);
         const operationKey = `${mode}:${requestedDestination || ''}`;
         if (this.withdrawPromise) {
@@ -4889,6 +4895,12 @@ class ZkapiClient extends EventTarget {
 
     escapePeriodPhrase() {
         return escapePeriodPhrase(this.challengePeriodSeconds);
+    }
+
+    get testnetAuthenticated() { return browserWalletRuntime.testnetAuth?.authenticated === true; }
+
+    async ensureTestnetAccess(options = {}) {
+        await browserWalletRuntime.testnetAuth?.ensure(options);
     }
 
     escapePeriodBadge() {

@@ -15,14 +15,15 @@ use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::header::RETRY_AFTER;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::middleware;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::Serialize;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 
 use zkapi_types::wire::{
     ApiRequestV2, ClearanceRequest, ClearanceResponseV2, CurvePointWire, ErrorResponse,
@@ -34,6 +35,9 @@ use crate::dashboard::{DashboardEvent, DashboardHub, DashboardTotals};
 use crate::error::ServerError;
 use crate::oa_org::IssuedOpenRouterLease;
 use crate::processor::RequestProcessor;
+use crate::testnet_auth::{
+    handle_auth_check, require_testnet_password, TestnetPassword, TESTNET_PASSWORD_HEADER,
+};
 
 /// Shared application state.
 type AppState = Arc<RequestProcessor>;
@@ -51,7 +55,10 @@ impl IntoResponse for ErrorHttpResponse {
 const PROTOCOL_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// Start the HTTP server with the given config.
-pub async fn run_server(config: crate::config::ServerConfig) -> anyhow::Result<()> {
+pub async fn run_server(mut config: crate::config::ServerConfig) -> anyhow::Result<()> {
+    if let Some(password) = TestnetPassword::from_env()? {
+        config.testnet_password = Some(password);
+    }
     config.validate_native_mode()?;
     let store = Arc::new(crate::nullifier_store::NullifierStore::new(
         &config.db_path,
@@ -98,20 +105,25 @@ pub async fn run_server(config: crate::config::ServerConfig) -> anyhow::Result<(
 
 /// Create the Axum router with all zkAPI server routes.
 pub fn create_router(processor: Arc<RequestProcessor>) -> Router {
-    // The dashboard is a separate local origin and only ever reads these three
-    // routes, so cross-origin access is granted to THESE ONLY. The protocol
-    // POST and the recovery GETs (which can return a stored transcript) get no
-    // CORS, so a random web page can't read them cross-origin.
+    let password = processor.config().testnet_password.clone();
+    // Preserve the local dashboard's existing CORS policy. Password-gated
+    // Sepolia additionally permits explicit credential headers below.
     let dashboard = Router::new()
         .route("/v1/dashboard/summary", get(handle_dashboard_summary))
         .route("/v1/dashboard/recent", get(handle_dashboard_recent))
         .route("/v1/dashboard/events", get(handle_dashboard_events))
         .layer(CorsLayer::very_permissive());
 
-    Router::new()
+    let router = Router::new()
         .route("/", get(handle_health))
         .route("/health", get(handle_health))
         .route("/v1/attestation", get(handle_attestation))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([Method::GET, Method::HEAD]),
+        )
+        .route("/v2/auth", get(handle_auth_check))
         .route("/v2/billing/quote", get(handle_native_billing_quote))
         .route("/v2/openrouter/leases", post(handle_openrouter_lease))
         .route(
@@ -133,7 +145,26 @@ pub fn create_router(processor: Arc<RequestProcessor>) -> Router {
         )
         .merge(dashboard)
         .layer(DefaultBodyLimit::max(PROTOCOL_BODY_LIMIT_BYTES))
-        .with_state(processor)
+        .layer(middleware::from_fn_with_state(
+            password.clone(),
+            require_testnet_password,
+        ))
+        .with_state(processor);
+
+    if password.is_some() {
+        // The shared password is not an account cookie; no credentialed CORS.
+        router.layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([Method::GET, Method::HEAD, Method::POST, Method::OPTIONS])
+                .allow_headers([
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderName::from_static(TESTNET_PASSWORD_HEADER),
+                ]),
+        )
+    } else {
+        router
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +179,7 @@ struct HealthResponse {
     policy_enabled: bool,
     auth_scheme: &'static str,
     request_modes: Vec<&'static str>,
+    testnet_password_required: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -175,6 +207,7 @@ async fn handle_health(State(processor): State<AppState>) -> Json<HealthResponse
         policy_enabled: false,
         auth_scheme: "state-anchor",
         request_modes: vec!["direct_openrouter"],
+        testnet_password_required: config.testnet_password.is_some(),
     })
 }
 

@@ -65,6 +65,8 @@ pub struct ServerConfig {
     pub protocol_version: u16,
     /// Chain ID this server is bound to.
     pub chain_id: u64,
+    /// Optional shared Sepolia service gate; contains only a redacted digest.
+    pub testnet_password: Option<crate::testnet_auth::TestnetPassword>,
     /// On-chain contract address.
     pub contract_address: Felt252,
     /// Minimum proof-bound lease budget, in whole gwei.
@@ -92,8 +94,18 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
+    pub fn validate_testnet_auth(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.testnet_password.is_none()
+                || self.chain_id == crate::testnet_auth::SEPOLIA_CHAIN_ID,
+            "ZKAPI_TESTNET_PASSWORD is only supported on Sepolia (chain ID 11155111)"
+        );
+        Ok(())
+    }
+
     /// Reject incomplete native configurations before startup opens any state.
     pub fn validate_native_mode(&self) -> anyhow::Result<()> {
+        self.validate_testnet_auth()?;
         anyhow::ensure!(
             self.native_billing.is_some(),
             "native ETH billing configuration is required"
@@ -116,6 +128,7 @@ impl Default for ServerConfig {
         Self {
             protocol_version: 2,
             chain_id: 1,
+            testnet_password: None,
             contract_address: Felt252::ZERO,
             request_charge_cap: 1_000_000,
             listen_addr: "0.0.0.0:3000".to_string(),

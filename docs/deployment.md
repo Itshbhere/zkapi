@@ -23,6 +23,13 @@ indexer URL and the exact proof directory. Run `zkapi serverd --help` for flags.
 Native prices come from the pinned finalized oracle round; a generic RPC/chain
 or USD token configuration is not interchangeable with these pins.
 
+For a private Sepolia test, configure `ZKAPI_TESTNET_PASSWORD` only in the
+Sepolia server's secret environment. The built-in gate requires that password
+for every service API call while leaving health and protocol metadata public.
+See [Sepolia shared password](testnet-auth.md) for client behavior, proxy header
+forwarding, validation and rotation. Never put this value in the public SDK
+manifest or configure it on Mainnet.
+
 ## Fresh contracts
 
 `demo/contracts/script/Deploy.s.sol` deploys the real Groth16 adapter and a

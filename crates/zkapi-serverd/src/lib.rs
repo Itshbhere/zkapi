@@ -18,6 +18,7 @@ pub mod routes;
 pub mod settlement;
 #[path = "signer_v2.rs"]
 pub mod signer;
+pub mod testnet_auth;
 pub mod watcher;
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ Create these root-owned, mode `0600` files without printing their contents:
 | --- | --- |
 | `/etc/zkapi/deployment.env` | Copy `deployment.env.example`, then supply vault address, chain, deployment block, gwei request cap, `ZKAPI_NATIVE_BILLING_RPC_URL`, `ZKAPI_NATIVE_PRICE_FEED_ADDRESS`, feed decimals and freshness policy. |
 | `/etc/zkapi/indexer.env` | `RPC_URL`, the chain's read RPC endpoint. |
-| `/etc/zkapi/server.env` | `ZKAPI_STATE_SEED`, `ZKAPI_CLEAR_SEED`, and `ZKAPI_OPENROUTER_MANAGEMENT_KEY` for direct leases; alternatively set `OA_ORG_URL` in deployment metadata and `ZKAPI_OA_ORG_SHARED_SECRET` here. |
+| `/etc/zkapi/server.env` | `ZKAPI_STATE_SEED`, `ZKAPI_CLEAR_SEED`, and `ZKAPI_OPENROUTER_MANAGEMENT_KEY` for direct leases; alternatively set `OA_ORG_URL` in deployment metadata and `ZKAPI_OA_ORG_SHARED_SECRET` here. For private Sepolia access, also set `ZKAPI_TESTNET_PASSWORD` here only. |
 | `/etc/zkapi/challenge.env` | `ZKAPI_CHALLENGE_RPC_URL=http://signer:8547` and `ZKAPI_CHALLENGE_SENDER`, the exclusive funded sender managed by the private sidecar. |
 | `/etc/zkapi/signer.env` | `ZKAPI_CHALLENGE_PRIVATE_KEY`, `ZKAPI_CHALLENGE_CHAIN_ID=11155111`, `ZKAPI_CHALLENGE_RPC_URL` (the public Sepolia upstream RPC), and `ZKAPI_CHALLENGE_VAULT` (the fresh vault). Only the signer container receives this file. |
 
@@ -61,6 +61,13 @@ public edge. Set CloudFront caching disabled and forward all query strings,
 required request headers, and methods for API/indexer paths. No daemon or signer
 port should be exposed by the VM security group. Neither SQLite data nor the
 operator dashboard is served by the gateway.
+
+For password-gated Sepolia, forward `X-ZKAPI-Testnet-Password`, `Origin`, and
+both `Access-Control-Request-*` headers through CloudFront. Preserve no-store
+and CORS response headers and allow OPTIONS. The gate runs in the API process;
+neither an alternate proxy route nor a direct daemon connection bypasses it.
+See [access configuration and rotation](../../docs/testnet-auth.md). Never log
+the password header or place the password in the public client manifest.
 
 Optional Compose settings are `ZKAPI_IMAGE_TAG`, `ZKAPI_CONFIG_DIR`, and
 `ZKAPI_DATA_DIR`. Persist these settings in the operator's root-owned Compose

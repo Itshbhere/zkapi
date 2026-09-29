@@ -216,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
             let config = ServerConfig {
                 protocol_version: cli.protocol_version,
                 chain_id: cli.chain_id,
+                testnet_password: None, // Loaded from the private server environment at startup.
                 contract_address: parse_felt("contract address", &cli.contract_address)?,
                 request_charge_cap: cli.request_charge_cap,
                 listen_addr: listen,
