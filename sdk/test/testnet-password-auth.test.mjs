@@ -173,3 +173,20 @@ test('cooperative withdrawal asks for access while unilateral escape keeps its i
     assert.deepEqual(withdrawals, ['escape']);
     assert.equal(prompts, 1);
 });
+
+for (const [originalNote, nextNote] of [[7, 8], [7, null], [null, 8]]) {
+    test(`mutual withdrawal refuses a note changed from ${originalNote} to ${nextNote} during the password dialog`, async t => {
+        const previousAuth = runtime.testnetAuth;
+        t.after(() => { runtime.testnetAuth = previousAuth; });
+        const client = new ZkapiClient();
+        client.browserMode = true;
+        client.wallet = { note: originalNote == null ? null : { note_id: originalNote } };
+        runtime.testnetAuth = { async ensure() {
+            client.wallet.note = nextNote == null ? null : { note_id: nextNote };
+        } };
+        t.mock.method(client, 'assertBalanceNotClaimed', async () => assert.fail('the changed note must never enter withdrawal'));
+        await assert.rejects(client.withdraw('mutual', undefined, { destination: `0x${'12'.repeat(20)}` }),
+            /private balance changed while withdrawal was opening/i);
+        assert.equal(client.withdrawPromise, null);
+    });
+}

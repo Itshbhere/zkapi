@@ -1911,9 +1911,15 @@ class ZkapiClient extends EventTarget {
     }
 
     async withdraw(mode, onStatus = () => {}, { destination } = {}) {
+        // The password dialog must not transfer an earlier withdrawal click
+        // to a successor note installed by another tab while it was open.
+        const expectedNoteId = this.note?.note_id;
         // Unilateral escape remains independent of the service credential.
         // Only cooperative withdrawal requests the server's authorization.
         if (mode === 'mutual') await this.ensureTestnetAccess({ interactive: true });
+        if (this.note?.note_id !== expectedNoteId) {
+            throw new Error('The private balance changed while withdrawal was opening. Review the current balance before continuing.');
+        }
         const requestedDestination = normalizeWithdrawalDestination(destination, this.config?.funding);
         const operationKey = `${mode}:${requestedDestination || ''}`;
         if (this.withdrawPromise) {

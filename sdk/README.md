@@ -59,6 +59,10 @@ dialog in background polling. Offer an explicit password action that calls
 `ensureTestnetAccess({ interactive: true, changePassword: true })`. The boolean
 `client.testnetAuthenticated` contains no credential. Reload clears access.
 
+Cooperative withdrawal authenticates before wallet work and refuses to continue
+if the selected private note changes while its password dialog is open.
+Unilateral escape does not request the service password.
+
 Public `/health` must report the configured Sepolia `chain_id` and boolean
 `testnet_password_required`; missing or invalid discovery fails closed. The
 password is validated at `/v2/auth`, then attached only to the configured
