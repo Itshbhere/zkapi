@@ -12,17 +12,30 @@ local development.
 From the repository root:
 
 ```bash
-cargo build --workspace --locked
+cargo build --release --workspace --locked
 cargo test --release --workspace --locked
 cargo test --release --manifest-path protocol/rust/Cargo.toml --workspace --locked
 npm ci
 npm run test:sdk
+npm run build:browser
+npm run build:mainnet
 npm run verify:assets
 ```
 
 Run `forge test` from `protocol/contracts/` for vault and verifier tests.
 Committed proof assets are already included; consuming the SDK does not
-require generating new setup keys.
+require generating new setup keys. The protocol source and Solidity
+dependencies are tracked under `protocol/`; no submodule initialization is
+required.
+
+To generate request and escape-withdrawal proofs with the packaged browser
+WASM and proving keys, then verify them with the native verifier:
+
+```bash
+cargo run --release --locked --manifest-path protocol/rust/Cargo.toml \
+  -p zkapi-proof --example wasm_roundtrip -- \
+  "$PWD/scripts/prove-browser-fixture.mjs" "$PWD/sdk"
+```
 
 ## Browser integration
 
@@ -54,10 +67,38 @@ proof asset hashes, and deployment manifest. Protocol amounts are whole gwei.
 
 ## Runtime services
 
-The root workspace builds `zkapi-serverd`, `zkapi-indexerd`,
-`zkapi-challenged`, and the `zkapi` operator CLI. Use `--help` for their current
-configuration flags. The server and browser must use the same deployment,
+The root workspace builds the server and indexer runtime libraries,
+`zkapi-indexerd`, `zkapi-challenged`, and the `zkapi` operator CLI. Start the
+server with `zkapi serverd`; use `--help` for current configuration flags. The server and browser must use the same deployment,
 keys, and `zkapi-v2-note-bound-v1` circuit revision.
 
-The committed circuit setup is a single-party development setup. Its exact
-compatibility and review status are documented in `protocol/setup/v2/README.md`.
+## Select the matching setup
+
+The checked-in `protocol/setup/v2` keys belong to the repaired
+`zkapi-v2-note-bound-v1` circuit. The historical directory name does not make
+them compatible with earlier v2 keys. Keep the proving keys, verifying keys,
+Solidity adapter, and browser WASM from the same release together.
+
+For an existing deployment, use its pinned artifacts. Check
+`proof_setup.circuit_id`, key and WASM hashes, chain ID, vault address, and
+state/clearance signing keys against independently trusted deployment values.
+The key-file circuit header catches accidental mismatches; it does not prove
+setup provenance or replace hash pinning.
+
+Only when intentionally creating a **new** deployment, generate a separate
+setup directory:
+
+```bash
+./target/release/zkapi setup --output-dir protocol/setup/new-deployment
+```
+
+This creates new incompatible keys and a matching verifier. The checked-in
+setup is a single-party development setup, not a reviewed multiparty ceremony.
+Production use requires independent review of the design and setup assumptions.
+
+Legacy vaults have immutable verifiers and signing keys. Replacing a server,
+frontend, or manifest does not repair them. Preserve old wallet state and use
+its original client/deployment for recovery or withdrawal before an explicit
+fund migration.
+
+See `protocol/setup/v2/README.md` for setup provenance and compatibility.

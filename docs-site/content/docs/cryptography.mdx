@@ -1,54 +1,208 @@
 ---
 title: Cryptography
-description: BN254 Groth16, Baby-JubJub signatures, and note-bound commitments
+description: Note-bound Groth16 proofs, Baby-JubJub commitments, and Schnorr signatures
 ---
 
-| Component | Active primitive |
-| --- | --- |
-| Proofs | Circuit-specific Groth16 on BN254 |
+## Current cryptographic suite
+
+The active v2 implementation uses **Groth16 over BN254**, with Poseidon hashes
+and Baby-JubJub commitments and signatures. The circuit revision is
+`zkapi-v2-note-bound-v1`. The browser SDK proves native ETH lease
+authorizations locally using the packaged WASM and matching proving keys.
+
+| Component | Current implementation |
+|---|---|
+| Proof system | Separate request and withdrawal Groth16 circuits over BN254 |
 | Circuit field | BN254 scalar field |
-| Hashing | Domain-separated Poseidon, exponent 5, rate 2, capacity 1 |
-| Poseidon rounds | 8 full and 57 partial |
-| Merkle tree | Depth 32, zero leaf 0 |
-| State and clearance signatures | Separate Baby-JubJub Schnorr keys |
-| Balance commitment | `E(B,r,L) = B*G + r*H + L*J` on Baby-JubJub |
+| Hash function | Poseidon: exponent 5, 8 full rounds, 57 partial rounds, rate 2, capacity 1 |
+| Active-note tree | Depth-32 Merkle tree with domain-separated Poseidon nodes and zero leaf 0 |
+| Balance commitment | Note-bound Pedersen commitment on Baby-JubJub |
+| State and clearance signatures | Poseidon-challenged Schnorr on Baby-JubJub, with separate signing keys |
+| Nullifiers and authorization tags | Domain-separated Poseidon |
+| Payload and request-context digests | Domain-separated Keccak-256 hash-to-field encoding |
 
-This construction uses classical elliptic-curve assumptions. Circuit ID
-`zkapi-v2-note-bound-v1` identifies the current setup. The committed keys are a
-single-party development setup; see `protocol/setup/v2/README.md` for its trust
-and deployment compatibility requirements.
+This suite is **not post-quantum**. Groth16/BN254 and the Baby-JubJub commitment
+and signature schemes rely on elliptic-curve assumptions.
 
-## Note binding
+The historical Rust type name `Felt252` is retained, but its current encoding
+is a canonical, big-endian BN254 scalar-field element. JSON uses checked
+hexadecimal strings.
 
-The full private leaf is `L = H_leaf(note_id, H_reg(secret, 0), deposit, expiry)`.
-Both request and withdrawal circuits include that same leaf in the commitment.
-A server-signed state cannot be reused with a different note membership path.
-Rerandomization changes the blinding term while preserving the note term.
+## Binding a balance to its note
+
+Let `s` be the user's secret, `D` the deposit, `B` the current balance, `r` the
+blinding scalar and `τ` the current state anchor. `domain(label)` encodes the
+label bytes as a field element. The registration commitment and active-note
+leaf are:
+
+```text
+registration = Poseidon(domain("zkapi.v2.reg"), s, 0)
+L = Poseidon(domain("zkapi.v2.leaf"), note_id, registration, D, expiry)
+C = B·G + r·H + L·J
+```
+
+The request and withdrawal circuits compute `L` from the same note
+values used in the Merkle-membership proof, then use that leaf in the signed
+balance commitment. This repairs the earlier construction, where a signature
+on `B·G + r·H` could be transplanted to a different active note.
+
+`G` is the standard Baby-JubJub generator. `H` and `J` are independently derived
+by Keccak-256 try-and-increment, selecting even `y` and clearing the cofactor,
+from these distinct labels:
+
+- `H`: `zkapi.v2.balance.blinding.generator`
+- `J`: `zkapi.v2.note-binding.generator.v1`
+
+Neither is constructed as a known scalar multiple of another generator. Both
+native code and the circuit multiply `J` by the full canonical BN254 field
+representation of `L`, implicitly reducing it modulo the subgroup order.
+Fresh random blinding hides the leaf contribution in the public commitment.
+
+Rerandomization and server charging preserve that note binding:
+
+```text
+C_anon = C + ε·H
+C_next = C_anon − charge·G + blind_delta·H
+B_next = B − charge
+r_next = r + ε + blind_delta
+```
+
+The client samples `ε`; the active server samples `blind_delta` as a random
+scalar. Blinding arithmetic is modulo the Baby-JubJub subgroup order. The
+server can update the anonymous commitment without learning `B`,
+`r` or `L`. The client verifies the returned signature and commitment update
+before saving the next state.
+
+## State, request and withdrawal binding
+
+The server signs a Poseidon digest of the protocol version, chain ID, vault
+address, commitment coordinates and anchor under `zkapi.v2.state`. The circuit
+verifies that Schnorr signature privately. The genesis path instead proves
+`B = D` and `τ = 1`; the client initializes it with random blinding.
+
+Each state has one nullifier, independent of the request payload:
+
+```text
+x = Poseidon(domain("zkapi.v2.null"), s, τ)
+authorization_tag = Poseidon(domain("zkapi.v2.auth"), x, request_context)
+```
+
+The request context commits to the exact client request ID and payload digest.
+In the native ETH flow, this is the prompt-free lease authorization payload,
+including its pinned billing quote. The server recomputes the context and
+checks the authorization tag, proof, deployment identity, current root, signing
+key, freshness window, charge cap and nullifier reservation. It separately
+validates the quote identity and freshness. This binds the proof to the exact
+lease authorization while keeping the nullifier the same for any attempt to
+spend that state again.
+
+Clearance uses a separate Schnorr key to sign the protocol version, chain ID,
+vault address and withdrawal nullifier under `zkapi.v2.clear`. Mutual-close
+proofs verify this signature inside the circuit. Escape proofs use the same
+withdrawal circuit with `has_clearance = false`, and follow the vault's
+challenge process described in [Protocol](/docs/protocol).
+
+The withdrawal tag binds the nullifier to the payout destination, final
+balance and clearance mode:
+
+```text
+withdrawal_tag = Poseidon(domain("zkapi.v2.withdraw"), x_w, destination, B_final, has_clearance)
+```
 
 ## Domain separation
 
-Native helpers and circuits use `zkapi.v2.reg`, `zkapi.v2.leaf`,
-`zkapi.v2.node`, `zkapi.v2.null`, `zkapi.v2.auth`, `zkapi.v2.state`,
-`zkapi.v2.clear`, `zkapi.v2.withdraw`, `zkapi.v2.anchor`, `zkapi.v2.blind`,
-and `zkapi.v2.sig`. The note generator uses
-`zkapi.v2.note-binding.generator.v1`.
+The v2 Poseidon statements and helpers use these labels:
 
-Canonical payload and response hashing retains its existing byte-level
-encoding. The request context commits to the exact client request ID and
-payload digest, and the public authorization tag binds it to the nullifier.
+| Label | Usage |
+|---|---|
+| `zkapi.v2.reg` | Registration commitment |
+| `zkapi.v2.leaf` | Active-note leaf |
+| `zkapi.v2.node` | Merkle internal node |
+| `zkapi.v2.null` | State nullifier |
+| `zkapi.v2.auth` | Request authorization tag |
+| `zkapi.v2.state` | State signature message |
+| `zkapi.v2.clear` | Clearance signature message |
+| `zkapi.v2.withdraw` | Withdrawal tag |
+| `zkapi.v2.sig` | Schnorr challenge |
+| `zkapi.v2.anchor` | Next anchor derivation |
+| `zkapi.v2.blind` | Blinding-derivation helper; the active server samples its blinding delta randomly |
 
-## Public and private inputs
+Byte payloads use a separate Keccak-256 encoding with length prefixes and a
+counter for canonical field encoding: `zkapi.payload.v1` for request payloads,
+`zkapi.response.v1` for response payloads, and `zkapi.v2.request-context` for
+the request context. The `.v1` payload/response labels are intentionally
+retained in v2; they are not Poseidon domain labels.
 
-Request proofs expose the protocol version, chain, vault, active root, state
-signing key, request time, solvency bound, nullifier, authorization tag, and
-anonymous commitment. The note identity, secret, deposit, expiry, balance,
-blinding, anchor, Merkle siblings, and carried signature stay private.
+## Public and private proof inputs
 
-Withdrawal proofs reveal the note ID, final balance, destination, nullifier,
-and clearance mode along with the deployment fields, keys, active root, and
-withdrawal tag. That tag binds the withdrawal terms to the consumed state.
+The request proof has **12 public field elements**, in this exact order:
 
-`protocol/rust/crates/zkapi-types/src/inputs.rs` fixes the 12 request and 14
-withdrawal public-field slots. The historical internal `Felt252` type name
-represents a canonical BN254 scalar-field value; JSON is a checked hexadecimal
-string. `zkapi-proof/src/groth16.rs` defines the actual constraints.
+```text
+protocol_version, chain_id, contract_address, active_root,
+state_signing_key_x, state_signing_key_y, request_time, solvency_bound,
+request_nullifier, authorization_tag,
+anonymous_commitment_x, anonymous_commitment_y
+```
+
+Its private witness contains the secret, request context, note ID, deposit,
+expiry, Merkle siblings, balance, blinding, rerandomization, anchor, genesis
+flag and state signature. The circuit checks that the balance covers
+`solvency_bound` and that the note expiry is at least `request_time`.
+
+The withdrawal proof has **14 public field elements**, in this exact order:
+
+```text
+protocol_version, chain_id, contract_address, active_root,
+state_signing_key_x, state_signing_key_y,
+clearance_signing_key_x, clearance_signing_key_y,
+note_id, final_balance, destination, withdrawal_nullifier,
+has_clearance, withdrawal_tag
+```
+
+Its private witness contains the secret, deposit, expiry, Merkle siblings,
+final blinding, anchor, genesis flag, state signature and clearance signature.
+The circuit also enforces that `final_balance` does not exceed the deposit.
+Withdrawal intentionally reveals the note ID, final balance and destination.
+
+“Private witness” describes what the proof reveals, not all surrounding
+activity: deposits are on-chain, and the server receives the prompt-free lease
+authorization and request ID. Inference prompts and responses go directly
+between the browser and provider. Request proofs hide which deposited note is
+being used, its exact balance and expiry, and the current signed state.
+
+## Setup and compatibility
+
+The note-binding revision preserves the v2 JSON schemas and public-input
+order, but it changes the circuit and signed commitments. Legacy unbound
+signed states, proving/verifying keys and deployed verifiers are incompatible.
+The subsequent removal of retired runtimes leaves this circuit revision,
+public-input order and committed setup unchanged; it does not require a new
+setup for deployments already using the note-bound revision.
+
+Proving and verifying key files carry the `zkapi-v2-note-bound-v1` header, and
+loaders reject earlier files. Deployment manifests advertise
+`proof_setup.circuit_id`; clients must also pin the key hashes and vault
+address. The header catches accidental mismatches. It does not establish
+setup provenance or replace independently pinned hashes.
+
+The checked-in `protocol/setup/v2` artifacts are a **single-party development
+setup generated with OS randomness**, not a reviewed multiparty ceremony.
+Matching hashes identify the artifacts; they do not establish that setup
+secrets were destroyed. The circuit, generator derivation and setup require
+independent review before production. The generated Solidity verifier,
+native keys and browser WASM/proving-key assets must match the same revision
+and setup.
+
+Existing vaults have immutable proof adapters and signing keys. Updating a
+server or frontend cannot repair an old vault. Preserve legacy wallet state
+for recovery with the original matching client release and deployment;
+migration requires a fresh verifier/vault, new client pins and explicit
+movement of funds. Legacy recovery code is not part of the current runtime.
+
+Implementation references: [v2 primitives](https://github.com/OpenAnonymity/zkapi-EF-collab/blob/main/protocol/rust/crates/zkapi-core/src/v2.rs),
+[Groth16 circuits](https://github.com/OpenAnonymity/zkapi-EF-collab/blob/main/protocol/rust/crates/zkapi-proof/src/groth16.rs),
+[key loading](https://github.com/OpenAnonymity/zkapi-EF-collab/blob/main/protocol/rust/crates/zkapi-proof/src/compact.rs),
+and [Solidity verifier](https://github.com/OpenAnonymity/zkapi-EF-collab/blob/main/protocol/contracts/src/adapters/Groth16ProofAdapter.sol).
+The [note-binding review](https://github.com/OpenAnonymity/zkapi-EF-collab/blob/main/docs/note-binding-review.md)
+and [setup notes](https://github.com/OpenAnonymity/zkapi-EF-collab/blob/main/protocol/setup/v2/README.md)
+record the repair and migration rationale.

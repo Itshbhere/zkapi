@@ -1,26 +1,78 @@
 ---
 title: Introduction
-description: Anonymous prepaid API usage with browser proofs and native ETH settlement
+description: Anonymous prepaid API usage with note-bound zero-knowledge proofs
 ---
 
-zkAPI lets users fund a private note with native ETH, prove authorization in the
-browser, and pay for API usage from a private balance. Each accepted request
-consumes one state and returns a fresh server-signed state. Usage settles on
-chain when the note closes.
+zkAPI lets users fund a private note with native ETH, then authorize off-chain
+API usage with proofs generated in the browser. Each authorization consumes a
+state nullifier; after usage settles, the server signs the next private balance
+and anchor.
+
+These docs describe **protocol v2**, circuit revision
+`zkapi-v2-note-bound-v1`: Groth16 over BN254, Poseidon hashes, and Baby-JubJub
+commitments with Schnorr signatures. The retired Cairo/STARK, XMSS, and token
+payment implementations are available only in Git history.
+
+## What you get
 
 <Cards>
-  <Card title="Browser wallet" description="The SDK owns local proofs, private state, key leases, and withdrawal recovery." href="/docs/getting-started" />
-  <Card title="Protocol" description="A sequential state-anchor chain with replay prevention and net settlement." href="/docs/protocol" />
-  <Card title="Cryptography" description="BN254 Groth16 proofs and Baby-JubJub signatures with note-bound commitments." href="/docs/cryptography" />
-  <Card title="API reference" description="Current server, indexer, and native ETH vault interfaces." href="/docs/api-reference" />
+  <Card
+    title="Browser wallet"
+    description="The SDK owns local proofs, private state, runtime-key leases, and withdrawal recovery."
+    href="/docs/architecture"
+  />
+  <Card
+    title="Private request authorization"
+    description="Prove membership and solvency without revealing which deposited note authorized the request."
+    href="/docs/protocol"
+  />
+  <Card
+    title="Net-settled refunds"
+    description="Unused funds stay in the private balance and settle on-chain at withdrawal."
+    href="/docs/protocol#refunds"
+  />
+  <Card
+    title="Note-bound cryptography"
+    description="Signed balances bind to the funded note, with explicit circuit and setup compatibility requirements."
+    href="/docs/cryptography"
+  />
 </Cards>
 
-The browser SDK builds proofs using the bundled WASM and proving keys. The
-runtime server verifies them, reserves nullifiers, accounts for usage, and
-signs state transitions. The indexer supplies Merkle paths, and a separate
-challenge service watches for stale escape withdrawals.
+## How the pieces fit
 
-Direct OpenRouter leases keep prompt and response traffic between the client
-and OpenRouter. The billing server issues a short-lived runtime key and later
-settles its usage. The protocol hides private note identity in request proofs;
-network and application metadata require separate privacy controls.
+**The wallet** keeps the secret, note metadata, balance, blinding, anchor, and
+server signature locally. It proves active membership and sufficient funds,
+then sends a nullifier, a rerandomized note-bound commitment, an authorization
+tag, and a Groth16 proof. The browser SDK runs the prover in WASM, using the
+same cryptographic libraries as the native Rust wallet library.
+
+**`serverd`** verifies proofs, checks the deployment and active root, rejects
+conflicting nullifier reuse, and signs balance updates with its Schnorr key.
+It issues short-lived OpenRouter keys against proof-bound native ETH billing
+quotes and settles their measured usage. Prompts and responses pass directly
+between the client and OpenRouter.
+
+**The vault, indexer, and challenge service** maintain the active note tree,
+verify withdrawals on-chain, and challenge escape withdrawals from states
+that already authorized usage.
+
+## Privacy and deployment assumptions
+
+Request proofs hide the note ID, deposit, exact balance, expiry, anchor, and
+state signature. They do not hide information outside the proof: deposits and
+withdrawals are public, network and timing metadata remain observable, and
+the upstream provider sees prompts. Direct leases keep prompts out of the
+billing authorization.
+
+The current Groth16 and Baby-JubJub construction is not post-quantum. The
+checked-in proving keys are a single-party development setup; artifact hashes
+establish identity, not an audited ceremony. See
+[Cryptography](/docs/cryptography) for the setup and migration boundary.
+
+## Next steps
+
+<Cards>
+  <Card title="Getting started" href="/docs/getting-started" />
+  <Card title="Protocol overview" href="/docs/protocol" />
+  <Card title="API reference" href="/docs/api-reference" />
+</Cards>

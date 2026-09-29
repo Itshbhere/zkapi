@@ -24,3 +24,22 @@ An indexer cannot forge membership: clients and contracts recompute roots from
 the supplied paths. Incorrect or stale paths can cause proving or transaction
 failure. The deployment pins the vault and network independently of indexer
 responses.
+
+## Leaf binding and private path lookup
+
+The tree uses Poseidon over the BN254 scalar field with 32 sibling levels.
+Each occupied leaf binds the note ID, secret-derived registration, deposit,
+and expiry. The note-bound request and withdrawal circuits use this exact
+leaf in both membership verification and the signed balance commitment.
+The indexer's `/v1` URLs are independent of the proof protocol's v2 version.
+
+`GET /v1/tree/snapshot` returns
+`{ root: Felt252, next_note_id: u32, leaves: Felt252[] }`. Clients can rebuild
+the tree and derive paths locally without revealing a particular note ID in a
+request URL. Tree endpoints return `503` while initial chain replay is
+incomplete.
+
+Use current-root sibling paths when submitting a deposit, withdrawal, or
+challenge restoration. A challenge separately supplies the original archived
+request proof with its historical root; do not rewrite its public inputs to
+the indexer's latest root.

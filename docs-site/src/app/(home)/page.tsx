@@ -12,8 +12,8 @@ export default function HomePage() {
       </h1>
       <p className="mt-6 max-w-2xl text-balance text-lg text-fd-muted-foreground md:text-xl">
         Fund a private note with native ETH, prove authorization in your browser,
-        and pay for API usage from a private balance. Each request consumes
-        one state and returns a fresh server-signed state.
+        and pay for API usage from a private balance. Each authorization consumes
+        one state; settlement returns a fresh signed balance bound to your note.
       </p>
       <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
         <Link
@@ -29,7 +29,7 @@ export default function HomePage() {
           Protocol overview
         </Link>
         <a
-          href="https://github.com/OpenAnonymity/zkapi"
+          href="https://github.com/OpenAnonymity/zkapi-EF-collab"
           className="inline-flex h-11 items-center rounded-md border border-fd-border bg-fd-card px-6 text-sm font-medium hover:bg-fd-accent"
         >
           GitHub
@@ -38,7 +38,7 @@ export default function HomePage() {
       <div className="mt-16 grid max-w-4xl gap-4 md:grid-cols-3">
         {[
           {
-            title: 'Browser proofs',
+            title: 'Note-bound browser proofs',
             body: 'BN254 Groth16 proofs, Baby-JubJub signatures, and commitments bound to each private note.',
           },
           {

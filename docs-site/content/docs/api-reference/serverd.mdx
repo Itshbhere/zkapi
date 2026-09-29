@@ -1,53 +1,118 @@
 ---
 title: serverd
-description: v2 proof authorization, native billing, leases, and state recovery
+description: Note-bound proof authorization, native ETH billing, leases, and recovery
 ---
 
-The server accepts Groth16-authorized requests, reserves nullifiers durably,
-and returns Schnorr-signed state transitions after usage settlement.
+The server verifies Groth16-authorized direct OpenRouter leases, reserves
+nullifiers durably, and returns Schnorr-signed state transitions after usage
+settlement. Billing uses native ETH units of one gwei.
 
-## Requests and clearance
-
-| Method and path | Interface |
-| --- | --- |
-| `POST /v2/requests` | `ApiRequestV2` to `RequestResponseV2` |
-| `POST /v2/withdraw/clearance` | Withdrawal nullifier to `ClearanceResponseV2` |
-| `GET /v2/requests/{client_request_id}` | Recover a prepared/finalized request |
-| `GET /v2/nullifiers/{nullifier}` | Recover state by nullifier |
-
-`ApiRequestV2` contains `client_request_id`, `payload`, `payload_hash`,
-`public_inputs`, and `proof`. A proof has backend `groth16_bn254` and
-base64-encoded Arkworks compressed proof bytes. The server verifies the supplied
-public inputs directly and recomputes the canonical payload digest.
-
-A finalized response includes the exact response payload and hash, applied
-charge, next commitment, next anchor, server blinding delta, and
-`next_state_signature` with `r_x`, `r_y`, and `s` fields. A clearance response
-contains the withdrawal nullifier and a Schnorr `signature`. Full shapes live
-in `protocol/rust/crates/zkapi-types/src/wire.rs`.
-
-## Native billing and OpenRouter leases
+## Authorize a direct lease
 
 | Method and path | Purpose |
-| --- | --- |
-| `GET /v2/billing/quote` | Native ETH billing quote |
-| `POST /v2/openrouter/leases` | Open a proof-authorized short-lived runtime-key lease |
-| `GET /v2/openrouter/leases/{client_request_id}` | Read non-secret lease status |
-| `POST /v2/openrouter/leases/{client_request_id}` | Retire a rejected runtime-key lease |
-| `POST /v2/openrouter/leases/{client_request_id}/expire` | Expire a native lease |
+|---|---|
+| `GET /v2/billing/quote` | Obtain the native ETH billing quote |
+| `POST /v2/openrouter/leases` | Verify an `ApiRequestV2`, reserve its nullifier, and return a spending-limited runtime key (201) |
+| `GET /v2/openrouter/leases/{client_request_id}` | Return non-secret lease timing, usage, and status |
+| `POST /v2/openrouter/leases/{client_request_id}` | Retire the lease using the original authenticated request |
+| `POST /v2/openrouter/leases/{client_request_id}/expire` | Reconcile an unaccepted native lease authorization |
 
-The live issuance response carries the runtime key once. Recovery and lease
-status responses do not return its plaintext. Prompt and response traffic for
-direct leases goes between the browser and OpenRouter.
+The authorization request has this shape:
 
-## Operations
+```text
+ApiRequestV2 {
+  client_request_id: string,
+  payload: string,
+  payload_hash: Felt252,
+  public_inputs: RequestPublicInputsV2,
+  proof: { backend: "groth16_bn254", proof: base64 }
+}
+```
 
-`GET /health` reports process health and deployment configuration.
-`GET /v1/attestation` publishes deployment and signing-key metadata.
-The read-only dashboard uses `/v1/dashboard/summary`, `/v1/dashboard/recent`,
-and `/v1/dashboard/events`.
+The prompt-free payload binds the billing quote and lease authorization.
+Inference goes directly between the browser and OpenRouter. Issuance returns
+the runtime key once; recovery and lease-status responses never return that
+key. There is no ordinary proxy request endpoint.
 
-Protocol errors have `error_code`, `error_message`, and `retriable`, plus
-optional latest-root, server-time, and retry-delay data. Throttled responses
+`RequestPublicInputsV2` has these fields, in Groth16 public-input order:
+
+```text
+protocol_version, chain_id, contract_address, active_root,
+state_signing_key_x, state_signing_key_y, request_time, solvency_bound,
+request_nullifier, authorization_tag,
+anonymous_commitment_x, anonymous_commitment_y
+```
+
+`protocol_version` is `2`. The server recomputes the payload hash and request
+context from the exact payload bytes and request ID, then checks the
+authorization tag. Groth16 verifies the public statement against the selected
+note-bound setup. The proof keeps the note identity, membership path, balance,
+and state-signature witness private.
+
+The base64 proof decodes to the 256-byte coordinate representation in the
+[API overview](/docs/api-reference). The server verifies supplied public inputs
+directly; no public-output hash or witness envelope is part of the proof object.
+
+## Recover the signed state
+
+| Method and path | Purpose |
+|---|---|
+| `GET /v2/requests/{client_request_id}` | Recover a prepared or finalized request |
+| `GET /v2/nullifiers/{nullifier}` | Recover state by nullifier |
+
+Both return `RecoveryResponseV2` with `status`, `nullifier_status`, and an
+optional `request_response`. Nullifier statuses are `reserved`, `finalized`,
+`clearance_reserved`, or `unknown`. Unknown requests return
+`status: "not_found"` without a transcript.
+
+After usage settlement, `request_response` contains:
+
+```text
+RequestResponseV2 {
+  status, client_request_id, request_nullifier,
+  response_code, response_payload, response_hash, charge_applied,
+  next_commitment: { x, y }, next_anchor, blind_delta_srv,
+  next_state_signature: { r_x, r_y, s },
+  policy_reason_code?, policy_evidence_hash?
+}
+```
+
+The next-state signature is a Poseidon-challenged Schnorr signature over
+Baby-JubJub. The client verifies it before committing the next wallet state.
+Preserve the exact prepared request for retries and recovery. A reserved lease
+remains pending until settlement produces a signed response.
+
+## Request mutual-close clearance
+
+| Field | Value |
+|---|---|
+| Method + path | `POST /v2/withdraw/clearance` |
+| Request | `{ withdrawal_nullifier: Felt252 }` |
+| Response (200) | `ClearanceResponseV2 { status, withdrawal_nullifier, signature: {r_x,r_y,s} }` |
+| Errors | `409 nullifier_used` |
+
+The client includes this Schnorr signature as a private witness in a
+withdrawal proof with `has_clearance = true`. Escape withdrawals use
+`has_clearance = false` and require no server clearance.
+
+## Operations and errors
+
+| Method and path | Purpose |
+|---|---|
+| `GET /health` | Liveness, protocol/deployment identity, current root, and `direct_openrouter` request mode |
+| `GET /v1/attestation` | Protocol/deployment identity, current root, `state_signing_key: {x,y}`, and `clearance_signing_key: {x,y}` |
+| `GET /v1/dashboard/summary` | Read-only deployment and usage summary |
+| `GET /v1/dashboard/recent` | Recent request events |
+| `GET /v1/dashboard/events` | Server-sent dashboard events |
+
+The attestation endpoint publishes signer metadata. It does not supply a
+platform-signed enclave attestation. Compare its identity and keys with
+independently pinned deployment values; the endpoint alone is not a trust
+anchor.
+
+Protocol errors include `error_code`, `error_message`, and `retriable`, plus
+optional `latest_root`, `server_time_ms`, and `retry_after_seconds`. Examples
+include `400 invalid_proof`, `400 invalid_request`, `400 protocol_mismatch`,
+`409 stale_root`, `409 replay`, and `410 note_expired`. Throttled responses
 also carry `Retry-After` when available. A deployment's reverse proxy defines
-which private protocol routes the browser may access.
+which protocol routes the browser may access.

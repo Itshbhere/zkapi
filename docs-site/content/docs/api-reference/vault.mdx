@@ -1,31 +1,105 @@
 ---
 title: ZkApiVault
-description: Native ETH deposits, withdrawals, and stale-state challenges
+description: Native ETH settlement with note-bound Groth16 verification
 ---
 
-`protocol/contracts/src/ZkApiVault.sol` implements protocol version 2 and pins
-the Groth16 proof adapter and separate server state/clearance signing keys.
-The vault accounts in whole gwei with maximum amount `2^53 - 1`.
+The wallet calls `ZkApiVault` for native ETH deposits and withdrawals. It
+accounts in whole gwei, with maximum amount `2^53 - 1`. The v2 vault pins
+its Groth16 proof adapter, state-signing key, and clearance-signing key as
+immutable constructor parameters. It has no XMSS root-rotation API.
 
-| Function | Behavior |
-| --- | --- |
-| `deposit(commitment, amount, siblings)` | Payable; requires exact `amount * 1 gwei`, inserts the full note leaf |
-| `mutualClose(inputs, proof, siblings)` | Verifies withdrawal and clearance, removes the leaf, settles ETH |
-| `initiateEscapeWithdrawal(inputs, proof, siblings)` | Verifies withdrawal without clearance, removes the leaf, starts the challenge period |
-| `challengeEscapeWithdrawal(noteId, inputs, proof, siblings)` | Verifies an archived request with the matching nullifier and restores the leaf |
-| `finalizeEscapeWithdrawal(noteId)` | Settles an uncontested escape after its deadline |
-| `claimExpired(noteId, siblings)` | Removes an expired active note and pays the treasury |
+## Deposit
 
-Only deposits carry transaction value. Withdrawal statements bind the
-network, vault, keys, root, note ID, final balance, destination, nullifier, and
-clearance mode. The vault enforces current note state and rejects reused
-withdrawal nullifiers.
+| Field | Value |
+|---|---|
+| Method | `deposit(bytes32 commitment, uint128 amount, uint256[32] siblings)` (payable) |
+| Caller | User's wallet |
+| Effect | Checks the empty-slot path against `currentRoot`, adds the note leaf, escrows the native ETH, and emits `NoteDeposited(noteId, commitment, amount, expiryTs, newRoot)` |
 
-A close pays the final balance to the chosen destination and the deposit minus
-that balance to the treasury. The owner can update the treasury and pause or
-unpause new deposits and normal close initiation. Challenge and finalization
-paths remain available according to their contract conditions.
+Here `commitment` is the Poseidon registration derived from the note secret,
+not the anonymous balance commitment signed by the server. The deposited leaf
+binds that registration, note ID, amount, and expiry. The note-bound circuit
+includes this same leaf in each private balance commitment.
 
-`Types.sol` fixes the public input structs. `Groth16ProofAdapter.sol` contains
-the verifier for the matching `zkapi-v2-note-bound-v1` setup; changing setup
-artifacts requires a compatible verifier and a fresh deployment migration.
+The transaction must send exactly `amount * nativeAssetWeiPerUnit` wei;
+`nativeAssetWeiPerUnit` is one gwei and `billingToken` is the zero-address
+native-asset sentinel. Only deposits carry transaction value. The on-chain
+event supplies the actual expiry, rounded up to the vault's one-day expiry
+bucket.
+
+## Mutual close
+
+| Field | Value |
+|---|---|
+| Method | `mutualClose(WithdrawalPublicInputs inputs, bytes proof, uint256[32] siblings)` |
+| Caller | User's wallet or another transaction submitter |
+| Effect | Verifies the withdrawal proof with `hasClearance = true`, checks deployment and immutable signing-key bindings, removes the leaf at the current root, consumes the nullifier, closes the note, and pays the user and treasury |
+
+The withdrawal's Schnorr clearance and state signatures are private proof
+witnesses. `WithdrawalPublicInputs` contains these 14 fields in order:
+
+```text
+protocolVersion, chainId, contractAddress, activeRoot,
+stateSigningKeyX, stateSigningKeyY,
+clearanceSigningKeyX, clearanceSigningKeyY,
+noteId, finalBalance, destination, withdrawalNullifier,
+hasClearance, withdrawalTag
+```
+
+`proof` is the decoded 256-byte Groth16 artifact described in the
+[API overview](/docs/api-reference). The user receives `finalBalance` billing
+units; the treasury receives `depositAmount - finalBalance`. The vault
+multiplies both amounts by `nativeAssetWeiPerUnit` before paying ETH.
+
+## Initiate escape withdrawal
+
+| Field | Value |
+|---|---|
+| Method | `initiateEscapeWithdrawal(WithdrawalPublicInputs inputs, bytes proof, uint256[32] siblings)` |
+| Caller | User's wallet or another transaction submitter |
+| Effect | Verifies a withdrawal proof with `hasClearance = false`, removes the leaf at the current root, consumes the nullifier, and stores the payout and `challengeDeadline = now + challengePeriod` |
+
+The challenge period is configured at deployment; the default constant is 24
+hours. No payout occurs until finalization.
+
+## Challenge a stale escape withdrawal
+
+| Field | Value |
+|---|---|
+| Method | `challengeEscapeWithdrawal(uint32 noteId, RequestPublicInputs inputs, bytes proof, uint256[32] siblings)` |
+| Caller | Anyone with valid archived request evidence, before the deadline |
+| Effect | Verifies the archived request proof and its matching nullifier, restores the note's leaf, returns it to `Active`, and cancels the pending withdrawal |
+
+Submit the original request's public inputs, including its historical root.
+The root may differ from the current root or the root when the escape began:
+unrelated deposits or closes must not invalidate archived evidence. The
+request nullifier must equal the pending withdrawal's nullifier. A later
+signature alone is not challenge evidence.
+
+The `siblings` argument is a fresh path for the empty slot at the **current**
+root so the contract can restore the leaf. The challenge cancels the stale
+withdrawal; it does not slash or pay out the note.
+
+## Finalize escape withdrawal
+
+| Field | Value |
+|---|---|
+| Method | `finalizeEscapeWithdrawal(uint32 noteId)` |
+| Caller | Anyone at or after the stored deadline |
+| Effect | Closes the note and pays the destination and final balance already recorded during initiation, with the remainder paid to treasury |
+
+## Claim expired note
+
+| Field | Value |
+|---|---|
+| Method | `claimExpired(uint32 noteId, uint256[32] siblings)` |
+| Caller | Anyone at or after expiry |
+| Effect | Removes an active expired note's leaf, closes the note, and pays its full deposit to treasury |
+
+## Deployment compatibility
+
+The current verifier must match circuit revision `zkapi-v2-note-bound-v1` and
+the selected setup. Existing vaults cannot acquire the repair by updating a
+server or frontend: their adapter and signing keys are immutable. Preserve
+legacy wallet state and its recovery client, and use an explicit fund migration
+to a fresh compatible deployment.
