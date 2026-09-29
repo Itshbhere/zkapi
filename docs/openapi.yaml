@@ -2,44 +2,13 @@ openapi: 3.1.0
 info:
   title: zkAPI v2
   version: 2.0.0-testnet
-  description: Local compatibility API plus the private Groth16 protocol API.
+  description: Native ETH lease, settlement and withdrawal Groth16 protocol API.
 paths:
-  /v1/chat/completions:
-    post:
-      summary: OpenAI-compatible chat through the local wallet daemon
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {type: object, additionalProperties: true}
+  /v2/billing/quote:
+    get:
+      summary: Read the pinned finalized native ETH billing quote
       responses:
-        "200":
-          description: OpenAI-compatible response
-          content:
-            application/json:
-              schema: {type: object, additionalProperties: true}
-  /v1/responses:
-    post:
-      summary: OpenAI Responses-compatible request through the local wallet daemon
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {type: object, additionalProperties: true}
-      responses:
-        "200": {description: Responses-compatible result}
-  /v2/requests:
-    post:
-      summary: Submit an exact-payload-bound Groth16 request proof
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: "#/components/schemas/ApiRequestV2"}
-      responses:
-        "200": {description: Provider result and signed next state}
-        "400": {description: Invalid request or proof}
-        "409": {description: Replayed nullifier}
+        "200": {description: Native gwei quote with chain, feed and round binding}
   /v2/openrouter/leases:
     post:
       summary: Open a prompt-private, spending-limited OpenRouter lease

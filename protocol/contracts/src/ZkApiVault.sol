@@ -3,8 +3,6 @@ pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {Types} from "./libraries/Types.sol";
 import {Errors} from "./libraries/Errors.sol";
@@ -14,18 +12,16 @@ import {NoteLeafLib} from "./libraries/NoteLeafLib.sol";
 import {IZkApiProofAdapter} from "./interfaces/IZkApiProofAdapter.sol";
 
 /// @title ZkApiVault
-/// @notice zkAPI v2 settlement with in-protocol BN254 Groth16 verification.
+/// @notice Native ETH settlement in whole gwei with in-protocol BN254 Groth16 verification.
 contract ZkApiVault is ReentrancyGuard, Ownable, Events {
-    using SafeERC20 for IERC20;
-
     uint16 public constant PROTOCOL_VERSION = 2;
     uint64 public constant DEFAULT_CHALLENGE_PERIOD = 24 hours;
     uint64 public constant EXPIRY_BUCKET = 1 days;
     uint256 public constant MERKLE_DEPTH = 32;
 
-    IERC20 public immutable billingToken;
-    /// Zero for legacy ERC-20 deployments; one gwei for native ETH deployments.
-    uint256 public immutable nativeAssetWeiPerUnit;
+    /// Native asset sentinel retained for deployment and client compatibility.
+    address public constant billingToken = address(0);
+    uint256 public constant nativeAssetWeiPerUnit = 1 gwei;
     uint128 public constant MAX_NATIVE_UNITS = 9_007_199_254_740_991;
     uint64 public immutable noteTtl;
     uint64 public immutable challengePeriod;
@@ -51,7 +47,6 @@ contract ZkApiVault is ReentrancyGuard, Ownable, Events {
     }
 
     constructor(
-        address billingToken_,
         address treasury_,
         uint64 noteTtl_,
         uint64 challengePeriod_,
@@ -63,10 +58,7 @@ contract ZkApiVault is ReentrancyGuard, Ownable, Events {
         uint256 clearanceSigningKeyY_,
         address owner_
     ) Ownable(owner_) {
-        if (
-            treasury_ == address(0) || proofAdapter_ == address(0)
-                || challengePeriod_ == 0
-        ) {
+        if (treasury_ == address(0) || proofAdapter_ == address(0) || challengePeriod_ == 0) {
             revert Errors.Unauthorized();
         }
         _requireField(stateSigningKeyX_);
@@ -78,9 +70,7 @@ contract ZkApiVault is ReentrancyGuard, Ownable, Events {
                 || (clearanceSigningKeyX_ == 0 && clearanceSigningKeyY_ == 0)
         ) revert Errors.InvalidDeploymentBinding();
 
-        billingToken = IERC20(billingToken_);
-        nativeAssetWeiPerUnit = billingToken_ == address(0) ? 1 gwei : 0;
-        if (billingToken_ == address(0) && (requestChargeCap_ == 0 || requestChargeCap_ > MAX_NATIVE_UNITS)) {
+        if (requestChargeCap_ == 0 || requestChargeCap_ > MAX_NATIVE_UNITS) {
             revert Errors.InvalidBalance();
         }
         treasury = treasury_;
@@ -101,11 +91,7 @@ contract ZkApiVault is ReentrancyGuard, Ownable, Events {
         nonReentrant
         whenNotPaused
     {
-        if (nativeAssetWeiPerUnit != 0) {
-            if (amount > MAX_NATIVE_UNITS || msg.value != uint256(amount) * nativeAssetWeiPerUnit) {
-                revert Errors.InvalidNativeValue();
-            }
-        } else if (msg.value != 0) {
+        if (amount > MAX_NATIVE_UNITS || msg.value != uint256(amount) * nativeAssetWeiPerUnit) {
             revert Errors.InvalidNativeValue();
         }
         if (amount == 0) revert Errors.ZeroAmount();
@@ -123,7 +109,6 @@ contract ZkApiVault is ReentrancyGuard, Ownable, Events {
         currentRoot = newRoot;
         notes[noteId] = Types.Note(commitment, amount, expiryTs, Types.NoteStatus.Active);
         nextNoteId = noteId + 1;
-        if (nativeAssetWeiPerUnit == 0) billingToken.safeTransferFrom(msg.sender, address(this), amount);
         emit NoteDeposited(noteId, commitment, amount, expiryTs, newRoot);
     }
 
@@ -265,12 +250,8 @@ contract ZkApiVault is ReentrancyGuard, Ownable, Events {
     }
 
     function _transfer(address destination, uint128 amount) private {
-        if (nativeAssetWeiPerUnit == 0) {
-            billingToken.safeTransfer(destination, amount);
-        } else {
-            (bool success,) = payable(destination).call{value: uint256(amount) * nativeAssetWeiPerUnit}("");
-            if (!success) revert Errors.NativeTransferFailed();
-        }
+        (bool success,) = payable(destination).call{value: uint256(amount) * nativeAssetWeiPerUnit}("");
+        if (!success) revert Errors.NativeTransferFailed();
     }
 
     function _consumeNullifier(uint256 nullifier) private {

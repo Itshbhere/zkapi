@@ -27,15 +27,14 @@ await client.init();
 const unsubscribe = client.subscribe(snapshot => renderBalance(snapshot));
 ```
 
-Configuration must precede the first initialization. Browser mode is the
-default. An explicit `mode: 'auto'` preserves the former same-origin daemon
-probe and `?zkapiMode=` override; `mode: 'daemon'` selects only the daemon.
+Configuration must precede the first initialization. The SDK runs only the
+native ETH browser wallet; `mode: 'auto'` and `mode: 'daemon'` are unsupported.
 The host config URL supplies the pinned network, vault, server signing keys,
 proof hashes, and approved deployment manifest URLs. Runtime URL overrides
 remain restricted to that allowlist. Configure the same-origin
 `/zkapi-deployment/` rewrite for the chosen trusted deployment, as declared by
 the bundled browser config. Private protocol and public manifest/config requests omit account credentials,
-including through the same-origin deployment rewrite and optional daemon API. An injected transport
+including through the same-origin deployment rewrite. An injected transport
 receives `credentials: 'omit'` and the existing `{ preferProxy: true }` hint and
 must preserve that credential policy. Chat account cookies must never accompany
 private proof or key issuance requests.
@@ -72,13 +71,13 @@ withdrawal gas. By default it is also the destination of a newly prepared
 withdrawal. To choose an independent payout address, call
 `client.withdraw(mode, onStatus, { destination })`, where `mode` is `mutual` or
 `escape`. The destination must be a nonzero Ethereum address, distinct from the
-configured vault and billing token. The host must confirm the intended address
+configured vault. The host must confirm the intended address
 and network with the user. The SDK binds it into the durable proof; an explicit
 different destination on a later call is rejected. Omitting the option when
 resuming always retains the saved destination, even if the gas-paying account
 changes. Concurrent withdrawals with different requested destinations cannot
-share an action. Plain ERC-20 transfers do not create private
-notes: deposits require the SDK's approval and vault calldata.
+share an action. Native deposits require the SDK's payable vault calldata
+and its exact ETH value; a plain ETH transfer does not create a private note.
 
 For durable manual signing, the provider implements
 `acknowledgeTransaction(hash)`. The SDK then includes a `zkapiRecovery` field
@@ -91,9 +90,7 @@ chain, sender, target, value, nonce, and calldata, and retain that hash until
 the SDK acknowledges it. Do not forward `zkapiRecovery` to a remote RPC service.
 
 For a live request, return the verified hash to `request()`; the SDK acknowledges
-after the existing deposit/withdrawal journal accepts it. For approval or mint
-requests, acknowledgement follows a successful receipt, or a finalized reverted
-receipt. After reload, call
+after the existing deposit/withdrawal journal accepts it. After reload, call
 `client.resumeExternalTransaction({ transaction, hash, context })`, where
 `context` is the saved `zkapiRecovery`. This independently reads and checks the
 transaction, validates the durable SDK claim and exact plan, and invokes the
@@ -104,7 +101,7 @@ Resumption is idempotent when a previous journal write succeeded but host
 acknowledgement was interrupted. The host owns the public pending-send record;
 private wallet material and all settlement and payout decisions stay in the SDK.
 
-To recover fee speed-ups while an approval or mint is still awaiting its receipt,
+To recover fee speed-ups while a transaction is still awaiting its receipt,
 providers may implement `getVerifiedTransactionHashes(originalHash)`,
 `beginTransactionReceiptWait(originalHash)`, and
 `endTransactionReceiptWait(originalHash)`. Return only hashes independently
@@ -115,7 +112,7 @@ The host should add newly verified hashes to the active receipt consumer rather
 than start a concurrent resume operation. Preserve that consumer's completed
 hash through cross-tab acknowledgment, and make repeated acknowledgments of
 completed transactions harmless to any newer pending transaction. These hooks
-apply only to token requests; deposit/withdrawal recovery remains journal-owned.
+track receipt-only requests; browser deposit/withdrawal recovery remains journal-owned.
 
 In the host build:
 
@@ -152,21 +149,6 @@ Run `npm run test:sdk` in this checkout. For an installed package, run
 from a host that provides esbuild as a development dependency. The tests use
 local fixtures and do not connect a wallet or broadcast transactions.
 
-## Confirmed test-token balances
-
-After a Sepolia faucet mint, an injected wallet can return a successful receipt
-before its cached `latest` balance read advances. Deposit preparation therefore
-reads the token balance at the receipt's explicit block, checks that the block
-hash is still canonical before and after the read, and rechecks the selected
-chain. Temporarily unavailable or lagging state is retried for a bounded period;
-only state reads are retried, never the mint transaction. A reorganization or
-network change stops preparation for an explicit wallet status check.
-
-This does not alter legacy token funding, deposit/withdrawal proof validation,
-allowance handling, or the durable transaction recovery journal. The regression
-suite exercises the real deposit path with stale provider reads and asserts
-that only one mint and one vault deposit are submitted.
-
 ## Native ETH deployments
 
 The bundled Sepolia configuration pins the September 27 native ETH deployment
@@ -181,15 +163,16 @@ distinguishes unfunded browser checks from a paid Mainnet end-to-end test.
 See the [Mainnet rollout record](../docs/deployments/mainnet-native-eth-20260928.md).
 
 Native ETH requires a separate, trusted native vault and billing-server
-deployment. Existing token manifests continue using their original token; no
-old note, transaction journal, or token balance is reinterpreted as ETH.
+deployment. Token manifests are unsupported and rejected before wallet mutation. Existing
+notes and transaction journals remain bound to their original deployment; they
+are never reinterpreted as ETH.
 Native manifests pin `billing_asset: "native_eth"`, `billing_unit: "gwei"`,
 `native_asset_wei_per_unit: "1000000000"`, a null `billing_token_address`,
 `rpc_url`, `native_price_feed_address`, `native_price_feed_decimals: 8`, and
 `native_price_max_age_seconds`. The browser config must pin the same values.
 Protocol amounts are whole gwei, bounded by JavaScript's safe-integer range.
 The payable deposit ABI is unchanged; `msg.value` must equal the exact ledger
-amount multiplied by one billion wei. Minting and ERC-20 approval are skipped.
+amount multiplied by one billion wei. Token minting, approvals and transfers are unsupported.
 Withdrawals and all other protected calls retain zero transaction value.
 
 `client.isNativeEthFunding` identifies native deployments.
@@ -205,7 +188,7 @@ chainId, contractAddress }`. Amount and wei fields are exact decimal strings;
 intent. The ETH principal remains fixed while a user funds the address; a
 fresh quote must never silently change it. Native deposits accept up to nine
 ETH decimal places. Recovery validates the exact saved calldata and payable
-value, and keeps the same journal rules as token deposits.
+value against the durable deposit journal.
 
 For a browser-controlled funding address, prepare the actual native deposit
 before quoting its fee:

@@ -1,4 +1,9 @@
 > Historical composed-app record. These deployments remain available, but the
+
+> Historical record for earlier releases. Current native ETH architecture and
+> supported code are documented in [the repository README](../README.md) and
+> [the cleanup note](native-only-cleanup.md).
+
 > current source architecture is OA Chat → zkAPI browser SDK. The UI and chat
 > runtime now live in OA Chat's `codex/zkapi-browser-sdk` branch. See
 > [SDK integration](../sdk/README.md) for the current SDK boundary. Details and

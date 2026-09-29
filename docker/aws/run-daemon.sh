@@ -22,7 +22,7 @@ fi
 
 case "${1:-}" in
     server)
-        require ZKAPI_STATE_SEED ZKAPI_CLEAR_SEED REQUEST_CHARGE_CAP
+        require ZKAPI_STATE_SEED ZKAPI_CLEAR_SEED REQUEST_CHARGE_CAP ZKAPI_NATIVE_BILLING_RPC_URL ZKAPI_NATIVE_PRICE_FEED_ADDRESS
         case "$ZKAPI_STATE_SEED:$ZKAPI_CLEAR_SEED" in
             0x1:*|*:0x2)
                 echo "Refusing the development signing seeds" >&2
@@ -33,8 +33,12 @@ case "${1:-}" in
             --contract-address "$VAULT_ADDRESS" \
             --request-charge-cap "$REQUEST_CHARGE_CAP" \
             --proof-setup-dir "$ZKAPI_PROOF_SETUP_DIR" \
-            serverd --listen 0.0.0.0:3000 --provider "${PROVIDER:-metered}" \
+            serverd --listen 0.0.0.0:3000 \
             --indexer-url http://indexer:3001 \
+            --native-billing-rpc-url "$ZKAPI_NATIVE_BILLING_RPC_URL" \
+            --native-price-feed-address "$ZKAPI_NATIVE_PRICE_FEED_ADDRESS" \
+            --native-price-feed-decimals "${ZKAPI_NATIVE_PRICE_FEED_DECIMALS:-8}" \
+            --native-price-max-age-seconds "${ZKAPI_NATIVE_PRICE_MAX_AGE_SECONDS:-4500}" \
             --openrouter-lease-ttl-seconds "${LEASE_TTL_SECONDS:-300}" \
             --openrouter-settlement-grace-seconds "${SETTLEMENT_GRACE_SECONDS:-5}" \
             --db-path /data/server.db

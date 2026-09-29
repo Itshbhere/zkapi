@@ -1,11 +1,8 @@
-//! Core library for zkAPI: Poseidon hash, Merkle tree, commitment helpers.
+//! BN254 Poseidon hashing, Merkle trees, and note/state helpers for zkAPI v2.
 
-pub mod commitment;
 pub mod leaf;
 pub mod merkle;
 pub mod nullifier;
-pub mod poseidon;
 pub mod v2;
 
 pub use merkle::MerkleTree;
-pub use poseidon::poseidon_hash;

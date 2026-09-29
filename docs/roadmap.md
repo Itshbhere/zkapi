@@ -1,5 +1,10 @@
 # Roadmap
 
+> Historical record for earlier releases. Current native ETH architecture and
+> supported code are documented in [the repository README](../README.md) and
+> [the cleanup note](native-only-cleanup.md).
+
+
 Version 2 replaces the Stwo/XMSS prototype with compact Groth16 request and
 withdrawal proofs, proof-friendly signatures, immutable on-chain verification,
 and exact payload binding.

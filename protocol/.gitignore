@@ -5,9 +5,6 @@ rust/target/
 
 target/
 
-# Cairo / Scarb
-cairo/target/
-
 # Foundry
 contracts/out/
 contracts/cache/

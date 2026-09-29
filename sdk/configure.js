@@ -26,8 +26,8 @@ export function configureBrowserSdk(next = {}) {
     if (merged.transport !== null && typeof merged.transport !== 'function') {
         throw new TypeError('zkAPI transport must be a fetch-compatible function.');
     }
-    if (!['browser', 'auto', 'daemon'].includes(merged.mode)) {
-        throw new TypeError('zkAPI mode must be browser, auto, or daemon.');
+    if (merged.mode !== 'browser') {
+        throw new TypeError('Only browser mode is supported; local daemon and automatic probing modes have been removed.');
     }
     merged.configUrl = absoluteUrl(merged.configUrl, 'configUrl');
     merged.workerUrl = absoluteUrl(merged.workerUrl, 'workerUrl');

@@ -1,44 +1,32 @@
 # End-to-End Flows
 
-## Request Lifecycle
+## Request
 
-```mermaid
-flowchart LR
-    A["Client note state"] --> B["Build request proof artifact"]
-    B --> C["Server verifies proof artifact and public outputs"]
-    C --> D["Reserve nullifier"]
-    D --> E["Execute provider"]
-    E --> F["Compute charge, blind delta, next anchor"]
-    F --> G["XMSS-sign next state"]
-    G --> H["Persist transcript"]
-    H --> I["Client verifies response and installs next state"]
-```
+1. The wallet proves membership and a note-bound state, sufficient balance,
+   rerandomization, and authorization for the exact request context.
+2. The server verifies deployment, signing keys, time, root, bound, and proof.
+3. A durable nullifier reservation prevents competing spends.
+4. Provider execution or a short-lived OpenRouter lease determines usage.
+5. The server applies the bounded charge, derives fresh blinding and anchor,
+   signs the next state with Schnorr, and persists the transcript.
+6. The wallet verifies the returned transition and installs its next state.
+   Prepared-request journals support retries and recovery.
 
-## Mutual Close
+## Mutual close
 
-1. Client derives withdrawal nullifier from the current anchor.
-2. Client requests server clearance.
-3. Server signs the clearance message with its clearance XMSS tree.
-4. Client verifies the clearance signature.
-5. Client builds a withdrawal proof artifact with `has_clearance = true`.
-6. Contract verifies the withdrawal statement through the adapter and settles immediately.
+The client asks for clearance on the current withdrawal nullifier. The server
+reserves it and returns a clearance signature. The client proves the final
+balance and clearance, and the vault removes the note leaf and settles native
+ETH to the user and treasury.
 
-## Escape Hatch
+## Escape and challenge
 
-1. Client builds a withdrawal proof artifact with `has_clearance = false`.
-2. Contract removes the note leaf immediately and stores pending withdrawal data.
-3. If the withdrawal is stale, the server reconstructs a challenge from the archived request transcript.
-4. `challengeEscapeWithdrawal` restores the original leaf.
-5. If no challenge arrives in time, `finalizeEscapeWithdrawal` settles the note.
+The client can prove a withdrawal without clearance. Initiation removes the
+leaf and starts the challenge period. A stale state has a nullifier already
+used by an accepted request. The challenge service submits that archived request
+proof and a current zero-leaf path; the vault restores the leaf. Historical
+request roots remain valid evidence after unrelated note-tree changes.
 
-## Recovery
-
-The recovery path matters because a request consumes a nullifier before the next state is durable.
-
-Current implementation:
-
-- the client writes a journal before sending the request
-- the journal stores the `client_request_id`, nullifier, payload hash, and `user_rerandomization`
-- the server stores a transcript keyed by nullifier
-- if the client crashes, it asks the server for recovery by client request id
-- if the transcript is finalized, the client recomputes and verifies the exact next blinding and next state signature before installing state
+After an uncontested deadline, anyone can finalize the pending withdrawal to
+its previously bound destination. If an active note expires without close-out,
+its deposit can be claimed for the treasury.

@@ -6,10 +6,13 @@ import codec from '../wallet.js';
 
 const FROM = `0x${'11'.repeat(20)}`;
 const VAULT = `0x${'22'.repeat(20)}`;
-const TOKEN = `0x${'33'.repeat(20)}`;
+const FEED = `0x${'33'.repeat(20)}`;
 const HASH = `0x${'44'.repeat(32)}`;
 const COMMITMENT = `0x${'55'.repeat(32)}`;
-const funding = { chain_id: 1, contract_address: VAULT, demo_billing_token_address: TOKEN };
+const funding = { chain_id: 1, contract_address: VAULT,
+    billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000',
+    native_price_feed_address: FEED, native_price_feed_decimals: 8,
+    native_price_max_age_seconds: 3600, demo_rpc_url: 'https://rpc.example' };
 const gate = () => {
     let resolve;
     const promise = new Promise(yes => { resolve = yes; });
@@ -79,16 +82,15 @@ function recoveryHarness(t, kind = 'deposit') {
     if (kind === 'deposit') {
         state.pendingDeposit = deposit;
         data = codec.encodeDeposit(deposit, 2000000n);
-    } else if (kind === 'token') {
-        data = codec.callData(codec.ABI.approve, [codec.addressWord(VAULT), codec.abiWord(2000000)]);
+
     } else {
         if (kind === 'withdrawal') state.preparedWithdrawal = plan;
         else runtime.withdrawals = [record];
         data = kind === 'finalization' ? codec.encodeFinalizeEscape(7)
             : codec.encodeWithdrawal(plan, 'mutual', FROM, VAULT);
     }
-    const context = c.externalRecoveryContext(kind === 'token' ? null : { kind, submission });
-    const transaction = { from: FROM, to: kind === 'token' ? TOKEN : VAULT, data, value: '0x0', nonce: '0x5' };
+    const context = c.externalRecoveryContext({ kind, submission });
+    const transaction = { from: FROM, to: VAULT, data, value: kind === 'deposit' ? `0x${(2000000n * 1000000000n).toString(16)}` : '0x0', nonce: '0x5' };
     const actual = { ...transaction, input: data, hash: HASH, chainId: '0x1' };
     const originalRequest = p.request;
     p.request = async request => request.method === 'eth_getTransactionByHash'
@@ -104,7 +106,7 @@ test('native deposit reload attaches only the exact saved payable amount and jou
     const h = recoveryHarness(t);
     h.c.config.funding = { ...funding, demo_billing_token_address: null,
         billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000',
-        native_price_feed_address: TOKEN, native_price_feed_decimals: 8,
+        native_price_feed_address: FEED, native_price_feed_decimals: 8,
         native_price_max_age_seconds: 3600, demo_rpc_url: 'https://rpc.example' };
     h.transaction.value = `0x${(BigInt(h.deposit.amount) * 1_000_000_000n).toString(16)}`;
     h.actual.value = h.transaction.value;
@@ -143,9 +145,9 @@ test('explicit providers are instance scoped and never change the injected provi
 test('withdrawal rejects invalid or known contract payout addresses before wallet or protocol work', async t => {
     const c = client();
     const check = t.mock.method(c, 'assertBalanceNotClaimed', async () => assert.fail('must validate first'));
-    for (const destination of ['', null, FROM + '0', '0x1234', `0x${'00'.repeat(20)}`, VAULT, TOKEN]) {
-        await assert.rejects(c.withdraw('mutual', () => {}, { destination }), /withdrawal address|vault or billing/);
-        await assert.rejects(c.performWithdrawal('escape', () => {}, { destination }), /withdrawal address|vault or billing/);
+    for (const destination of ['', null, FROM + '0', '0x1234', `0x${'00'.repeat(20)}`, VAULT]) {
+        await assert.rejects(c.withdraw('mutual', () => {}, { destination }), /withdrawal address|vault contract/);
+        await assert.rejects(c.performWithdrawal('escape', () => {}, { destination }), /withdrawal address|vault contract/);
     }
     assert.equal(check.mock.calls.length, 0);
 });
@@ -277,7 +279,7 @@ for (const kind of ['withdrawal', 'background-withdrawal', 'background-replaceme
     });
 }
 
-for (const [field, value] of Object.entries({ from: TOKEN, to: TOKEN, input: '0xdeadbeef', nonce: '0x6', value: '0x1', chainId: '0x2', hash: `0x${'66'.repeat(32)}` })) {
+for (const [field, value] of Object.entries({ from: FEED, to: FEED, input: '0xdeadbeef', nonce: '0x6', value: '0x1', chainId: '0x2', hash: `0x${'66'.repeat(32)}` })) {
     test(`reload rejects a transaction with mismatched ${field}`, async t => {
         const h = recoveryHarness(t); h.actual[field] = value;
         await assert.rejects(h.resume(), /does not match/);
@@ -314,25 +316,6 @@ test('an active SDK sender owns hash delivery until it finishes', async t => {
     await assert.rejects(h.resume(), /original wallet action/);
     assert.equal(h.remembers.rememberPendingDepositTransaction.mock.calls.length, 0);
 });
-
-test('token resumption waits for a successful receipt before acknowledging', async t => {
-    const h = recoveryHarness(t, 'token'); const wait = gate();
-    t.mock.method(h.c, 'waitForReceipt', async () => { await wait.promise; return { status: '0x1' }; });
-    const result = h.resume(); for (let i = 0; i < 8; i += 1) await Promise.resolve();
-    assert.deepEqual(h.p.acks, []); wait.resolve();
-    assert.equal((await result).status, 'confirmed'); assert.deepEqual(h.p.acks, [HASH]);
-});
-
-for (const finalized of [false, true]) {
-    test(`reverted token request is acknowledged only after finality (${finalized})`, async t => {
-        const h = recoveryHarness(t, 'token');
-        const error = Object.assign(new Error('reverted'), { transactionReceipt: { status: '0x0' } });
-        t.mock.method(h.c, 'waitForReceipt', async () => { throw error; });
-        t.mock.method(h.c, 'browserRevertedReceiptFinality', async () => ({ finalized }));
-        await assert.rejects(h.resume(), /reverted/);
-        assert.deepEqual(h.p.acks, finalized ? [HASH] : []);
-    });
-}
 
 test('selected withdrawal hash can arrive after canonical recovery moved its plan to history', async t => {
     const h = recoveryHarness(t, 'withdrawal');
@@ -394,7 +377,7 @@ for (const kind of ['deposit', 'withdrawal', 'finalization']) {
     });
 }
 
-test('manual token receipt follows verified fee replacements without changing receipt identity', async () => {
+test('manual receipt follows verified fee replacements without changing receipt identity', async () => {
     const c = client();
     const replacement = `0x${'66'.repeat(32)}`;
     const steps = [];
@@ -407,13 +390,13 @@ test('manual token receipt follows verified fee replacements without changing re
     p.endTransactionReceiptWait = hash => steps.push(`end:${hash}`);
     p.acknowledgeTransaction = async hash => steps.push(`ack:${hash}`);
     c.setWalletProvider(p);
-    const receipt = await c.acknowledgeExternalTokenTransaction(HASH);
+    const receipt = await c.acknowledgeExternalTransactionReceipt(HASH);
     assert.equal(receipt.transactionHash, replacement);
     assert.deepEqual(steps, [`begin:${HASH}`, replacement, `ack:${replacement}`, `end:${HASH}`]);
     assert.equal(p.calls.some(call => call.method === 'eth_sendTransaction'), false);
 });
 
-test('manual token receipt can acknowledge the original when it wins the replacement nonce race', async () => {
+test('manual receipt can acknowledge the original when it wins the replacement nonce race', async () => {
     const c = client();
     const replacement = `0x${'66'.repeat(32)}`;
     const reads = [];
@@ -425,7 +408,7 @@ test('manual token receipt can acknowledge the original when it wins the replace
     const acknowledgments = [];
     p.acknowledgeTransaction = async hash => acknowledgments.push(hash);
     c.setWalletProvider(p);
-    const receipt = await c.acknowledgeExternalTokenTransaction(HASH);
+    const receipt = await c.acknowledgeExternalTransactionReceipt(HASH);
     assert.equal(receipt.transactionHash, HASH);
     assert.deepEqual(reads, [replacement, HASH]);
     assert.deepEqual(acknowledgments, [HASH]);
@@ -441,7 +424,7 @@ test('replacement receipt mismatch cannot acknowledge any manual transaction', a
     p.acknowledgeTransaction = async () => { acknowledged = true; };
     p.endTransactionReceiptWait = () => { ended = true; };
     c.setWalletProvider(p);
-    await assert.rejects(c.acknowledgeExternalTokenTransaction(HASH), /different transaction hash/);
+    await assert.rejects(c.acknowledgeExternalTransactionReceipt(HASH), /different transaction hash/);
     assert.equal(acknowledged, false);
     assert.equal(ended, true);
 });
@@ -459,6 +442,15 @@ test('reverted fee replacement finality uses the actual replacement hash', async
         assert.equal(receipt.transactionHash, replacement);
         return { finalized: true };
     });
-    await assert.rejects(c.acknowledgeExternalTokenTransaction(HASH), /reverted/);
+    await assert.rejects(c.acknowledgeExternalTransactionReceipt(HASH), /reverted/);
     assert.deepEqual(acknowledged, [replacement]);
+});
+
+test('saved token transaction context is rejected without RPC, signing or journal mutation', async t => {
+    const h = recoveryHarness(t);
+    h.context.kind = 'token';
+    h.p.request = async () => assert.fail('unsupported context must fail before RPC');
+    await assert.rejects(h.resume(), /different payment deployment/);
+    assert.deepEqual(h.p.acks, []);
+    assert.ok(Object.values(h.remembers).every(mock => mock.mock.calls.length === 0));
 });

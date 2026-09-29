@@ -1,6 +1,6 @@
 //! Nullifier computation.
 //!
-//! x = Poseidon(domain("zkapi.null"), s, tau)
+//! x = Poseidon(domain("zkapi.v2.null"), s, tau)
 //! For genesis: tau = 1
 //! For later states: tau = server-issued anchor
 

@@ -1,12 +1,8 @@
 import { browserSdkOptions, beginBrowserSdkInitialization, browserSdkTransport } from '../configure.js';
-import { isNativeEthFunding, assertNativeVault, validateNativeFunding, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, sameNativeQuote, requestBillingQuote } from './zkapiNativeEth.mjs';
+import { assertNativeVault, validateNativeFunding, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, sameNativeQuote, requestBillingQuote } from './zkapiNativeEth.mjs';
 import { CHAT_SPENDING_TIER_USD } from './zkapiRequestCompat.mjs';
 import { sameFelt, waitForExpectedActiveRoot } from './zkapiWithdrawalRoot.mjs';
 import { isUnsubmittedParkedMutualWithdrawal } from './zkapiWithdrawalRecovery.mjs';
-import {
-    leaseSpendingLimitCredits,
-    selectLeaseSpendingLimitCredits
-} from './zkapiRequestCompat.mjs';
 import {
     archiveBrowserWallet,
     assertBrowserBackgroundWithdrawalAvailable,
@@ -52,7 +48,6 @@ function browserConfigUrl() {
     if (!configured) throw new Error('Configure a trusted configUrl before initializing the zkAPI browser SDK.');
     return configured;
 }
-const LEASE_AUTHORIZATION = JSON.stringify({ mode: 'openrouter_ephemeral_lease', version: 1 });
 const REQUIRED_CIRCUIT_ID = 'zkapi-v2-note-bound-v1';
 const MAX_RECOVERY_WAIT_MS = 45_000;
 // OA may briefly throttle child-key creation. Keep retrying the same durable,
@@ -318,7 +313,7 @@ class BrowserWalletRuntime extends EventTarget {
         this.validateManifestTrust(this.manifest);
         localStorage.setItem('zkapi-browser-deployment', manifestUrl);
         this.config = this.buildClientConfig(this.manifest, this.browserConfig);
-        if (isNativeEthFunding(this.config.funding)) await assertNativeVault(this.config.funding);
+        await assertNativeVault(this.config.funding);
         this.worker = new WorkerBridge();
         // Initialization participates in the same global lock as every later
         // mutation. This prevents two same-origin deployment tabs from both
@@ -328,7 +323,8 @@ class BrowserWalletRuntime extends EventTarget {
             if (this.runtime.deploymentId !== this.manifest.deployment_id) {
                 this.runtime = await writeBrowserWallet({
                     ...this.runtime,
-                    deploymentId: this.manifest.deployment_id
+                    deploymentId: this.manifest.deployment_id,
+                    billingAsset: 'native_eth'
                 });
             }
             await this.recoverPendingLocked({ retireLostKey: true, quiet: true });
@@ -400,15 +396,10 @@ class BrowserWalletRuntime extends EventTarget {
         for (const field of ['deployment_id', 'contract_address', 'protocol_server_url', 'indexer_url']) {
             if (!manifest[field]) throw new Error(`The deployment manifest omitted ${field}.`);
         }
-        if (!/^0x[0-9a-fA-F]{40}$/.test(manifest.contract_address)
-            || (manifest.billing_token_address && !/^0x[0-9a-fA-F]{40}$/.test(manifest.billing_token_address))) {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(manifest.contract_address)) {
             throw new Error('The deployment manifest contains an invalid contract address.');
         }
-        if (manifest.billing_asset && !['native_eth', 'erc20'].includes(manifest.billing_asset)) throw new Error('Unsupported billing asset.');
-        if (isNativeEthFunding(manifest)) {
-            validateNativeFunding(manifest);
-            if (manifest.billing_token_address != null || manifest.demo_mint_enabled) throw new Error('Native ETH deployments cannot advertise a token or mint.');
-        }
+        validateNativeFunding(manifest);
         for (const field of ['protocol_server_url', 'indexer_url']) {
             const url = new URL(manifest[field]);
             if (url.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(url.hostname)) {
@@ -442,20 +433,15 @@ class BrowserWalletRuntime extends EventTarget {
         requireEqual(manifest.deployment_id, trusted.deployment_id, 'deployment id');
         requireEqual(manifest.chain_id, trusted.chain_id, 'chain id', Number);
         requireEqual(manifest.contract_address, trusted.contract_address, 'vault address', lowercase);
-        if (isNativeEthFunding(manifest) || isNativeEthFunding(trusted)) {
-            requireEqual(manifest.billing_asset, trusted.billing_asset, 'billing asset');
-            requireEqual(manifest.billing_unit, trusted.billing_unit, 'billing unit');
-            requireEqual(manifest.native_asset_wei_per_unit, trusted.native_asset_wei_per_unit, 'native asset scale');
-            requireEqual(manifest.native_price_feed_address, trusted.native_price_feed_address, 'ETH price feed', lowercase);
-            requireEqual(manifest.native_price_feed_decimals, trusted.native_price_feed_decimals, 'ETH price decimals', Number);
-            requireEqual(manifest.native_price_max_age_seconds, trusted.native_price_max_age_seconds, 'ETH price freshness', Number);
-            requireEqual(manifest.rpc_url, trusted.rpc_url, 'native asset RPC', normalizedUrl);
-            if (manifest.billing_token_address != null || trusted.billing_token_address != null) {
-                throw new Error('The native ETH deployment cannot advertise a billing token.');
-            }
-        } else {
-            requireEqual(manifest.billing_token_address, trusted.billing_token_address, 'billing token', lowercase);
-        }
+        validateNativeFunding(manifest);
+        validateNativeFunding(trusted);
+        requireEqual(manifest.billing_asset, trusted.billing_asset, 'billing asset');
+        requireEqual(manifest.billing_unit, trusted.billing_unit, 'billing unit');
+        requireEqual(manifest.native_asset_wei_per_unit, trusted.native_asset_wei_per_unit, 'native asset scale');
+        requireEqual(manifest.native_price_feed_address, trusted.native_price_feed_address, 'ETH price feed', lowercase);
+        requireEqual(manifest.native_price_feed_decimals, trusted.native_price_feed_decimals, 'ETH price decimals', Number);
+        requireEqual(manifest.native_price_max_age_seconds, trusted.native_price_max_age_seconds, 'ETH price freshness', Number);
+        requireEqual(manifest.rpc_url, trusted.rpc_url, 'native asset RPC', normalizedUrl);
         requireEqual(manifest.protocol_server_url, trusted.protocol_server_url, 'protocol server', normalizedUrl);
         requireEqual(manifest.indexer_url, trusted.indexer_url, 'indexer', normalizedUrl);
         requireEqual(manifest.request_charge_cap, trusted.request_charge_cap, 'request charge cap', Number);
@@ -500,13 +486,12 @@ class BrowserWalletRuntime extends EventTarget {
         const requestKey = new URL('request.pk', keyBase).href;
         const withdrawalKey = new URL('withdrawal.pk', keyBase).href;
         const requestCap = Number(manifest.request_charge_cap);
-        const native = isNativeEthFunding(manifest);
-        const creditsPerUsd = native ? null : Number(browserConfig.credits_per_usd || 1_000_000);
+        validateNativeFunding(manifest);
         return {
             ux_proposal: String(browserConfig.ux_proposal || 'quiet'),
-            credits_per_usd: creditsPerUsd,
+            credits_per_usd: null,
             request_charge_cap: requestCap,
-            request_charge_cap_usd: native ? null : requestCap / creditsPerUsd,
+            request_charge_cap_usd: null,
             policy_charge_cap: Number(manifest.policy_charge_cap || requestCap),
             policy_enabled: Boolean(manifest.policy_enabled),
             upstream_kind: 'openrouter',
@@ -548,18 +533,14 @@ class BrowserWalletRuntime extends EventTarget {
                 models: manifest.models || [],
                 suggested_deposit_amount: Number(browserConfig.suggested_deposit_amount || requestCap * 100),
                 demo_rpc_url: manifest.rpc_url || null,
-                demo_billing_token_address: manifest.billing_token_address || null,
-                billing_token_symbol: native ? 'ETH' : String(browserConfig.billing_token_symbol || 'TOKEN'),
-                billing_token_decimals: native ? 9 : Number(browserConfig.billing_token_decimals || 6),
-                ...(native ? {
-                    billing_asset: manifest.billing_asset,
-                    billing_unit: manifest.billing_unit,
-                    native_asset_wei_per_unit: manifest.native_asset_wei_per_unit,
-                    native_price_feed_address: manifest.native_price_feed_address,
-                    native_price_feed_decimals: manifest.native_price_feed_decimals,
-                    native_price_max_age_seconds: manifest.native_price_max_age_seconds
-                } : {}),
-                demo_mint_enabled: Boolean(manifest.demo_mint_enabled),
+                billing_token_symbol: 'ETH',
+                billing_token_decimals: 9,
+                billing_asset: manifest.billing_asset,
+                billing_unit: manifest.billing_unit,
+                native_asset_wei_per_unit: manifest.native_asset_wei_per_unit,
+                native_price_feed_address: manifest.native_price_feed_address,
+                native_price_feed_decimals: manifest.native_price_feed_decimals,
+                native_price_max_age_seconds: manifest.native_price_max_age_seconds,
                 demo_note_ttl_seconds: Number(manifest.note_ttl_seconds || 0) || null
             }
         };
@@ -625,7 +606,7 @@ class BrowserWalletRuntime extends EventTarget {
                 operation_id: pendingDeposit.operationId || null,
                 phase: pendingDeposit.phase || (pendingDeposit.transactionHash ? 'submitted' : 'ambiguous'),
                 amount: Number(pendingDeposit.amount),
-                funding_quote_available: isNativeEthFunding(this.config?.funding)
+                funding_quote_available: Boolean(this.config?.funding)
                     && this.canQuotePendingDeposit(pendingDeposit),
                 next_note_id: Number(pendingDeposit.next_note_id),
                 transaction_hash: pendingDeposit.transactionHash || null,
@@ -690,10 +671,10 @@ class BrowserWalletRuntime extends EventTarget {
                 && storedRuntime.lateDepositAttempts.some(attempt =>
                     !LATE_DEPOSIT_TERMINAL_STATUSES.has(attempt.status)))
         );
-        if (this.manifest && storedRuntime.deploymentId
-            && storedRuntime.deploymentId !== this.manifest.deployment_id
-            && hasDurableState) {
-            throw new Error(`This browser contains a wallet for ${storedRuntime.deploymentId}. Switch back to that deployment before using or withdrawing it.`);
+        if (this.manifest && hasDurableState
+            && (!storedRuntime.deploymentId || storedRuntime.deploymentId !== this.manifest.deployment_id
+                || (storedRuntime.billingAsset != null && storedRuntime.billingAsset !== 'native_eth'))) {
+            throw new Error(`This browser contains a wallet for ${storedRuntime.deploymentId || 'an unidentified legacy deployment'}. Switch back to that deployment before using or withdrawing it.`);
         }
         this.runtime = storedRuntime.deploymentId
             && this.manifest
@@ -711,7 +692,7 @@ class BrowserWalletRuntime extends EventTarget {
     }
 
     async commit(next, options = {}) {
-        this.runtime = await writeBrowserWallet({ ...next, deploymentId: this.manifest.deployment_id }, options);
+        this.runtime = await writeBrowserWallet({ ...next, deploymentId: this.manifest.deployment_id, billingAsset: 'native_eth' }, options);
         this.deposits = projectBrowserDeposits(this.runtime, this.deposits,
             this.manifest.deployment_id, options.depositConfirmation);
         this.notify();
@@ -1010,7 +991,7 @@ class BrowserWalletRuntime extends EventTarget {
                 zero_path: path.siblings
             };
             // Keep the durable secret and commitment, but rebase their unused
-            // note onto the latest append position after mint/approval prompts.
+            // note onto the latest append position before the wallet prompt.
             await this.commit({ ...this.runtime, pendingDeposit: refreshed });
             return refreshed;
         });
@@ -1611,11 +1592,6 @@ class BrowserWalletRuntime extends EventTarget {
     }
 
     leaseBudget(spendingLimitUsd, quote = null, { checkBalance = false } = {}) {
-        if (!isNativeEthFunding(this.config?.funding)) {
-            return checkBalance ? selectLeaseSpendingLimitCredits(this.runtime.state.current_balance,
-                this.config.request_charge_cap, this.config.credits_per_usd, spendingLimitUsd)
-                : leaseSpendingLimitCredits(spendingLimitUsd, this.config.credits_per_usd);
-        }
         if (!CHAT_SPENDING_TIER_USD.includes(Number(spendingLimitUsd))) throw new Error('Invalid private-balance model budget configuration.');
         validateNativeQuote(quote, this.config.funding, { allowExpired: true });
         const amount = Number(nativeUnitsForUsd(spendingLimitUsd, quote));
@@ -1650,7 +1626,7 @@ class BrowserWalletRuntime extends EventTarget {
         const path = await this.treePath(this.runtime.state.note_id, true);
         throwIfAborted(signal);
         const now = Date.now();
-        const quote = isNativeEthFunding(this.config.funding) ? await this.nativeBillingQuote(signal) : null;
+        const quote = await this.nativeBillingQuote(signal);
         throwIfAborted(signal);
         const spendingLimitCredits = this.leaseBudget(spendingLimitUsd, quote, { checkBalance: true });
         onProgress('proving', 'Proving this chat is funded…');
@@ -1664,7 +1640,7 @@ class BrowserWalletRuntime extends EventTarget {
             },
             state: this.runtime.state,
             args: {
-                payload: quote ? JSON.stringify({ mode: 'openrouter_ephemeral_lease', version: 1, billing_quote: quote }) : LEASE_AUTHORIZATION,
+                payload: JSON.stringify({ mode: 'openrouter_ephemeral_lease', version: 1, billing_quote: quote }),
                 active_root: path.active_root,
                 merkle_siblings: path.siblings,
                 client_request_id: uuid(),
@@ -1686,18 +1662,10 @@ class BrowserWalletRuntime extends EventTarget {
             || Number(lease.expires_at) <= Math.floor(Date.now() / 1000)) {
             throw new Error('The zkAPI server returned an unusable OpenRouter lease.');
         }
-        if (isNativeEthFunding(this.config.funding)) {
-            validateNativeQuote(expectedQuote, this.config.funding, { allowExpired: true });
-            if (!sameNativeQuote(lease.billing_quote, expectedQuote)
-                || Number(lease.spending_limit_usd) !== Number(nativeUsdMicros(expectedLimitCredits, expectedQuote)) / 1_000_000) {
-                throw new Error('The zkAPI server returned a child key with the wrong native ETH spending cap or quote.');
-            }
-        } else {
-            const returnedLimitCredits = Math.round(Number(lease.spending_limit_usd) * this.config.credits_per_usd);
-            if (lease.billing_quote || !Number.isSafeInteger(returnedLimitCredits)
-                || returnedLimitCredits !== Number(expectedLimitCredits)) {
-                throw new Error('The zkAPI server returned a child key with the wrong spending cap.');
-            }
+        validateNativeQuote(expectedQuote, this.config.funding, { allowExpired: true });
+        if (!sameNativeQuote(lease.billing_quote, expectedQuote)
+            || Number(lease.spending_limit_usd) !== Number(nativeUsdMicros(expectedLimitCredits, expectedQuote)) / 1_000_000) {
+            throw new Error('The zkAPI server returned a child key with the wrong native ETH spending cap or quote.');
         }
         exactTrustedUrl(lease.openrouter_api_base, this.config.openrouter.inference_base, 'OpenRouter inference origin');
         if (this.config.openrouter.require_oa_key_source && lease.key_source !== 'oa_org') {
@@ -1789,7 +1757,7 @@ class BrowserWalletRuntime extends EventTarget {
         try {
             return await this.requestLeaseWithRetry(request, onProgress, signal);
         } catch (error) {
-            if (['native_quote_expired', 'native_quote_superseded'].includes(error?.code) && isNativeEthFunding(this.config.funding)) {
+            if (['native_quote_expired', 'native_quote_superseded'].includes(error?.code)) {
                 await this.recoverUnacceptedNativeQuote(request, signal);
             }
             throw error;
@@ -1987,21 +1955,14 @@ class BrowserWalletRuntime extends EventTarget {
         throwIfAborted(signal);
         const normalized = String(sessionId || 'default').slice(0, 160);
         spendingLimitUsd = Number(spendingLimitUsd);
-        const native = isNativeEthFunding(this.config?.funding);
-        if (native && !CHAT_SPENDING_TIER_USD.includes(spendingLimitUsd)) throw new Error('Invalid private-balance model budget configuration.');
-        const expectedLimitCredits = native ? null : leaseSpendingLimitCredits(spendingLimitUsd, this.config.credits_per_usd);
+        if (!CHAT_SPENDING_TIER_USD.includes(spendingLimitUsd)) throw new Error('Invalid private-balance model budget configuration.');
         if (this.leasePromise) {
             return this.waitForLeasePromise(normalized, onProgress, signal, spendingLimitUsd);
         }
         const now = Math.floor(Date.now() / 1000);
         const isSafeForNewRequest = this.activeLease
             && Number(this.activeLease.expires_at) > now + MIN_REQUEST_LEASE_REMAINING_SECONDS;
-        const activeLimitCredits = this.activeLease
-            ? Math.round(Number(this.activeLease.spending_limit_usd) * this.config.credits_per_usd)
-            : null;
-        const activeLeaseMatchesPolicy = native
-            ? this.activeLease?.selectedSpendingLimitUsd === spendingLimitUsd
-            : Number.isSafeInteger(activeLimitCredits) && activeLimitCredits === expectedLimitCredits;
+        const activeLeaseMatchesPolicy = this.activeLease?.selectedSpendingLimitUsd === spendingLimitUsd;
         if (this.activeLease
             && isSafeForNewRequest
             && activeLeaseMatchesPolicy
@@ -2240,13 +2201,11 @@ class BrowserWalletRuntime extends EventTarget {
         onProgress('applying', 'Updating your private balance…');
         const recovery = await this.remoteJson(`${this.config.funding.protocol_server_url}/v2/requests/${encodeURIComponent(clientRequestId)}`);
         if (!recovery.request_response) return false;
-        if (isNativeEthFunding(this.config.funding)) {
-            const quote = requestBillingQuote(this.runtime.journal?.prepared_request);
-            validateNativeQuote(quote, this.config.funding, { allowExpired: true });
-            let payload;
-            try { payload = JSON.parse(recovery.request_response.response_payload); } catch { /* Reject below. */ }
-            if (!sameNativeQuote(payload?.billing_quote, quote)) throw new Error('The settlement receipt changed the authorized ETH/USD quote.');
-        }
+        const quote = requestBillingQuote(this.runtime.journal?.prepared_request);
+        validateNativeQuote(quote, this.config.funding, { allowExpired: true });
+        let payload;
+        try { payload = JSON.parse(recovery.request_response.response_payload); } catch { /* Reject below. */ }
+        if (!sameNativeQuote(payload?.billing_quote, quote)) throw new Error('The settlement receipt changed the authorized ETH/USD quote.');
         const state = await this.worker.call('completeResponse', {
             config: this.config.wallet_core,
             args: {
@@ -2267,7 +2226,6 @@ class BrowserWalletRuntime extends EventTarget {
     }
 
     async recoverUnacceptedNativeQuote(request, signal = null) {
-        if (!isNativeEthFunding(this.config?.funding)) return false;
         const journal = this.runtime?.journal;
         const body = JSON.stringify(request);
         if (!request?.client_request_id || request.payload_hash == null
@@ -2325,7 +2283,7 @@ class BrowserWalletRuntime extends EventTarget {
             if (error.status === 404) {
                 const recovery = await this.remoteJson(`${this.config.funding.protocol_server_url}/v2/nullifiers/${encodeURIComponent(this.runtime.journal.nullifier)}`, { signal });
                 if (recovery.request_response) return this.installRecoveredResponse(request.client_request_id, onProgress);
-                if (isNativeEthFunding(this.config.funding) && recovery.status === 'not_found'
+                if (recovery.status === 'not_found'
                     && recovery.nullifier_status === 'unknown' && !recovery.request_response) {
                     try { return await this.recoverUnacceptedNativeQuote(request, signal); }
                     catch (recoveryError) {

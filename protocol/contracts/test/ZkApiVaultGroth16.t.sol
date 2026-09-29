@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {ZkApiVault} from "../src/ZkApiVault.sol";
 import {Groth16ProofAdapter} from "../src/adapters/Groth16ProofAdapter.sol";
 import {Types} from "../src/libraries/Types.sol";
@@ -19,7 +18,6 @@ contract ZkApiVaultGroth16Test is Test {
     address constant USER = 0x1111111111111111111111111111111111111111;
     address constant TREASURY = address(0xbeef);
 
-    ERC20Mock token;
     Groth16ProofAdapter adapter;
     ZkApiVault vault;
     string fixtures;
@@ -35,13 +33,11 @@ contract ZkApiVaultGroth16Test is Test {
             emptySiblings[level] = zero;
             zero = Bn254Poseidon.hash3(DOMAIN_NODE, zero, zero);
         }
-        token = new ERC20Mock();
         adapter = new Groth16ProofAdapter();
         (Types.WithdrawalPublicInputs memory parameters,) = _withdrawal("escape_after_deposit");
         vm.setNonce(DEPLOYER, 0);
         vm.prank(DEPLOYER);
         vault = new ZkApiVault(
-            address(token),
             TREASURY,
             30 days,
             24 hours,
@@ -54,9 +50,7 @@ contract ZkApiVaultGroth16Test is Test {
             address(this)
         );
         assertEq(address(vault), parameters.contractAddress);
-        token.mint(USER, 2 * DEPOSIT);
-        vm.prank(USER);
-        token.approve(address(vault), type(uint256).max);
+        vm.deal(USER, 2 * uint256(DEPOSIT) * 1 gwei);
     }
 
     function test_realHistoricalRequestChallengesAfterDeposit() public {
@@ -72,9 +66,9 @@ contract ZkApiVaultGroth16Test is Test {
         uint256[32] memory siblings = _siblingsWithOtherLeaf(1);
         vault.initiateEscapeWithdrawal(withdrawal, withdrawalProof, siblings);
         _challenge(request, requestProof, siblings, restoredRoot);
-        assertEq(token.balanceOf(address(vault)), 2 * DEPOSIT);
-        assertEq(token.balanceOf(USER), 0);
-        assertEq(token.balanceOf(TREASURY), 0);
+        assertEq(address(vault).balance, 2 * uint256(DEPOSIT) * 1 gwei);
+        assertEq(USER.balance, 0);
+        assertEq(TREASURY.balance, 0);
     }
 
     function test_realHistoricalRequestChallengesAfterClose() public {
@@ -93,9 +87,9 @@ contract ZkApiVaultGroth16Test is Test {
         _challenge(request, requestProof, emptySiblings, restoredRoot);
         (,,, Types.NoteStatus otherStatus) = vault.notes(1);
         assertEq(uint256(otherStatus), uint256(Types.NoteStatus.Closed));
-        assertEq(token.balanceOf(address(vault)), DEPOSIT);
-        assertEq(token.balanceOf(USER), DEPOSIT);
-        assertEq(token.balanceOf(TREASURY), 0);
+        assertEq(address(vault).balance, uint256(DEPOSIT) * 1 gwei);
+        assertEq(USER.balance, uint256(DEPOSIT) * 1 gwei);
+        assertEq(TREASURY.balance, 0);
     }
 
     function test_realHistoricalRequestCannotHaveItsRootRewritten() public {
@@ -116,14 +110,14 @@ contract ZkApiVaultGroth16Test is Test {
     function _depositA() private {
         bytes32 registration = vm.parseJsonBytes32(fixtures, ".note_a_registration");
         vm.prank(USER);
-        vault.deposit(registration, DEPOSIT, emptySiblings);
+        vault.deposit{value: uint256(DEPOSIT) * 1 gwei}(registration, DEPOSIT, emptySiblings);
     }
 
     function _depositB() private {
         bytes32 registration = vm.parseJsonBytes32(fixtures, ".note_b_registration");
         uint256[32] memory siblings = _siblingsWithOtherLeaf(0);
         vm.prank(USER);
-        vault.deposit(registration, DEPOSIT, siblings);
+        vault.deposit{value: uint256(DEPOSIT) * 1 gwei}(registration, DEPOSIT, siblings);
     }
 
     function _siblingsWithOtherLeaf(uint32 otherNoteId) private view returns (uint256[32] memory siblings) {

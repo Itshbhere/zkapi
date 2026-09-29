@@ -7,7 +7,7 @@ const PUBLIC_RECOVERY_FIELDS = [
 export function externalRecoveryContext(recovery, funding, deploymentId) {
     const context = {
         version: 1,
-        kind: recovery?.kind || 'token',
+        kind: recovery?.kind || null,
         deploymentId,
         chainId: Number(funding?.chain_id),
         contractAddress: funding?.contract_address

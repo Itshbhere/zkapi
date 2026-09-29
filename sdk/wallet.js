@@ -1,8 +1,4 @@
 const ABI = Object.freeze({
-  balanceOf: "70a08231",
-  allowance: "dd62ed3e",
-  approve: "095ea7b3",
-  mint: "40c10f19",
   deposit: "c588341c",
   mutualClose: "7fca9c82",
   initiateEscapeWithdrawal: "9073639b",
@@ -39,18 +35,6 @@ function callData(selector, words) {
 
 function toBytes32(felt) {
   return `0x${String(felt).replace(/^0x/, "").padStart(64, "0")}`;
-}
-
-function parseTokenAmount(value) {
-  const match = String(value).trim().match(/^(\d+)(?:\.(\d{0,6}))?$/);
-  if (!match) throw new Error("Enter a positive amount with no more than six decimal places.");
-  return BigInt(match[1]) * 1_000_000n + BigInt((match[2] || "").padEnd(6, "0") || "0");
-}
-
-function formatTokenAmount(value) {
-  const whole = value / 1_000_000n;
-  const fraction = (value % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
 function normalizedEscapePeriod(seconds) {
@@ -91,7 +75,7 @@ function escapePeriodBadge(seconds) {
 
 function encodeDeposit(plan, amount) {
   if (!Array.isArray(plan?.zero_path) || plan.zero_path.length !== 32) {
-    throw new Error("The daemon returned an invalid 32-level deposit path.");
+    throw new Error("The private note has an invalid 32-level deposit path.");
   }
   return callData(ABI.deposit, [
     abiWord(toBytes32(plan.commitment)),
@@ -237,11 +221,9 @@ const walletCodec = Object.freeze({
   escapePeriodBadge,
   escapePeriodLabel,
   escapePeriodPhrase,
-  formatTokenAmount,
   parseNoteDeposited,
-  parseTokenAmount,
   parseWithdrawalReceipt,
 });
 
 export default walletCodec;
-export { ABI, abiWord, addressWord, callData, encodeDeposit, encodeFinalizeEscape, encodeWithdrawal, escapePeriodBadge, escapePeriodLabel, escapePeriodPhrase, formatTokenAmount, parseNoteDeposited, parseTokenAmount, parseWithdrawalReceipt };
+export { ABI, abiWord, addressWord, callData, encodeDeposit, encodeFinalizeEscape, encodeWithdrawal, escapePeriodBadge, escapePeriodLabel, escapePeriodPhrase, parseNoteDeposited, parseWithdrawalReceipt };

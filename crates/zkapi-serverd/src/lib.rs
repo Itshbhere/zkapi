@@ -1,13 +1,12 @@
 //! Server-side logic for the zkAPI protocol.
 //!
 //! This crate implements proof verification, nullifier storage, API execution,
-//! XMSS signing, and HTTP routes for the zkAPI server.
+//! Baby-JubJub Schnorr signing, and HTTP routes for the zkAPI server.
 
 pub mod challenge_service;
 pub mod config;
 pub mod dashboard;
 pub mod error;
-pub mod metered_provider;
 pub mod native_billing;
 pub mod nullifier_store;
 pub mod oa_org;
@@ -15,8 +14,14 @@ pub mod openrouter;
 pub mod pricing;
 #[path = "processor_v2.rs"]
 pub mod processor;
-pub mod provider;
 pub mod routes;
+pub mod settlement;
 #[path = "signer_v2.rs"]
 pub mod signer;
 pub mod watcher;
+
+#[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
+mod note_binding;

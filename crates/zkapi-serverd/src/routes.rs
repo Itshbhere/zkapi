@@ -3,7 +3,6 @@
 //! Endpoints:
 //! - GET  /health                   -- process health and config summary
 //! - GET  /v1/attestation           -- published signer metadata for deployments
-//! - POST /v2/requests              -- submit an API request
 //! - POST /v2/openrouter/leases     -- open a prompt-private runtime-key lease
 //! - POST /v2/openrouter/leases/:id -- retire a rejected runtime-key lease
 //! - POST /v2/withdraw/clearance    -- request mutual-close clearance
@@ -27,16 +26,14 @@ use tower_http::cors::CorsLayer;
 
 use zkapi_types::wire::{
     ApiRequestV2, ClearanceRequest, ClearanceResponseV2, CurvePointWire, ErrorResponse,
-    OpenRouterLeaseStatusResponse, RecoveryResponseV2, RequestResponseV2,
+    OpenRouterLeaseStatusResponse, RecoveryResponseV2,
 };
 use zkapi_types::Felt252;
 
 use crate::dashboard::{DashboardEvent, DashboardHub, DashboardTotals};
 use crate::error::ServerError;
 use crate::oa_org::IssuedOpenRouterLease;
-use crate::pricing;
 use crate::processor::RequestProcessor;
-use crate::provider::build_provider;
 
 /// Shared application state.
 type AppState = Arc<RequestProcessor>;
@@ -55,6 +52,7 @@ const PROTOCOL_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// Start the HTTP server with the given config.
 pub async fn run_server(config: crate::config::ServerConfig) -> anyhow::Result<()> {
+    config.validate_native_mode()?;
     let store = Arc::new(crate::nullifier_store::NullifierStore::new(
         &config.db_path,
     )?);
@@ -62,7 +60,6 @@ pub async fn run_server(config: crate::config::ServerConfig) -> anyhow::Result<(
         &config.state_seed,
         &config.clear_seed,
     ));
-    let provider = build_provider(&config)?;
     let initial_root = if let Some(indexer_url) = config.indexer_url.as_deref() {
         match fetch_indexer_root(indexer_url).await {
             Ok(root) => root,
@@ -76,7 +73,7 @@ pub async fn run_server(config: crate::config::ServerConfig) -> anyhow::Result<(
     };
     let dashboard = Arc::new(DashboardHub::new(500));
     let processor = Arc::new(
-        RequestProcessor::try_new(config.clone(), store, signer, provider, initial_root)?
+        RequestProcessor::try_new(config.clone(), store, signer, initial_root)?
             .with_dashboard(dashboard),
     );
     if let Some(indexer_url) = config.indexer_url.clone() {
@@ -115,7 +112,6 @@ pub fn create_router(processor: Arc<RequestProcessor>) -> Router {
         .route("/", get(handle_health))
         .route("/health", get(handle_health))
         .route("/v1/attestation", get(handle_attestation))
-        .route("/v2/requests", post(handle_request))
         .route("/v2/billing/quote", get(handle_native_billing_quote))
         .route("/v2/openrouter/leases", post(handle_openrouter_lease))
         .route(
@@ -174,15 +170,11 @@ async fn handle_health(State(processor): State<AppState>) -> Json<HealthResponse
         chain_id: config.chain_id,
         contract_address: config.contract_address,
         current_root: processor.current_root(),
-        provider: provider_name(config.provider_kind),
+        provider: "native_leases",
         indexer_url: config.indexer_url.clone(),
-        policy_enabled: config.policy_enabled,
-        auth_scheme: config.auth_scheme.as_str(),
-        request_modes: if processor.openrouter_leases_enabled() {
-            vec!["proxy", "direct_openrouter"]
-        } else {
-            vec!["proxy"]
-        },
+        policy_enabled: false,
+        auth_scheme: "state-anchor",
+        request_modes: vec!["direct_openrouter"],
     })
 }
 
@@ -196,20 +188,8 @@ async fn handle_attestation(State(processor): State<AppState>) -> Json<Attestati
         current_root: processor.current_root(),
         state_signing_key: processor.state_signing_key(),
         clearance_signing_key: processor.clearance_signing_key(),
-        auth_scheme: config.auth_scheme.as_str(),
+        auth_scheme: "state-anchor",
     })
-}
-
-/// POST /v1/requests -- process an API request.
-async fn handle_request(
-    State(processor): State<AppState>,
-    Json(api_request): Json<ApiRequestV2>,
-) -> Result<Json<RequestResponseV2>, ErrorHttpResponse> {
-    processor
-        .process_request(&api_request)
-        .await
-        .map(Json)
-        .map_err(|e| error_to_response(&e, &api_request.client_request_id, &processor))
 }
 
 async fn handle_openrouter_lease(
@@ -349,43 +329,32 @@ struct DashboardSummary {
 /// GET /v1/dashboard/summary -- server identity + running totals.
 async fn handle_dashboard_summary(State(processor): State<AppState>) -> Json<DashboardSummary> {
     let config = processor.config();
-    let (upstream_kind, upstream_api_base) = match &config.metered {
-        Some(m) => {
-            let mut bases = Vec::new();
-            if m.openai_api_key.is_some() {
-                bases.push(format!("openai={}", m.openai_api_base));
+    let (upstream_kind, upstream_api_base) = config
+        .openrouter_leases
+        .as_ref()
+        .map(|lease| match &lease.source {
+            crate::config::OpenRouterLeaseSourceConfig::OpenRouter { api_base, .. } => {
+                (Some("openrouter".to_string()), Some(api_base.clone()))
             }
-            if m.openrouter_inference_key.is_some() {
-                bases.push(format!("openrouter={}", m.openrouter_api_base));
+            crate::config::OpenRouterLeaseSourceConfig::OaOrg { org_base_url, .. } => {
+                (Some("oa_org".to_string()), Some(org_base_url.clone()))
             }
-            (Some(m.upstreams_label()), Some(bases.join(", ")))
-        }
-        None => (None, None),
-    };
+        })
+        .unwrap_or_default();
     let server = ServerIdentity {
         protocol_version: config.protocol_version,
         chain_id: config.chain_id,
         contract_address: config.contract_address,
         current_root: processor.current_root(),
-        provider: provider_name(config.provider_kind),
+        provider: "native_leases",
         upstream_kind,
         upstream_api_base,
-        auth_scheme: config.auth_scheme.as_str(),
-        policy_enabled: config.policy_enabled,
+        auth_scheme: "state-anchor",
+        policy_enabled: false,
         request_charge_cap: config.request_charge_cap,
-        request_charge_cap_usd: config
-            .native_billing
-            .is_none()
-            .then(|| pricing::credits_to_usd(config.request_charge_cap)),
-        credits_per_usd: config
-            .native_billing
-            .is_none()
-            .then_some(pricing::CREDITS_PER_USD),
-        billing_asset: if config.native_billing.is_some() {
-            "native_eth"
-        } else {
-            "erc20"
-        },
+        request_charge_cap_usd: None,
+        credits_per_usd: None,
+        billing_asset: "native_eth",
         state_signing_key: processor.state_signing_key(),
         clearance_signing_key: processor.clearance_signing_key(),
         openrouter_leases_enabled: processor.openrouter_leases_enabled(),
@@ -535,14 +504,6 @@ fn spawn_root_poller(processor: Arc<RequestProcessor>, indexer_url: String, inte
     });
 }
 
-fn provider_name(provider_kind: crate::config::ProviderKind) -> &'static str {
-    match provider_kind {
-        crate::config::ProviderKind::Echo => "echo",
-        crate::config::ProviderKind::HttpProxy => "http-proxy",
-        crate::config::ProviderKind::Metered => "metered",
-    }
-}
-
 async fn fetch_indexer_root(indexer_url: &str) -> anyhow::Result<Felt252> {
     #[derive(serde::Deserialize)]
     struct RootResponse {
@@ -559,6 +520,21 @@ async fn fetch_indexer_root(indexer_url: &str) -> anyhow::Result<Felt252> {
 #[cfg(test)]
 mod rate_limit_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn startup_requires_native_billing_before_opening_database() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("must-not-exist.db");
+        let config = crate::config::ServerConfig {
+            db_path: db_path.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let error = run_server(config).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("native ETH billing configuration is required"));
+        assert!(!db_path.exists());
+    }
 
     #[tokio::test]
     async fn compact_http_errors_preserve_status_headers_and_json() {
@@ -628,150 +604,5 @@ mod rate_limit_tests {
         assert_eq!(response.error_code, "lease_settlement_pending");
         assert!(response.retriable);
         assert_eq!(response.retry_after_seconds, Some(15));
-    }
-}
-
-#[cfg(any())]
-mod tests {
-    use super::*;
-
-    use axum::routing::get;
-    use axum::Router;
-    use zkapi_core::poseidon::FieldElement;
-
-    use crate::config::{ProviderKind, ServerConfig};
-    use crate::nullifier_store::NullifierStore;
-    use crate::provider::EchoProvider;
-    use crate::signer::ServerSigner;
-
-    fn test_processor() -> Arc<RequestProcessor> {
-        let config = ServerConfig {
-            protocol_version: 3,
-            chain_id: 55,
-            contract_address: Felt252::from_u64(1234),
-            provider_kind: ProviderKind::Echo,
-            echo_fixed_charge: 7,
-            indexer_url: Some("http://127.0.0.1:3001".to_string()),
-            ..Default::default()
-        };
-        Arc::new(RequestProcessor::new(
-            config,
-            Arc::new(NullifierStore::in_memory().unwrap()),
-            Arc::new(ServerSigner::with_height(
-                FieldElement::from(11u64),
-                FieldElement::from(13u64),
-                9,
-                6,
-            )),
-            Arc::new(EchoProvider::new(7)),
-            Felt252::from_u64(99),
-        ))
-    }
-
-    #[tokio::test]
-    async fn test_fetch_indexer_root() {
-        async fn root() -> Json<serde_json::Value> {
-            Json(serde_json::json!({
-                "root": Felt252::from_u64(77),
-            }))
-        }
-
-        let app = Router::new().route("/v1/tree/root", get(root));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let root = fetch_indexer_root(&format!("http://{}", addr))
-            .await
-            .unwrap();
-        assert_eq!(root, Felt252::from_u64(77));
-    }
-
-    #[tokio::test]
-    async fn test_health_route_reports_runtime_config() {
-        let app = create_router(test_processor());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let response = reqwest::get(format!("http://{}/health", addr))
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap();
-
-        assert_eq!(response["status"], "ok");
-        assert_eq!(response["protocol_version"], 3);
-        assert_eq!(response["chain_id"], 55);
-        assert_eq!(response["provider"], "echo");
-        assert_eq!(response["current_root"], Felt252::from_u64(99).to_hex());
-    }
-
-    #[tokio::test]
-    async fn test_dashboard_remains_available_without_ephemeral_mode() {
-        let app = create_router(test_processor());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let summary = reqwest::get(format!("http://{}/v1/dashboard/summary", addr))
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap();
-
-        assert_eq!(summary["server"]["provider"], "echo");
-        assert_eq!(summary["totals"]["request_count"], 0);
-        assert!(summary["server"].get("ephemeral_enabled").is_none());
-
-        let recent = reqwest::get(format!("http://{}/v1/dashboard/recent", addr))
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap();
-        assert_eq!(recent, serde_json::json!([]));
-    }
-
-    #[tokio::test]
-    async fn test_attestation_route_reports_signer_metadata() {
-        let app = create_router(test_processor());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let response = reqwest::get(format!("http://{}/v1/attestation", addr))
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap();
-
-        assert_eq!(response["status"], "ok");
-        assert_eq!(response["state_sig_epoch"], 9);
-        assert_eq!(response["clear_sig_epoch"], 9);
-        assert_eq!(response["current_root"], Felt252::from_u64(99).to_hex());
-        assert!(response["state_sig_root"].as_str().is_some());
-        assert!(response["clear_sig_root"].as_str().is_some());
-        assert!(response["state_signatures_remaining"].as_u64().unwrap() > 0);
-        assert!(response["clear_signatures_remaining"].as_u64().unwrap() > 0);
     }
 }

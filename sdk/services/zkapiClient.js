@@ -1,6 +1,6 @@
 import walletCodec from '../wallet.js';
-import { isNativeEthFunding, assertNativeVault, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, nativeDepositValue, parseUnits, formatUnits } from './zkapiNativeEth.mjs';
-import { browserSdkOptions, beginBrowserSdkInitialization } from '../configure.js';
+import { isNativeEthFunding, validateNativeFunding, assertNativeVault, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, nativeDepositValue, parseUnits, formatUnits } from './zkapiNativeEth.mjs';
+import { beginBrowserSdkInitialization } from '../configure.js';
 import browserWalletRuntime from './browserWalletRuntime.js';
 import { contractEstimateError, contractRevertSelector } from './zkapiContractError.mjs';
 import { bufferedGasLimit } from './zkapiGas.mjs';
@@ -11,7 +11,6 @@ import { externalRecoveryContext, sameAddress, externalTransactionNonce, assertE
     hasDurableTransactionHash } from './zkapiExternalTransactions.mjs';
 
 const WITHDRAWAL_STORAGE_KEY = 'zkapi-withdrawal-v2';
-const SESSION_HEADER = 'x-zkapi-session-id';
 // Ethereum's `finalized` block tag is authoritative when the wallet RPC
 // supports it. A confirmation-depth fallback keeps recovery moving on older
 // providers without ever blocking the user from selecting a fresh note.
@@ -32,21 +31,9 @@ const {
     escapePeriodBadge,
     escapePeriodLabel,
     escapePeriodPhrase,
-    formatTokenAmount,
     parseNoteDeposited,
-    parseTokenAmount,
     parseWithdrawalReceipt
 } = walletCodec;
-
-class ZkapiHttpError extends Error {
-    constructor(message, status, code, data = null) {
-        super(message);
-        this.name = 'ZkapiHttpError';
-        this.status = status;
-        this.code = code;
-        this.data = data;
-    }
-}
 
 function readStoredWithdrawal() {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') return null;
@@ -68,9 +55,8 @@ function normalizeWithdrawalDestination(destination, funding) {
         throw new TypeError('Choose a valid nonzero Ethereum withdrawal address.');
     }
     const normalized = destination.toLowerCase();
-    if ([funding?.contract_address, funding?.demo_billing_token_address]
-        .some(address => address?.toLowerCase() === normalized)) {
-        throw new TypeError('The withdrawal address cannot be the vault or billing token contract.');
+    if (funding?.contract_address?.toLowerCase() === normalized) {
+        throw new TypeError('The withdrawal address cannot be the vault contract.');
     }
     return normalized;
 }
@@ -174,7 +160,7 @@ class ZkapiClient extends EventTarget {
         this.initPromise = null;
         this.refreshTimer = null;
         this.clockTimer = null;
-        this.browserMode = false;
+        this.browserMode = true;
         this.activities = [];
         this.activitySequence = 0;
         this.withdrawPromise = null;
@@ -191,33 +177,15 @@ class ZkapiClient extends EventTarget {
         beginBrowserSdkInitialization();
         if (this.initPromise) return this.initPromise;
         this.initPromise = (async () => {
-            const configuredMode = browserSdkOptions().mode;
-            const requestedMode = configuredMode === 'auto'
-                ? new URLSearchParams(window.location.search).get('zkapiMode')
-                : configuredMode;
-            if (requestedMode === 'browser') {
-                await this.enableBrowserMode();
-                await this.refresh();
-            } else {
-                try {
-                    // The same OA bundle is served by both clientd and static
-                    // browser deployments. Probe the same-origin daemon first,
-                    // but do not publish its expected 404 while a static site
-                    // is falling back to the browser wallet.
-                    await this.refresh({ speculative: requestedMode !== 'daemon' });
-                } catch (error) {
-                    if (requestedMode === 'daemon') throw error;
-                    await this.enableBrowserMode();
-                    await this.refresh();
-                }
-            }
-            if (this.browserMode) await this.reconcileBrowserWithdrawalsOnLoad();
+            await this.enableBrowserMode();
+            await this.refresh();
+            await this.reconcileBrowserWithdrawalsOnLoad();
             this.attachWalletEvents();
             this.refreshTimer = window.setInterval(
                 () => void this.reconcileBrowserWalletInBackground(),
                 15_000
             );
-            if (this.browserMode && typeof document !== 'undefined' && !this.visibilityHandler) {
+            if (typeof document !== 'undefined' && !this.visibilityHandler) {
                 this.visibilityHandler = () => {
                     if (document.visibilityState !== 'hidden') {
                         void this.reconcileBrowserWalletInBackground();
@@ -243,7 +211,6 @@ class ZkapiClient extends EventTarget {
 
     async enableBrowserMode() {
         await browserWalletRuntime.init();
-        this.browserMode = true;
         if (!this.browserRuntimeListener) {
             this.browserRuntimeListener = () => void this.refresh({ quiet: true });
             browserWalletRuntime.addEventListener('change', this.browserRuntimeListener);
@@ -315,7 +282,7 @@ class ZkapiClient extends EventTarget {
         if (this.backgroundReconciliationPromise) return this.backgroundReconciliationPromise;
         const operation = (async () => {
             await this.refresh({ quiet: true });
-            if (!this.browserMode || !this.ethereum || !this.config?.funding?.chain_id) {
+            if (!this.ethereum || !this.config?.funding?.chain_id) {
                 return false;
             }
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
@@ -572,59 +539,20 @@ class ZkapiClient extends EventTarget {
         if (emit) this.emitChange('withdrawal');
     }
 
-    async apiJson(path, options = {}) {
-        const headers = {
-            ...(options.body ? { 'content-type': 'application/json' } : {}),
-            ...(options.headers || {})
-        };
-        const response = await fetch(path, { ...options, headers, credentials: 'omit' });
-        const text = await response.text();
-        let payload = {};
-        try {
-            payload = text ? JSON.parse(text) : {};
-        } catch {
-            payload = { raw: text };
-        }
-        if (!response.ok) {
-            const error = payload?.error || {};
-            throw new ZkapiHttpError(
-                error.message || payload.message || response.statusText || `HTTP ${response.status}`,
-                response.status,
-                error.code || payload.code,
-                payload
-            );
-        }
-        return payload;
-    }
-
-    async refresh({ quiet = false, speculative = false } = {}) {
+    async refresh({ quiet = false } = {}) {
         const stateBeforeRefresh = this.runtimeStateSignature();
-        if (!quiet && !speculative) {
+        if (!quiet) {
             this.loading = true;
             this.emitChange('loading');
         }
-        let succeeded = false;
         try {
-            let browserSnapshot = null;
-            const [config, wallet] = this.browserMode
-                ? [(browserSnapshot = browserWalletRuntime.snapshot()).config, await browserWalletRuntime.walletStatus()]
-                : await Promise.all([
-                    this.apiJson('/zkapi/v1/config'),
-                    this.apiJson('/wallet/status')
-                ]);
-            this.config = config;
+            const wallet = await browserWalletRuntime.walletStatus();
+            const browserSnapshot = browserWalletRuntime.snapshot();
+            validateNativeFunding(browserSnapshot.config?.funding);
+            this.config = browserSnapshot.config;
             this.wallet = wallet;
-            if (this.browserMode) {
-                // walletStatus is worker-only, but take a fresh snapshot in
-                // case another tab updated recovery records during that call.
-                browserSnapshot = browserWalletRuntime.snapshot();
-                this.config = browserSnapshot.config;
-                this.withdrawals = browserSnapshot.withdrawals || [];
-                this.deposits = browserSnapshot.deposits || [];
-            } else {
-                this.withdrawals = [];
-                this.deposits = [];
-            }
+            this.withdrawals = browserSnapshot.withdrawals || [];
+            this.deposits = browserSnapshot.deposits || [];
             this.lastError = null;
             if (this.isNativeEthFunding && (!this.ethUsdCheckedAt || Date.now() - this.ethUsdCheckedAt > 60_000)) {
                 this.ethUsdCheckedAt = Date.now();
@@ -644,30 +572,22 @@ class ZkapiClient extends EventTarget {
                 if (JSON.stringify(this.withdrawal) !== JSON.stringify(mirror)) {
                     this.rememberWithdrawal(mirror, { emit: false });
                 }
-            } else if (this.browserMode && this.withdrawal) {
+            } else if (this.withdrawal) {
                 // IndexedDB is authoritative in browser mode. localStorage is
                 // only a presentation mirror and must never resurrect a
                 // canceled/prepared marker after the durable plan is cleared.
                 this.rememberWithdrawal(null, { emit: false });
-            } else if (!wallet?.note && !prepared && this.withdrawal) {
-                this.rememberWithdrawal(null, { emit: false });
             }
-            succeeded = true;
         } catch (error) {
-            // A speculative daemon miss is an implementation detail of
-            // automatic transport selection, not an actionable user error.
-            // If browser initialization also fails, init() publishes that
-            // real failure through its existing outer catch.
-            if (!speculative) this.lastError = error;
-            if (!quiet || speculative) throw error;
+            this.lastError = error;
+            if (!quiet) throw error;
         } finally {
             this.loading = false;
             // Periodic/browser-runtime refreshes often return byte-for-byte
             // equivalent state. Do not fan those out as semantic UI changes;
             // full panel/modal renders would otherwise replay animations even
             // though nothing users can act on changed.
-            if ((!speculative || succeeded)
-                && (!quiet || stateBeforeRefresh !== this.runtimeStateSignature())) {
+            if (!quiet || stateBeforeRefresh !== this.runtimeStateSignature()) {
                 this.emitChange(this.lastError ? 'error' : 'runtime');
             }
         }
@@ -710,7 +630,7 @@ class ZkapiClient extends EventTarget {
 
     async prepareDepositQuote(amountInput, { from } = {}) {
         if (!this.initialized) await this.init();
-        if (!this.browserMode || !this.isNativeEthFunding) {
+        if (!this.isNativeEthFunding) {
             throw new Error('Prefunding deposit quotes require a native ETH browser wallet.');
         }
         if (typeof from !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(from) || /^0x0{40}$/i.test(from)) {
@@ -740,11 +660,8 @@ class ZkapiClient extends EventTarget {
     }
 
     get creditsPerUsd() {
-        if (this.isNativeEthFunding) {
-            const quote = this.nativePriceQuote;
-            return quote ? 1e9 * (10 ** quote.decimals) / Number(quote.answer) : Number.NaN;
-        }
-        return Number(this.config?.credits_per_usd || 1_000_000);
+        const quote = this.nativePriceQuote;
+        return quote ? 1e9 * (10 ** quote.decimals) / Number(quote.answer) : Number.NaN;
     }
 
     get hasNote() {
@@ -762,79 +679,66 @@ class ZkapiClient extends EventTarget {
         throwIfCancelled();
         if (!this.initialized) await this.init();
         throwIfCancelled();
-        if (this.browserMode) {
-            const activityId = this.beginActivity('access', {
-                phase: 'checking',
-                title: 'Starting private chat',
-                message: 'Checking your private balance…',
-                progressKind: 'access',
-                sessionId,
-                blocksSend: true
-            });
-            let lastProgressPhase = 'checking';
-            let lastProgressKind = 'access';
-            const notifyProgress = (phase, message, kind = 'access', metadata = {}) => {
-                try {
-                    options.onProgress?.({
-                        kind,
-                        phase,
-                        message,
-                        sessionId,
-                        ...metadata
-                    });
-                } catch (error) {
-                    console.warn('The assistant private-access trace could not update.', error);
-                }
-            };
-            const reportProgress = (phase, message, kind = 'access') => {
-                lastProgressPhase = phase;
-                lastProgressKind = kind;
-                this.updateActivity(activityId, { phase, message, progressKind: kind });
-                notifyProgress(phase, message, kind);
-            };
-            notifyProgress('checking', 'Checking your private balance…');
+        const activityId = this.beginActivity('access', {
+            phase: 'checking',
+            title: 'Starting private chat',
+            message: 'Checking your private balance…',
+            progressKind: 'access',
+            sessionId,
+            blocksSend: true
+        });
+        let lastProgressPhase = 'checking';
+        let lastProgressKind = 'access';
+        const notifyProgress = (phase, message, kind = 'access', metadata = {}) => {
             try {
-                const access = await browserWalletRuntime.acquireEphemeralKey(
+                options.onProgress?.({
+                    kind,
+                    phase,
+                    message,
                     sessionId,
-                    reportProgress,
-                    { signal, spendingLimitUsd: options.spendingLimitUsd }
-                );
-                if (signal?.aborted) {
-                    access.release?.();
-                    throwIfCancelled();
-                }
-                if (lastProgressPhase !== 'ready') {
-                    reportProgress('ready', 'Private chat ready.', lastProgressKind);
-                }
-                this.completeActivity(activityId, {
-                    phase: 'ready',
-                    message: 'Private chat ready.',
-                    progressKind: lastProgressKind
+                    ...metadata
                 });
-                return access;
             } catch (error) {
-                if (signal?.aborted) error.isCancelled = true;
-                this.failActivity(activityId, error, { blocksSend: true });
-                notifyProgress(
-                    error?.isCancelled ? 'canceled' : 'error',
-                    'Private access was not created.',
-                    lastProgressKind,
-                    { failedPhase: lastProgressPhase }
-                );
-                throw error;
+                console.warn('The assistant private-access trace could not update.', error);
             }
-        }
-
-        return {
-            mode: 'daemon',
-            apiKey: null,
-            baseUrl: `${window.location.origin}/v1`,
-            headers: {
-                'content-type': 'application/json',
-                [SESSION_HEADER]: sessionId
-            },
-            release() {}
         };
+        const reportProgress = (phase, message, kind = 'access') => {
+            lastProgressPhase = phase;
+            lastProgressKind = kind;
+            this.updateActivity(activityId, { phase, message, progressKind: kind });
+            notifyProgress(phase, message, kind);
+        };
+        notifyProgress('checking', 'Checking your private balance…');
+        try {
+            const access = await browserWalletRuntime.acquireEphemeralKey(
+                sessionId,
+                reportProgress,
+                { signal, spendingLimitUsd: options.spendingLimitUsd }
+            );
+            if (signal?.aborted) {
+                access.release?.();
+                throwIfCancelled();
+            }
+            if (lastProgressPhase !== 'ready') {
+                reportProgress('ready', 'Private chat ready.', lastProgressKind);
+            }
+            this.completeActivity(activityId, {
+                phase: 'ready',
+                message: 'Private chat ready.',
+                progressKind: lastProgressKind
+            });
+            return access;
+        } catch (error) {
+            if (signal?.aborted) error.isCancelled = true;
+            this.failActivity(activityId, error, { blocksSend: true });
+            notifyProgress(
+                error?.isCancelled ? 'canceled' : 'error',
+                'Private access was not created.',
+                lastProgressKind,
+                { failedPhase: lastProgressPhase }
+            );
+            throw error;
+        }
     }
 
     get note() {
@@ -853,7 +757,7 @@ class ZkapiClient extends EventTarget {
 
     async syncExpiryHistory() {
         if (this.expiryHistoryPromise) return this.expiryHistoryPromise;
-        if (!this.browserMode || !this.config?.funding) return { complete: true, claims: [] };
+        if (!this.config?.funding) return { complete: true, claims: [] };
         const operation = (async () => {
             this.deposits = await browserWalletRuntime.getDepositHistory();
             // A generic Closed vault status may itself be an expiry claim.
@@ -896,7 +800,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async assertBalanceNotClaimed(noteId) {
-        if (this.browserMode) this.deposits = await browserWalletRuntime.getDepositHistory();
+        this.deposits = await browserWalletRuntime.getDepositHistory();
         if (this.deposits.some(record => record.status === 'confirmed'
             && record.noteId === Number(noteId) && record.expiryClaim)) {
             throw new Error('This balance was claimed after expiry. Open Balance details to start a new balance.');
@@ -904,7 +808,7 @@ class ZkapiClient extends EventTarget {
     }
 
     get requestMode() {
-        return this.config?.request_mode || 'proxy';
+        return 'direct_openrouter';
     }
 
     get isDirectMode() {
@@ -912,11 +816,11 @@ class ZkapiClient extends EventTarget {
     }
 
     get suggestedDeposit() {
-        return this.isNativeEthFunding ? 5 : Number(this.config?.funding?.suggested_deposit_amount || 2_000_000) / this.creditsPerUsd;
+        return 5;
     }
 
     get billingTokenSymbol() {
-        return this.config?.funding?.billing_token_symbol || 'billing token';
+        return 'ETH';
     }
 
     get isMainnetFunding() {
@@ -969,10 +873,8 @@ class ZkapiClient extends EventTarget {
 
     formatMoney(credits) {
         if (credits == null) return '—';
-        if (this.isNativeEthFunding && !this.nativePriceQuote) return '—';
-        const value = this.isNativeEthFunding
-            ? Number(nativeUsdMicros(credits, this.nativePriceQuote)) / 1_000_000
-            : Number(credits) / this.creditsPerUsd;
+        if (!this.nativePriceQuote) return '—';
+        const value = Number(nativeUsdMicros(credits, this.nativePriceQuote)) / 1_000_000;
         const digits = value > 0 && value < 0.01 ? 6 : 2;
         return new Intl.NumberFormat(undefined, {
             style: 'currency',
@@ -983,7 +885,7 @@ class ZkapiClient extends EventTarget {
     }
 
     formatBillingAmount(credits) {
-        return this.isNativeEthFunding ? formatUnits(credits || 0, 9) : formatTokenAmount(BigInt(credits || 0));
+        return formatUnits(credits || 0, 9);
     }
 
     formatExpiry(timestamp) {
@@ -1084,50 +986,6 @@ class ZkapiClient extends EventTarget {
         return BigInt(value || '0x0');
     }
 
-    async readContractUintAtReceipt(to, data, receipt, minimum = 0n) {
-        const blockTag = receipt?.blockNumber;
-        const blockHash = receipt?.blockHash;
-        if (receipt?.status !== '0x1' || !/^0x[0-9a-f]+$/i.test(blockTag || '')
-            || !/^0x[0-9a-f]{64}$/i.test(blockHash || '')) {
-            throw new Error('The token transaction did not return a valid confirmed block. Check its status in MetaMask.');
-        }
-        // An injected provider can return a mined receipt before its cached
-        // `latest` eth_call view advances. Read the receipt's explicit block
-        // instead, and retry only reads while the RPC nodes catch up. Never
-        // mint again merely because a post-transaction balance read is stale.
-        const canonicalBlock = async () => {
-            const block = await this.ethereum.request({
-                method: 'eth_getBlockByNumber', params: [blockTag, false]
-            });
-            if (!block) throw new Error('The confirmed block is not available from MetaMask yet.');
-            if (block.hash?.toLowerCase() !== blockHash.toLowerCase()) {
-                const error = new Error('The token transaction’s block changed. Check its status in MetaMask before trying again.');
-                error.code = 'wallet_receipt_reorg';
-                throw error;
-            }
-        };
-        let lastError;
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-            await this.assertFundingChain();
-            try {
-                await canonicalBlock();
-                const value = await this.readContractUint(to, data, blockTag);
-                await canonicalBlock();
-                await this.assertFundingChain();
-                if (value >= minimum) return value;
-            } catch (error) {
-                if (error?.code === 'wrong_network' || error?.code === 'wallet_receipt_reorg'
-                    || isWalletRejection(error) || isDefinitelyPreBroadcastSendFailure(error)) throw error;
-                lastError = error;
-            }
-            if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        const error = new Error('The token transaction was mined, but the required balance could not be confirmed. Check your wallet balance and try again.');
-        error.code = 'wallet_state_pending';
-        error.cause = lastError;
-        throw error;
-    }
-
     async loadChallengePeriod() {
         const vault = this.config?.funding?.contract_address;
         if (!vault || !this.ethereum) return;
@@ -1221,11 +1079,11 @@ class ZkapiClient extends EventTarget {
         return externalRecoveryContext(recovery, this.config?.funding, browserWalletRuntime.manifest?.deployment_id);
     }
 
-    async acknowledgeExternalTokenTransaction(hash) {
+    async acknowledgeExternalTransactionReceipt(hash) {
         const provider = this.ethereum;
         if (typeof provider.acknowledgeTransaction !== 'function') return this.waitForReceipt(hash);
-        // A manual wallet can verify a fee replacement while this token
-        // approval/mint is awaiting its receipt. Check every verified version:
+        // A manual wallet can verify a fee replacement while this transaction
+        // is awaiting its receipt. Check every verified version:
         // either original or replacement may win the identical nonce, and a
         // receipt must always retain the hash the RPC actually returned.
         const candidates = typeof provider.getVerifiedTransactionHashes === 'function'
@@ -1248,16 +1106,17 @@ class ZkapiClient extends EventTarget {
     }
 
     async resumeExternalTransaction({ transaction, hash, context }) {
-        if (!this.browserMode) throw new Error('External transaction recovery requires the browser wallet.');
+
         if (this.depositPromise || this.withdrawPromise || this.finalizePromise
             || this.backgroundWithdrawalPromises?.size) {
             throw new Error('The original wallet action is still running. Return its transaction ID to that action.');
         }
         const funding = this.config?.funding;
+        validateNativeFunding(funding);
         if (context?.version !== 1 || context.deploymentId !== browserWalletRuntime.manifest?.deployment_id
             || Number(context.chainId) !== Number(funding?.chain_id)
             || !sameAddress(context.contractAddress, funding?.contract_address)
-            || !['token', 'deposit', 'withdrawal', 'background-withdrawal',
+            || !['deposit', 'withdrawal', 'background-withdrawal',
                 'background-replacement', 'finalization'].includes(context.kind)) {
             throw new Error('The saved external transaction belongs to a different payment deployment.');
         }
@@ -1267,15 +1126,6 @@ class ZkapiClient extends EventTarget {
             ? nativeDepositValue(context.amount, funding) : 0n;
         const metadata = assertExternalTransaction(actual, transaction, hash, funding.chain_id, expectedValue);
         await this.assertFundingChain();
-
-        if (context.kind === 'token') {
-            if (!sameAddress(transaction.to, funding.demo_billing_token_address)
-                || ![ABI.approve, ABI.mint].includes(transaction.data.slice(2, 10).toLowerCase())) {
-                throw new Error('The saved transaction is not a billing-token request.');
-            }
-            const receipt = await this.acknowledgeExternalTokenTransaction(hash);
-            return { kind: context.kind, transactionHash: hash, status: 'confirmed', receipt };
-        }
 
         if (!sameAddress(transaction.to, funding.contract_address)) {
             throw new Error('The external transaction targets a different private vault.');
@@ -1497,7 +1347,7 @@ class ZkapiClient extends EventTarget {
         }
         try {
             return onSubmitted ? await this.waitForReceipt(hash)
-                : await this.acknowledgeExternalTokenTransaction(hash);
+                : await this.acknowledgeExternalTransactionReceipt(hash);
         } catch (error) {
             throw tagTransactionError(error, 'receipt', true, hash);
         }
@@ -1571,7 +1421,7 @@ class ZkapiClient extends EventTarget {
             || BigInt(deposited.commitment) !== BigInt(plan.commitment)) {
             throw new Error('The mined deposit did not match this browser’s durable private note.');
         }
-        const receiptMetadata = this.isNativeEthFunding ? await this.readDepositReceiptMetadata(plan, receipt) : null;
+        const receiptMetadata = await this.readDepositReceiptMetadata(plan, receipt);
         onStatus('Saving the private note securely in this browser…');
         await browserWalletRuntime.confirmDeposit({
             operationId: plan.operationId,
@@ -1595,58 +1445,6 @@ class ZkapiClient extends EventTarget {
             receipt,
             ...(receiptMetadata || {})
         };
-    }
-
-    async addBillingTokenToWallet(onStatus = () => {}) {
-        const funding = this.config?.funding;
-        const tokenAddress = funding?.demo_billing_token_address;
-        if (!tokenAddress) throw new Error('This deployment does not advertise a billing token.');
-        onStatus('Connecting to MetaMask…');
-        await this.connectWallet();
-        onStatus('Confirm “Add token” in MetaMask…');
-        const added = await this.ethereum.request({
-            method: 'wallet_watchAsset',
-            params: {
-                type: 'ERC20',
-                options: {
-                    address: tokenAddress,
-                    symbol: this.billingTokenSymbol,
-                    decimals: Number(funding.billing_token_decimals || 6)
-                }
-            }
-        });
-        if (!added) throw new Error(`MetaMask did not add ${this.billingTokenSymbol}.`);
-        onStatus(`${this.billingTokenSymbol} is now visible in MetaMask on ${this.networkName()}.`);
-        return true;
-    }
-
-    async mintDemoTokens(amountInput = '10', onStatus = () => {}) {
-        const funding = this.config?.funding;
-        if (!funding?.demo_mint_enabled || Number(funding.chain_id) !== 11155111) {
-            throw new Error('Free test ZKAPI is not enabled for this deployment.');
-        }
-        if (!funding.demo_billing_token_address) {
-            throw new Error('This deployment does not advertise a billing token.');
-        }
-        const amount = parseTokenAmount(amountInput);
-        if (amount <= 0n || amount > 1_000_000_000n) {
-            throw new Error('Choose a test-token amount between 0 and 1,000 ZKAPI.');
-        }
-
-        onStatus('Connecting to MetaMask…');
-        const address = await this.connectWallet();
-        onStatus(`Confirm minting ${formatTokenAmount(amount)} test ZKAPI in MetaMask…`);
-        const receipt = await this.sendContractTransaction(
-            address,
-            funding.demo_billing_token_address,
-            callData(ABI.mint, [addressWord(address), abiWord(amount)])
-        );
-        const balance = await this.readContractUint(
-            funding.demo_billing_token_address,
-            callData(ABI.balanceOf, [addressWord(address)])
-        );
-        onStatus(`${formatTokenAmount(balance)} test ZKAPI is available in MetaMask.`);
-        return { address, balance, receipt };
     }
 
     async readBrowserNote(noteId, requestedBlock = 'latest') {
@@ -1674,7 +1472,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async recoverBrowserDeposit(onStatus = () => {}) {
-        if (!this.browserMode) return null;
+
         const plan = await browserWalletRuntime.pendingDeposit();
         if (!plan) return null;
         onStatus('Checking the private-vault deposit…');
@@ -1691,16 +1489,14 @@ class ZkapiClient extends EventTarget {
             await browserWalletRuntime.treePath(Number(plan.next_note_id), true);
             let receiptMetadata = null;
             let confirmedReceipt = null;
-            if (this.isNativeEthFunding) {
-                const hashes = plan.transactionHashes || (plan.transactionHash ? [plan.transactionHash] : []);
-                for (const hash of hashes) {
-                    try {
-                        const candidate = await this.ethereum.request({ method: 'eth_getTransactionReceipt', params: [hash] });
-                        if (String(candidate?.transactionHash).toLowerCase() !== String(hash).toLowerCase()) continue;
-                        receiptMetadata = await this.readDepositReceiptMetadata(plan, candidate);
-                        if (receiptMetadata) { confirmedReceipt = candidate; break; }
-                    } catch { /* Vault recovery remains available when fee evidence is temporarily unavailable. */ }
-                }
+            const hashes = plan.transactionHashes || (plan.transactionHash ? [plan.transactionHash] : []);
+            for (const hash of hashes) {
+                try {
+                    const candidate = await this.ethereum.request({ method: 'eth_getTransactionReceipt', params: [hash] });
+                    if (String(candidate?.transactionHash).toLowerCase() !== String(hash).toLowerCase()) continue;
+                    receiptMetadata = await this.readDepositReceiptMetadata(plan, candidate);
+                    if (receiptMetadata) { confirmedReceipt = candidate; break; }
+                } catch { /* Vault recovery remains available when fee evidence is temporarily unavailable. */ }
             }
             await browserWalletRuntime.confirmDeposit({
                 operationId: plan.operationId,
@@ -1852,7 +1648,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async recoverUnknownDeposit(onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         await browserWalletRuntime.markPendingDepositUnknown();
         await this.refresh();
         onStatus('The old wallet prompt was marked unresolved. Check the vault before retrying.');
@@ -1860,7 +1656,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async prepareDepositRetry(onStatus = () => {}) {
-        if (!this.browserMode || !this.isNativeEthFunding) {
+        if (!this.isNativeEthFunding) {
             throw new Error('Funding-address retry quotes require a native ETH browser wallet.');
         }
         const recovery = await this.recoverBrowserDeposit(onStatus);
@@ -1877,7 +1673,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryUnknownDeposit(onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         const recovery = await this.recoverBrowserDeposit(onStatus);
         if (recovery?.status === 'confirmed') return recovery;
         const pending = await browserWalletRuntime.pendingDeposit();
@@ -1891,9 +1687,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryDroppedDeposit(onStatus = () => {}) {
-        if (!this.browserMode) {
-            throw new Error('Deposit transaction replacement is available in the browser wallet.');
-        }
+
         const current = await browserWalletRuntime.pendingDeposit();
         if (!current || current.phase !== 'dropped_or_pending') {
             throw new Error('Check the submitted deposit before replacing it.');
@@ -1988,23 +1782,17 @@ class ZkapiClient extends EventTarget {
     async performDeposit(amountInput, onStatus = () => {}, { preparedOperationId = null } = {}) {
         if (this.hasNote) throw new Error('This client already has an active private note.');
         const funding = this.config?.funding;
-        if (!funding?.contract_address || (!this.isNativeEthFunding && !funding.demo_billing_token_address)) {
-            throw new Error('This deployment does not advertise a supported funding asset.');
-        }
-
-        if (this.isNativeEthFunding) await assertNativeVault(funding);
+        validateNativeFunding(funding);
+        await assertNativeVault(funding);
         onStatus('Connecting to MetaMask…');
         const address = await this.connectWallet();
-        const amount = this.isNativeEthFunding ? parseUnits(amountInput, 9) : parseTokenAmount(amountInput);
+        const amount = parseUnits(amountInput, 9);
         if (amount <= 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
             throw new Error('Choose a smaller positive deposit amount.');
         }
 
-        const tokenAddress = funding.demo_billing_token_address;
         const vaultAddress = funding.contract_address;
-        let pendingDeposit = this.browserMode
-            ? await browserWalletRuntime.pendingDeposit()
-            : null;
+        let pendingDeposit = await browserWalletRuntime.pendingDeposit();
         if (pendingDeposit) {
             if (preparedOperationId && pendingDeposit.operationId !== preparedOperationId) {
                 throw new Error('The deposit quote changed in another tab. Check the pending deposit before continuing.');
@@ -2025,74 +1813,18 @@ class ZkapiClient extends EventTarget {
                 throw new Error('MetaMask did not return a deposit transaction ID. Check its status before explicitly retrying the same deposit.');
             }
         }
-        if (this.isNativeEthFunding) {
-            const balance = BigInt(await this.ethereum.request({ method: 'eth_getBalance', params: [address, 'latest'] }));
-            if (balance < nativeDepositValue(amount, funding)) throw new Error('Your wallet needs more ETH for this deposit and its network fee.');
-        } else {
-            let tokenBalance = await this.readContractUint(
-                tokenAddress,
-                callData(ABI.balanceOf, [addressWord(address)])
-            );
-
-            if (tokenBalance < amount) {
-                if (!funding.demo_mint_enabled) {
-                    throw new Error(`Your wallet has ${formatTokenAmount(tokenBalance)} ${this.billingTokenSymbol}; this deposit needs ${formatTokenAmount(amount)} ${this.billingTokenSymbol}.`);
-                }
-                onStatus('Minting free test billing tokens… confirm in MetaMask.');
-                const mintReceipt = await this.sendContractTransaction(
-                    address,
-                    tokenAddress,
-                    callData(ABI.mint, [addressWord(address), abiWord(amount - tokenBalance)])
-                );
-                onStatus('Test tokens minted. Checking the confirmed balance…');
-                tokenBalance = await this.readContractUintAtReceipt(
-                    tokenAddress,
-                    callData(ABI.balanceOf, [addressWord(address)]),
-                    mintReceipt,
-                    amount
-                );
-            }
-
-        }
+        const balance = BigInt(await this.ethereum.request({ method: 'eth_getBalance', params: [address, 'latest'] }));
+        if (balance < nativeDepositValue(amount, funding)) throw new Error('Your wallet needs more ETH for this deposit and its network fee.');
 
         onStatus('Generating the private note commitment locally…');
-        let plan = this.browserMode
-            ? await browserWalletRuntime.prepareDeposit(Number(amount), { preparedOperationId })
-            : await this.apiJson('/deposit/prepare', {
-                method: 'POST',
-                body: JSON.stringify({ amount: Number(amount) })
-            });
-
-        if (!this.isNativeEthFunding) {
-            const allowance = await this.readContractUint(
-                tokenAddress,
-                callData(ABI.allowance, [addressWord(address), addressWord(vaultAddress)])
-            );
-            if (allowance < amount) {
-                if (allowance > 0n) {
-                    onStatus('Resetting the existing token allowance… confirm in MetaMask.');
-                    await this.sendContractTransaction(
-                        address,
-                        tokenAddress,
-                        callData(ABI.approve, [addressWord(vaultAddress), abiWord(0n)])
-                    );
-                }
-                onStatus(`Approving ${this.billingTokenSymbol}… confirm in MetaMask.`);
-                await this.sendContractTransaction(
-                    address,
-                    tokenAddress,
-                    callData(ABI.approve, [addressWord(vaultAddress), abiWord(amount)])
-                );
-            }
-
-        }
+        let plan = await browserWalletRuntime.prepareDeposit(Number(amount), { preparedOperationId });
 
         let receipt;
         let submission = null;
         let submissionMetadata = null;
-        const attempts = this.browserMode ? 3 : 1;
+        const attempts = 3;
         for (let attempt = 0; attempt < attempts; attempt += 1) {
-            if (this.browserMode && plan.phase !== 'retry_exact') {
+            if (plan.phase !== 'retry_exact') {
                 onStatus(attempt === 0
                     ? 'Checking the latest private-vault state…'
                     : 'The vault changed. Refreshing the deposit before retrying…');
@@ -2106,16 +1838,14 @@ class ZkapiClient extends EventTarget {
                     { expectedOperationId: plan.operationId }
                 );
             }
-            if (this.browserMode) {
-                submission = await browserWalletRuntime.claimPendingDepositSubmission(plan.operationId);
-                // Another read-only preparation can refresh the append path;
-                // send exactly the plan frozen by the atomic submission claim.
-                if (submission.plan) plan = submission.plan;
-                if (submission.transactionHash) {
-                    onStatus(`Checking submitted deposit ${this.compact(submission.transactionHash)}…`);
-                    receipt = await this.waitForReceipt(submission.transactionHash);
-                    break;
-                }
+            submission = await browserWalletRuntime.claimPendingDepositSubmission(plan.operationId);
+            // Another read-only preparation can refresh the append path;
+            // send exactly the plan frozen by the atomic submission claim.
+            if (submission.plan) plan = submission.plan;
+            if (submission.transactionHash) {
+                onStatus(`Checking submitted deposit ${this.compact(submission.transactionHash)}…`);
+                receipt = await this.waitForReceipt(submission.transactionHash);
+                break;
             }
             onStatus('Depositing into the private-note vault… confirm in MetaMask.');
             try {
@@ -2123,32 +1853,28 @@ class ZkapiClient extends EventTarget {
                     address,
                     vaultAddress,
                     encodeDeposit(plan, amount),
-                    this.browserMode
-                        ? async hash => {
+                    async hash => {
                             await browserWalletRuntime.rememberPendingDepositTransaction(
                                 hash,
                                 submission,
                                 submissionMetadata
                             );
                             onStatus(`Deposit submitted ${this.compact(hash)} · waiting for confirmation…`);
-                        }
-                        : null,
-                    this.browserMode
-                        ? async metadata => {
+                        },
+                    async metadata => {
                             submissionMetadata = metadata;
                             await browserWalletRuntime.rememberPendingDepositSubmissionMetadata(
                                 submission,
                                 metadata
                             );
-                        }
-                        : null,
+                        },
                     null,
                     { kind: 'deposit', submission },
                     nativeDepositValue(amount, funding)
                 );
                 break;
             } catch (error) {
-                if (this.browserMode && !error?.transactionHash && submission) {
+                if (!error?.transactionHash && submission) {
                     if (error?.broadcastPossible === false || isWalletRejection(error)) {
                         await browserWalletRuntime.markPendingDepositRetryable(null, submission);
                     } else if (error?.broadcastPossible === true) {
@@ -2158,7 +1884,7 @@ class ZkapiClient extends EventTarget {
                         );
                         error.shortMessage = 'MetaMask did not return a deposit transaction ID. Check the deposit status before retrying.';
                     }
-                } else if (this.browserMode && error?.transactionHash) {
+                } else if (error?.transactionHash) {
                     try {
                         await browserWalletRuntime.rememberPendingDepositTransaction(
                             error.transactionHash,
@@ -2169,8 +1895,8 @@ class ZkapiClient extends EventTarget {
                         error.journalRecoveryError = journalError;
                     }
                 }
-                if (this.browserMode) await this.refresh({ quiet: true });
-                if (!this.browserMode || error?.code !== 'stale_root' || attempt + 1 >= attempts) throw error;
+                await this.refresh({ quiet: true });
+                if (error?.code !== 'stale_root' || attempt + 1 >= attempts) throw error;
                 const recovery = await this.recoverBrowserDeposit(onStatus);
                 if (recovery?.status === 'confirmed') return recovery;
                 plan = await browserWalletRuntime.pendingDeposit();
@@ -2178,28 +1904,7 @@ class ZkapiClient extends EventTarget {
                 submissionMetadata = null;
             }
         }
-        if (this.browserMode) {
-            return this.confirmBrowserDepositReceipt(plan, receipt, vaultAddress, onStatus);
-        }
-        const deposited = parseNoteDeposited(receipt, vaultAddress);
-        if (!deposited) {
-            throw new Error('The transaction succeeded, but its NoteDeposited event was not found.');
-        }
-
-        onStatus('Saving the private note in the local payment service…');
-        const confirmation = {
-            secret: plan.secret,
-            note_id: Number(deposited.noteId),
-            amount: Number(amount),
-            expiry_ts: Number(deposited.expiryTs)
-        };
-        await this.apiJson('/deposit/confirm', {
-            method: 'POST',
-            body: JSON.stringify(confirmation)
-        });
-        await this.refresh();
-        onStatus('Private balance is ready.');
-        return { noteId: Number(deposited.noteId), amount: Number(amount), receipt };
+        return this.confirmBrowserDepositReceipt(plan, receipt, vaultAddress, onStatus);
     }
 
     async withdraw(mode, onStatus = () => {}, { destination } = {}) {
@@ -2236,10 +1941,8 @@ class ZkapiClient extends EventTarget {
         // MetaMask connection can outlive a cross-tab update. Re-read the
         // durable plan under the wallet lock instead of trusting the UI/config
         // snapshot that existed before the prompt opened.
-        const durablePrepared = this.browserMode
-            ? await browserWalletRuntime.currentPreparedWithdrawal()
-            : null;
-        const prepared = this.browserMode && durablePrepared
+        const durablePrepared = await browserWalletRuntime.currentPreparedWithdrawal();
+        const prepared = durablePrepared
             ? {
                 mode: durablePrepared.mode,
                 phase: durablePrepared.phase,
@@ -2271,9 +1974,9 @@ class ZkapiClient extends EventTarget {
         let submittedHash = prepared?.transaction_hash || null;
         let submission = null;
         let submissionMetadata = null;
-        const attempts = this.browserMode ? 3 : 1;
+        const attempts = 3;
         try {
-            if (this.browserMode && submittedHash) {
+            if (submittedHash) {
                 // A broadcast hash owns recovery. Never read a new root or
                 // replace its proof while the receipt is unknown: doing so can
                 // sever the only durable link to a transaction already in the
@@ -2290,18 +1993,11 @@ class ZkapiClient extends EventTarget {
                         ? 'Requesting server clearance and generating the withdrawal proof…'
                         : 'Generating a unilateral escape proof locally…')
                     : 'The vault changed during preparation. Refreshing the Merkle path and proof…');
-                const expectedActiveRoot = this.browserMode
-                    ? await this.readContractUint(
+                const expectedActiveRoot = await this.readContractUint(
                         this.config.funding.contract_address,
                         `0x${ABI.currentRoot}`
-                    )
-                    : null;
-                plan = this.browserMode
-                    ? await browserWalletRuntime.prepareWithdrawal(mode, destination, { expectedActiveRoot })
-                    : await this.apiJson('/wallet/withdraw', {
-                        method: 'POST',
-                        body: JSON.stringify({ mode, destination })
-                    });
+                    );
+                plan = await browserWalletRuntime.prepareWithdrawal(mode, destination, { expectedActiveRoot });
                 if (Number(plan.public_inputs?.note_id) !== Number(note.note_id)) {
                     throw new Error('The private wallet returned a withdrawal for a different note.');
                 }
@@ -2328,11 +2024,9 @@ class ZkapiClient extends EventTarget {
                     destination,
                     this.config.funding.contract_address
                 );
-                if (this.browserMode) {
-                    const claim = await browserWalletRuntime.claimPreparedWithdrawalSubmission();
-                    submission = claim;
-                    submittedHash = claim.transactionHash || submittedHash;
-                }
+                const claim = await browserWalletRuntime.claimPreparedWithdrawalSubmission();
+                submission = claim;
+                submittedHash = claim.transactionHash || submittedHash;
                 if (submittedHash) {
                     onStatus(`Checking submitted transaction ${this.compact(submittedHash)}…`);
                     receipt = await this.waitForReceipt(submittedHash);
@@ -2346,8 +2040,7 @@ class ZkapiClient extends EventTarget {
                         from,
                         this.config.funding.contract_address,
                         calldata,
-                        this.browserMode
-                            ? async hash => {
+                        async hash => {
                                 submittedHash = hash;
                                 await browserWalletRuntime.rememberPreparedWithdrawalTransaction(
                                     hash,
@@ -2369,23 +2062,20 @@ class ZkapiClient extends EventTarget {
                                     clearanceReserved: plan.clearanceReserved === true || mode === 'mutual'
                                 });
                                 onStatus(`Withdrawal submitted ${this.compact(hash)} · waiting for confirmation…`);
-                            }
-                            : null,
-                        this.browserMode
-                            ? async metadata => {
+                            },
+                        async metadata => {
                                 submissionMetadata = metadata;
                                 await browserWalletRuntime.rememberPreparedWithdrawalSubmissionMetadata(
                                     submission,
                                     metadata
                                 );
-                            }
-                            : null,
+                            },
                         null,
                         { kind: 'withdrawal', submission }
                     );
                     break;
                 } catch (error) {
-                    if (!this.browserMode || error?.code !== 'stale_root' || attempt + 1 >= attempts) throw error;
+                    if (error?.code !== 'stale_root' || attempt + 1 >= attempts) throw error;
                     await browserWalletRuntime.markPreparedWithdrawalRetryable(null, submission);
                     submission = null;
                     submissionMetadata = null;
@@ -2393,21 +2083,19 @@ class ZkapiClient extends EventTarget {
             }
         } catch (failure) {
             const error = normalizeWalletError(failure);
-            if (this.browserMode) {
-                const recoveredReceipt = await this.recoverFailedWithdrawalSubmission({
-                    mode,
-                    error,
-                    submittedHash,
-                    submission,
-                    submissionMetadata,
-                    from
-                });
-                // A polling failure can race mining. Recovery reads the saved
-                // hash again; a successful receipt must continue through the
-                // exact same event/identity and canonical-vault checks below.
-                if (recoveredReceipt && BigInt(recoveredReceipt.status || '0x0') === 1n) {
-                    receipt = recoveredReceipt;
-                }
+            const recoveredReceipt = await this.recoverFailedWithdrawalSubmission({
+                mode,
+                error,
+                submittedHash,
+                submission,
+                submissionMetadata,
+                from
+            });
+            // A polling failure can race mining. Recovery reads the saved
+            // hash again; a successful receipt must continue through the
+            // exact same event/identity and canonical-vault checks below.
+            if (recoveredReceipt && BigInt(recoveredReceipt.status || '0x0') === 1n) {
+                receipt = recoveredReceipt;
             }
             if (!receipt) throw error;
         }
@@ -2418,33 +2106,27 @@ class ZkapiClient extends EventTarget {
             throw new Error('The transaction succeeded, but its withdrawal event did not match the prepared note.');
         }
 
-        onStatus(this.browserMode
-            ? 'Confirming the vault state and updating this browser…'
-            : 'Confirming the vault state and updating the private wallet…');
+        onStatus('Confirming the vault state and updating this browser…');
         const confirmed = await this.confirmMinedWithdrawalStatus(Number(note.note_id), receipt);
         if (mode === 'mutual') {
             if (confirmed.status !== 'closed') {
                 throw new Error(`The vault still reports this private balance as ${confirmed.status}.`);
             }
-            if (this.browserMode) {
-                await browserWalletRuntime.detachClosedWithdrawal({
-                    mode: 'mutual',
-                    payoutVerified: true,
-                    noteId: Number(note.note_id),
-                    destination,
-                    finalBalance: Number(event.finalBalance),
-                    transactionHash: submittedHash || receipt?.transactionHash || null,
-                    closeBlockNumber: Number(BigInt(receipt?.blockNumber || '0x0')),
-                    lastObservedBlock: Number(confirmed.observed_block || 0),
-                    clearanceReserved: true,
-                    createdAt: plan.createdAt
-                });
-            }
+            await browserWalletRuntime.detachClosedWithdrawal({
+                mode: 'mutual',
+                payoutVerified: true,
+                noteId: Number(note.note_id),
+                destination,
+                finalBalance: Number(event.finalBalance),
+                transactionHash: submittedHash || receipt?.transactionHash || null,
+                closeBlockNumber: Number(BigInt(receipt?.blockNumber || '0x0')),
+                lastObservedBlock: Number(confirmed.observed_block || 0),
+                clearanceReserved: true,
+                createdAt: plan.createdAt
+            });
             this.rememberWithdrawal(null);
             await this.refresh();
-            onStatus(this.browserMode
-                ? 'Withdrawal returned. Finality is being checked safely in the background.'
-                : 'Withdrawal complete. The closed note was archived locally.');
+            onStatus('Withdrawal returned. Finality is being checked safely in the background.');
             return { status: 'closed', event, receipt };
         }
 
@@ -2452,28 +2134,26 @@ class ZkapiClient extends EventTarget {
         if (confirmed.status !== 'pending_withdrawal' || !deadline) {
             throw new Error('The escape transaction mined, but the vault did not report its safety deadline.');
         }
-        if (this.browserMode) {
-            const record = await browserWalletRuntime.detachEscapeWithdrawal({
-                noteId: Number(note.note_id),
-                destination,
-                finalBalance: Number(event.finalBalance),
-                challengeDeadline: deadline,
-                transactionHash: submittedHash || receipt?.transactionHash || null,
-                startBlockNumber: Number(BigInt(receipt?.blockNumber || '0x0')),
-                lastObservedBlock: Number(confirmed.observed_block || 0),
-                createdAt: plan.createdAt
-            });
-            this.rememberWithdrawal(null);
-            await this.refresh();
-            onStatus('Escape started. You can add a new private balance while the safety window runs.');
-            return {
-                status: 'pending_withdrawal',
-                deadline,
-                event,
-                receipt,
-                recordId: record.recordId
-            };
-        }
+        const record = await browserWalletRuntime.detachEscapeWithdrawal({
+            noteId: Number(note.note_id),
+            destination,
+            finalBalance: Number(event.finalBalance),
+            challengeDeadline: deadline,
+            transactionHash: submittedHash || receipt?.transactionHash || null,
+            startBlockNumber: Number(BigInt(receipt?.blockNumber || '0x0')),
+            lastObservedBlock: Number(confirmed.observed_block || 0),
+            createdAt: plan.createdAt
+        });
+        this.rememberWithdrawal(null);
+        await this.refresh();
+        onStatus('Escape started. You can add a new private balance while the safety window runs.');
+        return {
+            status: 'pending_withdrawal',
+            deadline,
+            event,
+            receipt,
+            recordId: record.recordId
+        };
         this.rememberWithdrawal({ ...withdrawal, phase: 'pending', challengeDeadline: deadline });
         await this.refresh();
         onStatus('Escape started. Return after the safety window to finalize.');
@@ -2619,7 +2299,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async recoverUnknownWithdrawal(onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         await browserWalletRuntime.markPreparedWithdrawalUnknown();
         await this.refresh();
         onStatus('The old wallet prompt was marked unresolved. Check the vault before retrying.');
@@ -2627,7 +2307,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryUnknownWithdrawal(onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         const prepared = this.config?.prepared_withdrawal;
         if (prepared?.phase !== 'ambiguous') {
             throw new Error('There is no unresolved withdrawal request to retry.');
@@ -2639,9 +2319,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryDroppedWithdrawal(onStatus = () => {}) {
-        if (!this.browserMode) {
-            throw new Error('Transaction replacement is available in the browser wallet.');
-        }
+
         const current = await browserWalletRuntime.currentPreparedWithdrawal();
         if (!current || current.phase !== 'dropped_or_pending') {
             throw new Error('Check the withdrawal before replacing it.');
@@ -2703,7 +2381,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async withdrawBackground(recordId, onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Background withdrawals require the browser wallet.');
+
         this.backgroundWithdrawalPromises ||= new Map();
         if (this.backgroundWithdrawalPromises.has(recordId)) {
             return this.backgroundWithdrawalPromises.get(recordId);
@@ -2720,7 +2398,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async cancelBackgroundWithdrawalPreparation(recordId, onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('This recovery belongs to the browser wallet.');
+
         await browserWalletRuntime.cancelBackgroundWithdrawalPreparation(recordId);
         await this.refresh({ quiet: true });
         onStatus('Preparation canceled. The set-aside balance is ready to withdraw again.');
@@ -2834,9 +2512,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryDroppedBackgroundWithdrawal(recordId, onStatus = () => {}) {
-        if (!this.browserMode) {
-            throw new Error('Background transaction replacement is available in the browser wallet.');
-        }
+
         const current = await browserWalletRuntime.currentWithdrawal(recordId);
         const hasReplaceableLiveClaim = Boolean(current?.startSubmissionId
             && /^0x[0-9a-fA-F]{40}$/.test(current.startSubmissionFrom || '')
@@ -2932,12 +2608,6 @@ class ZkapiClient extends EventTarget {
     }
 
     async settleActiveLease(onStatus = () => {}, { sessionId = null } = {}) {
-        // The legacy daemon's settlement endpoint has no expected-owner
-        // parameter. Never issue a global settlement for a mode change.
-        if (sessionId && !this.browserMode) {
-            if (await this.getPendingLeaseOwner() !== sessionId) return;
-            throw new Error('Close the active private key in the local daemon before using zkAPI again.');
-        }
         const hasPendingRequest = Boolean(this.activeLease || this.wallet?.pending_request);
         const activityId = hasPendingRequest ? this.beginActivity('settlement', {
             phase: 'settling',
@@ -2954,11 +2624,9 @@ class ZkapiClient extends EventTarget {
             report('settling', 'Finishing the active chat and confirming its usage…');
         }
         try {
-            const settled = this.browserMode
-                ? sessionId
-                    ? await browserWalletRuntime.settleSessionLease(sessionId, report)
-                    : await browserWalletRuntime.settleActiveLease(report)
-                : await this.apiJson('/wallet/settle', { method: 'POST' });
+            const settled = sessionId
+                ? await browserWalletRuntime.settleSessionLease(sessionId, report)
+                : await browserWalletRuntime.settleActiveLease(report);
             await this.refresh({ quiet: true });
             if (sessionId ? await this.getPendingLeaseOwner() === sessionId
                 : this.activeLease || this.wallet?.pending_request) {
@@ -2977,21 +2645,15 @@ class ZkapiClient extends EventTarget {
 
     async hasPendingLease() {
         if (!this.initialized) await this.init();
-        if (this.browserMode) return browserWalletRuntime.hasPendingLease();
-        await this.refresh({ quiet: true });
-        return Boolean(this.activeLease || this.wallet?.pending_request);
+        return browserWalletRuntime.hasPendingLease();
     }
 
     async getPendingLeaseOwner() {
         await this.init();
-        if (this.browserMode) {
-            return browserWalletRuntime.getPendingLeaseOwner();
-        }
-        return this.config?.active_lease?.session_id || null;
+        return browserWalletRuntime.getPendingLeaseOwner();
     }
 
     async syncLateWithdrawalAttempts(onStatus = () => {}) {
-        if (!this.browserMode) return [];
         const terminal = new Set([
             'closed',
             'detached',
@@ -3469,26 +3131,6 @@ class ZkapiClient extends EventTarget {
     }
 
     async syncWithdrawal(onStatus = () => {}) {
-        if (!this.browserMode) {
-            if (!this.note) return { status: 'no_note' };
-            onStatus('Checking the vault’s canonical note status…');
-            const result = await this.apiJson('/wallet/withdraw/confirm', { method: 'POST' });
-            if (result.status === 'closed') {
-                this.rememberWithdrawal(null);
-                onStatus('Withdrawal complete. The private wallet archived the closed note.');
-            } else if (result.status === 'pending_withdrawal') {
-                this.rememberWithdrawal({
-                    phase: 'pending',
-                    mode: 'escape',
-                    noteId: result.note_id,
-                    destination: this.withdrawal?.destination || this.walletAddress || 'Unknown',
-                    challengeDeadline: Number(result.challenge_deadline)
-                });
-                onStatus('The escape is pending until its safety deadline.');
-            }
-            await this.refresh();
-            return result;
-        }
 
         if (this.activeLateWithdrawal) {
             onStatus('Checking the transaction returned by the earlier MetaMask window…');
@@ -4173,7 +3815,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async syncEscapeWithdrawals(onStatus = () => {}, recordId = null) {
-        if (!this.browserMode) return [];
+
         const records = this.withdrawals.filter(record => (record.phase !== 'closed'
                 || record.finalizeTransactionHash
                 || record.finalizeSubmissionId)
@@ -4812,7 +4454,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async parkPreparedWithdrawal(onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Setting aside a balance is available in the browser wallet.');
+
         const record = await browserWalletRuntime.parkPreparedWithdrawal();
         this.rememberWithdrawal(null);
         await this.refresh();
@@ -4821,7 +4463,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async cancelPreparedWithdrawal(onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Cancel the prepared withdrawal from the local client.');
+
         const prepared = this.config?.prepared_withdrawal;
         if (!prepared) return false;
         if (prepared.mode === 'mutual' || prepared.clearance_reserved === true) {
@@ -4838,7 +4480,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async restoreWithdrawal(recordId, onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('This recovery belongs to the browser wallet.');
+
         const record = this.withdrawals.find(entry => entry.recordId === recordId);
         if (!record) throw new Error('The recoverable private balance is no longer available.');
         onStatus('Checking the vault before restoring this balance…');
@@ -4867,7 +4509,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async recoverUnknownFinalization(recordId, onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         await browserWalletRuntime.markWithdrawalFinalizationUnknown(recordId);
         await this.refresh();
         onStatus('The old wallet prompt was marked unresolved. Check the escape before retrying.');
@@ -4875,7 +4517,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async resolveChallengedFinalization(recordId, onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         const record = this.withdrawals.find(entry => entry.recordId === recordId);
         if (!record || record.chainStatus !== 'active' || !record.finalizeSubmissionId
             || record.finalizeTransactionHash) {
@@ -4901,7 +4543,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryUnknownFinalization(recordId, onStatus = () => {}) {
-        if (!this.browserMode) throw new Error('Wallet-request recovery is available in the browser wallet.');
+
         const record = this.withdrawals.find(entry => entry.recordId === recordId);
         if (record?.phase !== 'ambiguous') {
             throw new Error('There is no unresolved finalization request to retry.');
@@ -4916,9 +4558,7 @@ class ZkapiClient extends EventTarget {
     }
 
     async retryDroppedFinalization(recordId, onStatus = () => {}) {
-        if (!this.browserMode) {
-            throw new Error('Finalization transaction replacement is available in the browser wallet.');
-        }
+
         const current = await browserWalletRuntime.currentWithdrawal(recordId);
         if (!current || current.phase !== 'finalizing'
             || !['receipt_missing', 'replacement_result_unknown']
@@ -5018,15 +4658,11 @@ class ZkapiClient extends EventTarget {
         const onStatus = typeof recordIdOrStatus === 'function' ? recordIdOrStatus : maybeStatus;
         let withdrawal = hasRecordId
             ? this.withdrawals.find(record => record.recordId === recordIdOrStatus)
-            : this.browserMode
-                ? this.withdrawals.find(record => record.mode === 'escape' && record.phase !== 'closed')
-                : this.withdrawal;
-        if (this.browserMode && withdrawal?.recordId) {
+            : this.withdrawals.find(record => record.mode === 'escape' && record.phase !== 'closed');
+        if (withdrawal?.recordId) {
             withdrawal = await browserWalletRuntime.currentWithdrawal(withdrawal.recordId);
         }
-        const resumablePhases = this.browserMode
-            ? ['pending', 'finalizing', 'awaiting_wallet']
-            : ['pending'];
+        const resumablePhases = ['pending', 'finalizing', 'awaiting_wallet'];
         if (!resumablePhases.includes(withdrawal?.phase)) {
             throw new Error('There is no pending escape withdrawal.');
         }
@@ -5041,14 +4677,12 @@ class ZkapiClient extends EventTarget {
         let submissionMetadata = null;
         let receipt;
         try {
-            if (this.browserMode) {
-                const claim = await browserWalletRuntime.claimWithdrawalFinalization(
-                    withdrawal.recordId
-                );
-                submittedHash = claim.transactionHash || null;
-                submission = claim;
-                withdrawal = claim.record;
-            }
+            const claim = await browserWalletRuntime.claimWithdrawalFinalization(
+                withdrawal.recordId
+            );
+            submittedHash = claim.transactionHash || null;
+            submission = claim;
+            withdrawal = claim.record;
             if (submittedHash) {
                 onStatus(`Checking submitted finalization ${this.compact(submittedHash)}…`);
                 receipt = await this.waitForReceipt(submittedHash);
@@ -5058,8 +4692,7 @@ class ZkapiClient extends EventTarget {
                     from,
                     this.config.funding.contract_address,
                     encodeFinalizeEscape(withdrawal.noteId),
-                    this.browserMode
-                        ? async hash => {
+                    async hash => {
                             submittedHash = hash;
                             await browserWalletRuntime.rememberWithdrawalFinalization(
                                 withdrawal.recordId,
@@ -5077,88 +4710,83 @@ class ZkapiClient extends EventTarget {
                                 );
                             }
                             onStatus(`Finalization submitted ${this.compact(hash)} · waiting for confirmation…`);
-                        }
-                        : null,
-                    this.browserMode
-                        ? async metadata => {
+                        },
+                    async metadata => {
                             submissionMetadata = metadata;
                             await browserWalletRuntime.rememberWithdrawalFinalizationSubmissionMetadata(
                                 withdrawal.recordId,
                                 submission,
                                 metadata
                             );
-                        }
-                        : null,
+                        },
                     null,
                     { kind: 'finalization', submission }
                 );
             }
         } catch (error) {
-            if (this.browserMode) {
-                if (error?.transactionHash) {
-                    submittedHash = error.transactionHash;
-                    try {
+            if (error?.transactionHash) {
+                submittedHash = error.transactionHash;
+                try {
+                    await browserWalletRuntime.rememberWithdrawalFinalization(
+                        withdrawal.recordId,
+                        submittedHash,
+                        submission,
+                        submissionMetadata
+                    );
+                    const metadata = await this.submittedTransactionMetadata(submittedHash, from);
+                    if (metadata) {
                         await browserWalletRuntime.rememberWithdrawalFinalization(
                             withdrawal.recordId,
                             submittedHash,
                             submission,
-                            submissionMetadata
+                            metadata
                         );
-                        const metadata = await this.submittedTransactionMetadata(submittedHash, from);
-                        if (metadata) {
-                            await browserWalletRuntime.rememberWithdrawalFinalization(
-                                withdrawal.recordId,
-                                submittedHash,
-                                submission,
-                                metadata
-                            );
-                        }
-                    } catch (journalError) {
-                        error.journalRecoveryError = journalError;
                     }
+                } catch (journalError) {
+                    error.journalRecoveryError = journalError;
                 }
-                let chainReceipt = null;
-                if (submittedHash) {
-                    try {
-                        chainReceipt = await this.ethereum.request({
-                            method: 'eth_getTransactionReceipt',
-                            params: [submittedHash]
-                        });
-                    } catch {
-                        // Preserve an ambiguous submitted hash for reload.
-                    }
-                }
-                if (chainReceipt && BigInt(chainReceipt.status || '0x0') !== 1n) {
-                    const finality = await this.browserRevertedReceiptFinality(
-                        submittedHash,
-                        chainReceipt
-                    );
-                    if (finality.finalized) {
-                        await browserWalletRuntime.releaseWithdrawalFinalization(withdrawal.recordId, {
-                            transactionHash: submittedHash
-                        });
-                        error.shortMessage = 'The finalization transaction reverted. The escape is still safe and ready to retry.';
-                    } else {
-                        error.shortMessage = 'The finalization currently shows as reverted, but that block is not final yet. It remains tracked and will be checked automatically.';
-                    }
-                } else if (!submittedHash && submission
-                    && (error?.broadcastPossible === false || isWalletRejection(error))) {
-                    await browserWalletRuntime.releaseWithdrawalFinalization(withdrawal.recordId, {
-                        submission
-                    });
-                } else if (!submittedHash && submission && error?.broadcastPossible === true) {
-                    await browserWalletRuntime.markWithdrawalFinalizationAmbiguous(
-                        withdrawal.recordId,
-                        submission,
-                        error?.message || 'MetaMask did not return a transaction ID.'
-                    );
-                    error.shortMessage = 'MetaMask did not return a transaction ID. Check the escape status; retry only if it is still pending.';
-                }
-                if (!submittedHash && isWalletRejection(error)) {
-                    error.shortMessage = 'MetaMask canceled finalization. The withdrawal is still safe and can be finalized later.';
-                }
-                await this.refresh({ quiet: true });
             }
+            let chainReceipt = null;
+            if (submittedHash) {
+                try {
+                    chainReceipt = await this.ethereum.request({
+                        method: 'eth_getTransactionReceipt',
+                        params: [submittedHash]
+                    });
+                } catch {
+                    // Preserve an ambiguous submitted hash for reload.
+                }
+            }
+            if (chainReceipt && BigInt(chainReceipt.status || '0x0') !== 1n) {
+                const finality = await this.browserRevertedReceiptFinality(
+                    submittedHash,
+                    chainReceipt
+                );
+                if (finality.finalized) {
+                    await browserWalletRuntime.releaseWithdrawalFinalization(withdrawal.recordId, {
+                        transactionHash: submittedHash
+                    });
+                    error.shortMessage = 'The finalization transaction reverted. The escape is still safe and ready to retry.';
+                } else {
+                    error.shortMessage = 'The finalization currently shows as reverted, but that block is not final yet. It remains tracked and will be checked automatically.';
+                }
+            } else if (!submittedHash && submission
+                && (error?.broadcastPossible === false || isWalletRejection(error))) {
+                await browserWalletRuntime.releaseWithdrawalFinalization(withdrawal.recordId, {
+                    submission
+                });
+            } else if (!submittedHash && submission && error?.broadcastPossible === true) {
+                await browserWalletRuntime.markWithdrawalFinalizationAmbiguous(
+                    withdrawal.recordId,
+                    submission,
+                    error?.message || 'MetaMask did not return a transaction ID.'
+                );
+                error.shortMessage = 'MetaMask did not return a transaction ID. Check the escape status; retry only if it is still pending.';
+            }
+            if (!submittedHash && isWalletRejection(error)) {
+                error.shortMessage = 'MetaMask canceled finalization. The withdrawal is still safe and can be finalized later.';
+            }
+            await this.refresh({ quiet: true });
             throw error;
         }
         const event = parseWithdrawalReceipt(receipt, this.config.funding.contract_address, 'finalize');
@@ -5171,31 +4799,23 @@ class ZkapiClient extends EventTarget {
         if (confirmed.status !== 'closed') {
             throw new Error(`The vault reports ${confirmed.status} after finalization.`);
         }
-        if (this.browserMode) {
-            await browserWalletRuntime.updateWithdrawal(withdrawal.recordId, {
-                phase: 'closed_unconfirmed',
-                chainStatus: 'closed',
-                payoutVerified: true,
-                closedAt: Date.now(),
-                closeBlockNumber: Number(BigInt(receipt?.blockNumber || '0x0')),
-                lastObservedBlock: Number(confirmed.observed_block || 0),
-                error: null
-            });
-        } else {
-            this.rememberWithdrawal(null);
-        }
+        await browserWalletRuntime.updateWithdrawal(withdrawal.recordId, {
+            phase: 'closed_unconfirmed',
+            chainStatus: 'closed',
+            payoutVerified: true,
+            closedAt: Date.now(),
+            closeBlockNumber: Number(BigInt(receipt?.blockNumber || '0x0')),
+            lastObservedBlock: Number(confirmed.observed_block || 0),
+            error: null
+        });
         await this.refresh();
-        onStatus(this.browserMode
-            ? 'Escape withdrawal returned. Finality is being checked safely in the background.'
-            : 'Escape withdrawal finalized. Its balance was returned to MetaMask.');
+        onStatus('Escape withdrawal returned. Finality is being checked safely in the background.');
         return { status: 'closed', event, receipt };
     }
 
     async confirmMinedWithdrawalStatus(noteId, receipt) {
         try {
-            return this.browserMode
-                ? await this.readBrowserWithdrawalStatus(noteId)
-                : await this.apiJson('/wallet/withdraw/confirm', { method: 'POST' });
+            return await this.readBrowserWithdrawalStatus(noteId);
         } catch (failure) {
             // Call only after validating the successful receipt's withdrawal
             // event. An unavailable second RPC is not a failed payout. Keep
@@ -5205,9 +4825,7 @@ class ZkapiClient extends EventTarget {
             error.transactionHash = receipt?.transactionHash || null;
             error.shortMessage = error.code === 'wrong_network'
                 ? `Your withdrawal transaction was mined. Switch MetaMask back to ${this.networkName()} so the app can confirm its status.`
-                : this.browserMode
-                    ? 'Your withdrawal transaction was mined. Its status will be checked automatically; you can close this window.'
-                    : 'Your withdrawal transaction was mined. Check withdrawal status shortly to finish confirming it.';
+                : 'Your withdrawal transaction was mined. Its status will be checked automatically; you can close this window.';
             throw error;
         }
     }
@@ -5277,9 +4895,6 @@ class ZkapiClient extends EventTarget {
         return escapePeriodBadge(this.challengePeriodSeconds);
     }
 
-    sessionHeaders(sessionId) {
-        return { [SESSION_HEADER]: sessionId };
-    }
 }
 
 // Keep provider selection stable through every asynchronous client boundary,
@@ -5307,5 +4922,5 @@ for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors
 const zkapiClient = new ZkapiClient();
 globalThis.zkapiClient = zkapiClient;
 
-export { SESSION_HEADER, ZkapiClient, ZkapiHttpError };
+export { ZkapiClient };
 export default zkapiClient;

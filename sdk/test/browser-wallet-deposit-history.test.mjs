@@ -1,3 +1,4 @@
+import { nativeFunding } from './helpers/native-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -142,7 +143,7 @@ function seedRuntime(value) {
 function makeRuntime() {
     const runtime = new singleton.constructor();
     runtime.manifest = { deployment_id: DEPLOYMENT };
-    runtime.config = { wallet_core: {}, funding: {} };
+    runtime.config = { wallet_core: {}, funding: nativeFunding() };
     runtime.init = async () => runtime.snapshot();
     runtime.walletStatus = async () => ({ has_note: Boolean(runtime.runtime.state) });
     runtime.worker = { call: async (method, payload) => {
@@ -798,5 +799,20 @@ test('an unresolved late callback blocks both prepared and authorized exact fund
         assert.equal(runtime.canQuotePendingDeposit(pending), false);
         await assert.rejects(runtime.prepareDepositQuote(pending.amount, 999n), /Recover/);
         if (phase === 'retry_exact') await assert.rejects(runtime.authorizePendingDepositRetry({ forFundingQuote: true }), /unresolved/);
+    }
+});
+
+test('legacy or token wallet state cannot be relabeled as a native ETH wallet', async () => {
+    for (const legacy of [
+        { deploymentId: null },
+        { deploymentId: OTHER_DEPLOYMENT },
+        { billingAsset: 'erc20' }
+    ]) {
+        seedRuntime({ state: state(), ...legacy });
+        const before = clone(indexedDB.stores.get('runtime').get('active'));
+        const runtime = makeRuntime();
+        await assert.rejects(runtime.reload(), /Switch back to that deployment/);
+        assert.deepEqual(indexedDB.stores.get('runtime').get('active'), before);
+        assert.equal(runtime.runtime, null);
     }
 });

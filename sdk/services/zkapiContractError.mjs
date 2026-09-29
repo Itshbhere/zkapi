@@ -31,13 +31,17 @@ const CONTRACT_ERRORS = Object.freeze({
         code: 'not_pending_withdrawal',
         message: 'This note does not have an escape withdrawal waiting to be finalized.'
     },
+    '0xf4b3b1bc': {
+        code: 'native_transfer_failed',
+        message: 'The vault could not return ETH to the withdrawal address.'
+    },
+    '0x2723e9c2': {
+        code: 'invalid_native_value',
+        message: 'The ETH transaction value does not match the private-note amount.'
+    },
     '0x151f07fe': {
         code: 'challenge_not_expired',
         message: 'The escape safety window has not finished yet.'
-    },
-    '0x5274afe7': {
-        code: 'token_transfer_failed',
-        message: 'The vault could not return the billing tokens. Check the deployed token and vault balances.'
     }
 });
 

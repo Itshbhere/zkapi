@@ -1,71 +1,54 @@
 ---
 title: Cryptography
-description: Primitives, post-quantum posture, domain separation
+description: BN254 Groth16, Baby-JubJub signatures, and note-bound commitments
 ---
 
-## Post-quantum security posture
+| Component | Active primitive |
+| --- | --- |
+| Proofs | Circuit-specific Groth16 on BN254 |
+| Circuit field | BN254 scalar field |
+| Hashing | Domain-separated Poseidon, exponent 5, rate 2, capacity 1 |
+| Poseidon rounds | 8 full and 57 partial |
+| Merkle tree | Depth 32, zero leaf 0 |
+| State and clearance signatures | Separate Baby-JubJub Schnorr keys |
+| Balance commitment | `E(B,r,L) = B*G + r*H + L*J` on Baby-JubJub |
 
-The protocol is post-quantum wherever practical:
+This construction uses classical elliptic-curve assumptions. Circuit ID
+`zkapi-v2-note-bound-v1` identifies the current setup. The committed keys are a
+single-party development setup; see `protocol/setup/v2/README.md` for its trust
+and deployment compatibility requirements.
 
-| Component | Scheme | PQ-secure |
-|---|---|---|
-| Proof system | Cairo STARK proofs | Yes |
-| Hash function | Poseidon over the Stark field | Yes |
-| Merkle tree | Poseidon-based | Yes |
-| Server signatures | XMSS (WOTS+, h=20) | Yes |
-| Nullifiers | Poseidon-derived | Yes |
-| **Balance commitment** | **Pedersen on Stark curve** | **No** |
+## Note binding
 
-The Pedersen balance commitment is the single accepted non-PQ component in v1,
-required for homomorphic addition and rerandomization. This exception is
-isolated to the `pedersen_balance` module in Cairo and `zkapi-crypto/pedersen`
-in Rust.
+The full private leaf is `L = H_leaf(note_id, H_reg(secret, 0), deposit, expiry)`.
+Both request and withdrawal circuits include that same leaf in the commitment.
+A server-signed state cannot be reused with a different note membership path.
+Rerandomization changes the blinding term while preserving the note term.
 
-## Primitives
+## Domain separation
 
-- **Field**: Stark field `felt252`
-- **Hash**: Poseidon builtin, domain-separated
-- **Balance commitment**: Pedersen on Stark curve: `E(B, r) = B·G_balance + r·H_blind`
-- **Server signatures**: XMSS with WOTS+ (w=16, n=248 bits, tree height=20)
-- **Nullifiers**: `x = Poseidon(domain("zkapi.null"), secret, anchor)`
+Native helpers and circuits use `zkapi.v2.reg`, `zkapi.v2.leaf`,
+`zkapi.v2.node`, `zkapi.v2.null`, `zkapi.v2.auth`, `zkapi.v2.state`,
+`zkapi.v2.clear`, `zkapi.v2.withdraw`, `zkapi.v2.anchor`, `zkapi.v2.blind`,
+and `zkapi.v2.sig`. The note generator uses
+`zkapi.v2.note-binding.generator.v1`.
 
-All Poseidon invocations use domain separation tags. No unlabeled hash
-invocation exists in the codebase.
+Canonical payload and response hashing retains its existing byte-level
+encoding. The request context commits to the exact client request ID and
+payload digest, and the public authorization tag binds it to the nullifier.
 
-## Domain tags
+## Public and private inputs
 
-| Label | Usage |
-|---|---|
-| `zkapi.reg` | Registration commitment |
-| `zkapi.leaf` | Active note leaf |
-| `zkapi.node` | Merkle tree internal node |
-| `zkapi.null` | Nullifier derivation |
-| `zkapi.state` | State signature message |
-| `zkapi.clear` | Clearance signature message |
-| `zkapi.anchor` | Next anchor derivation |
-| `zkapi.blind` | Blind delta derivation |
-| `zkapi.xmss.*` | XMSS/WOTS+ internal hashing |
-| `zkapi.payload` | Payload commitment |
+Request proofs expose the protocol version, chain, vault, active root, state
+signing key, request time, solvency bound, nullifier, authorization tag, and
+anonymous commitment. The note identity, secret, deposit, expiry, balance,
+blinding, anchor, Merkle siblings, and carried signature stay private.
 
-## Public inputs on the wire
+Withdrawal proofs reveal the note ID, final balance, destination, nullifier,
+and clearance mode along with the deployment fields, keys, active root, and
+withdrawal tag. That tag binds the withdrawal terms to the consumed state.
 
-Visible to the verifier (and therefore to anyone):
-
-`protocol_version`, `chain_id`, `contract_address`, `active_root`, XMSS epoch
-and root, `x`, `E(B)_anon`, `expiry_ts`, `solvency_bound`.
-
-Kept private inside the STARK witness:
-
-`s`, `note_id`, `D`, Merkle siblings, `B`, `r`, `ε`, `τ`, `σ_srv`.
-
-## Crypto wiring by step
-
-| Step | Primitive | Where |
-|---|---|---|
-| Register / deposit | `C = Poseidon("reg", s, 0)`, Merkle insert | `ZkApiVault.deposit` |
-| Note confirm (local) | store `(s, note_id, D, expiry)`, set `B=D, r=0, τ=1` | `Wallet::confirm_deposit` |
-| Per-request proof | `x = Poseidon("null", s, τ)`; rerandomize `E(B)`; STARK `π_req` | `zkapi-proof::RequestProofBuilder` |
-| Server verify | proof check, root match, nullifier unseen, cap enforcement | `zkapi-serverd::RequestProcessor` |
-| Next-state signing | `E(B_new) = E(B)_anon − Δ·G + blind·H`; fresh `τ_new`; XMSS sign | `zkapi-serverd::signer` |
-| Client state update | verify XMSS sig, recompute commitment, atomic `NoteState` commit | `Wallet::request_flow` |
-| Mutual-close withdrawal | `x_w = Poseidon("null", s, τ_cur)`; XMSS-sign `Poseidon("clear", x_w)`; `π_wd` reveals `B_final` | `POST /v1/withdraw/clearance`, `ZkApiVault.mutualClose` |
+`protocol/rust/crates/zkapi-types/src/inputs.rs` fixes the 12 request and 14
+withdrawal public-field slots. The historical internal `Felt252` type name
+represents a canonical BN254 scalar-field value; JSON is a checked hexadecimal
+string. `zkapi-proof/src/groth16.rs` defines the actual constraints.

@@ -3,11 +3,9 @@ resolver = "2"
 members = [
     "crates/zkapi-types",
     "crates/zkapi-core",
-    "crates/zkapi-crypto",
     "crates/zkapi-proof",
     "crates/zkapi-client",
     "crates/zkapi-browser",
-    "crates/zkapi-indexer",
 ]
 
 [workspace.package]
@@ -19,11 +17,8 @@ license = "MIT OR Apache-2.0"
 # Internal crates
 zkapi-types  = { path = "crates/zkapi-types" }
 zkapi-core   = { path = "crates/zkapi-core" }
-zkapi-crypto = { path = "crates/zkapi-crypto" }
 zkapi-proof  = { path = "crates/zkapi-proof" }
 zkapi-client = { path = "crates/zkapi-client" }
-zkapi-server = { path = "crates/zkapi-server" }
-zkapi-indexer = { path = "crates/zkapi-indexer" }
 
 # Serialization
 serde      = { version = "1.0", features = ["derive"] }
@@ -49,37 +44,15 @@ ark-snark = "0.5"
 # Hashing
 sha3 = "0.10"
 
-# Starknet crypto (Poseidon, Stark curve)
-starknet-crypto = "0.8"
-starknet-curve = "0.6"
-starknet-types-core = "0.2"
-
-# Lazy initialization
-lazy_static = "1.5"
-
 # Randomness
 rand = "0.8"
 
-# Async runtime
-tokio = { version = "1.0", features = ["full"] }
-
 # HTTP
-axum    = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
-
-# Storage
-rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Error handling
 thiserror = "2.0"
 anyhow    = "1.0"
 
-# CLI
-clap = { version = "4.0", features = ["derive"] }
-
 # Identifiers
 uuid = { version = "1.0", features = ["v4", "serde"] }
-
-# Logging
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }

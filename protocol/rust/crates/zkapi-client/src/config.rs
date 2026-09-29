@@ -1,7 +1,7 @@
 //! Client configuration.
 
 use zkapi_types::wire::CurvePointWire;
-use zkapi_types::{EpochRoots, Felt252};
+use zkapi_types::Felt252;
 
 /// Proof backend used by the wallet when building request/withdrawal proofs.
 #[derive(Debug, Clone)]
@@ -28,8 +28,6 @@ pub struct ClientConfig {
     pub server_url: String,
     /// Directory for persisting wallet state and journals.
     pub state_dir: String,
-    /// Retired v1 field; ignored by the v2 wallet.
-    pub trusted_epoch_roots: Vec<EpochRoots>,
     /// Proof backend used for runtime proof generation.
     pub proof_mode: ClientProofMode,
     /// Server signing keys pinned by the deployment contract/configuration.

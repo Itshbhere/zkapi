@@ -1,35 +1,19 @@
 # Introduction
 
-This book explains how the repository implements the zkAPI protocol described in [`PROTOCOL.md`](../../PROTOCOL.md) and pinned by [`SPEC.md`](../../SPEC.md).
+This book maps the active zkAPI v2 implementation to its source. The
+[protocol model](../../PROTOCOL.md) describes sequential anonymous spending;
+the [implementation specification](../../SPEC.md) describes exact interfaces.
 
-It is written as an implementation companion:
-
-- `PROTOCOL.md` explains the protocol model and threat model.
-- `SPEC.md` defines the required system behavior and interfaces.
-- This book maps those requirements to concrete code in Cairo, Solidity, and Rust.
-
-## Repository Structure
+The current implementation uses BN254 Groth16 proofs, BN254 Poseidon hashing,
+and Baby-JubJub Schnorr signatures and note-bound balance commitments. The
+Solidity vault settles native ETH in whole gwei. These are classical
+elliptic-curve primitives. Review the [development setup assumptions and
+compatibility](../../setup/v2/README.md) before deploying.
 
 ```text
-cairo/      Cairo proof programs and PQ signature logic
-contracts/  Solidity vault and proof adapters
-rust/       Client SDK, server, proof artifacts, indexer, crypto helpers
+contracts/  Native ETH vault and Groth16 verification
+setup/v2/   Matching circuit-specific development keys
+rust/       Proof circuits, native/browser wallets, types, and Merkle helpers
+../crates/  Runtime server, challenge service, indexer, and operator CLI
+../sdk/     Browser SDK and proof assets
 ```
-
-## Security Model
-
-The codebase follows the intended split:
-
-- Post-quantum primitives are used for proofs, Merkle hashing, nullifiers, and state signatures.
-- The one accepted non-PQ exception remains the balance commitment on the Stark curve.
-- The on-chain Merkle and leaf hashing now match the Cairo and Rust implementations through a Cairo-compatible Poseidon implementation in Solidity.
-
-## Reading Order
-
-If you want the fastest path through the implementation:
-
-1. Read [Protocol Map](protocol-map.md).
-2. Read [Cairo Programs](cairo.md) to understand what is actually proven.
-3. Read [Solidity Contracts](contracts.md) to understand settlement and escape-hatch safety.
-4. Read [Rust Services and SDK](rust.md) for the operational state machines.
-5. Read [End-to-End Flows](flows.md) for the full lifecycle.

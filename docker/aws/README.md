@@ -1,14 +1,9 @@
-# Single-VM deployment
+# Native ETH operator deployment
 
-This ERC20 review-deployment example runs the updated API, indexer and escape challenger from one image
-with the exact `protocol/setup/v2` artifacts included. It requires a fresh
-`zkapi-v2-note-bound-v1` verifier/vault and the seeds whose public coordinates
-were used in that vault. See [deployment](../../docs/deployment.md) and
-[challenge operation](../../docs/challenge-service.md).
-
-The existing native-ETH deployment uses its own native-billing launcher and public
-manifest. Do not replace that launcher or vault with this ERC20 example; native
-pricing, gwei billing, signing keys, and persistent state must match the deployment.
+This image runs the native ETH API, indexer and escape challenger with the exact
+`protocol/setup/v2` artifacts. Supply the matching vault/signing keys and pinned
+native oracle configuration. Existing contracts and live services are unchanged
+until an operator deliberately rolls out the new image.
 
 Build on a Linux VM with Docker Engine and Compose, from the complete source
 tree (including the in-repository `protocol/` source and uncommitted integration
@@ -24,9 +19,9 @@ Create these root-owned, mode `0600` files without printing their contents:
 
 | File | Contents |
 | --- | --- |
-| `/etc/zkapi/deployment.env` | Copy `deployment.env.example`, then supply fresh vault address, chain and deployment block. |
+| `/etc/zkapi/deployment.env` | Copy `deployment.env.example`, then supply vault address, chain, deployment block, gwei request cap, `ZKAPI_NATIVE_BILLING_RPC_URL`, `ZKAPI_NATIVE_PRICE_FEED_ADDRESS`, feed decimals and freshness policy. |
 | `/etc/zkapi/indexer.env` | `RPC_URL`, the chain's read RPC endpoint. |
-| `/etc/zkapi/server.env` | `ZKAPI_STATE_SEED`, `ZKAPI_CLEAR_SEED`, and `ZKAPI_OPENROUTER_INFERENCE_KEY` for metered proxy requests. For direct leases, add `ZKAPI_OPENROUTER_MANAGEMENT_KEY`; alternatively set `OA_ORG_URL` in deployment metadata and `ZKAPI_OA_ORG_SHARED_SECRET` here. |
+| `/etc/zkapi/server.env` | `ZKAPI_STATE_SEED`, `ZKAPI_CLEAR_SEED`, and `ZKAPI_OPENROUTER_MANAGEMENT_KEY` for direct leases; alternatively set `OA_ORG_URL` in deployment metadata and `ZKAPI_OA_ORG_SHARED_SECRET` here. |
 | `/etc/zkapi/challenge.env` | `ZKAPI_CHALLENGE_RPC_URL=http://signer:8547` and `ZKAPI_CHALLENGE_SENDER`, the exclusive funded sender managed by the private sidecar. |
 | `/etc/zkapi/signer.env` | `ZKAPI_CHALLENGE_PRIVATE_KEY`, `ZKAPI_CHALLENGE_CHAIN_ID=11155111`, `ZKAPI_CHALLENGE_RPC_URL` (the public Sepolia upstream RPC), and `ZKAPI_CHALLENGE_VAULT` (the fresh vault). Only the signer container receives this file. |
 
@@ -94,61 +89,11 @@ back up that directory across image updates. The challenger shares the API's
 SQLite database and must use the same host filesystem for SQLite locking. A
 recreated image must use the same setup artifacts as the deployed verifier.
 
-## Live Sepolia acceptance
+## Validation
 
-`scripts/accept-sepolia.py` drives the native client against the public HTTPS
-endpoint using an encrypted Foundry keystore. Use a funded acceptance account
-distinct from both the treasury and dedicated challenge sender, and an
-affordable configured model. It mints only the deployment's freely mintable
-demo token, approves the exact deposit total, executes one completion limited
-to eight output tokens, and checks cooperative withdrawal and treasury payout.
-
-```sh
-scripts/accept-sepolia.py \
-  --deployment https://PUBLIC_DISTRIBUTION/config.json \
-  --zkapi /absolute/path/to/zkapi \
-  --keystore /private/acceptance-account.json \
-  --password-file /private/acceptance-password \
-  --run-dir /private/new-acceptance-run \
-  --model CONFIGURED_PROVIDER_MODEL \
-  --challenge
-```
-
-The optional `--challenge` flow snapshots note A before its one request, deposits
-a second note to change the tree root, and submits an escape from A's stale
-snapshot. It waits for the deployed challenge daemon to restore A with the
-historical request proof, verifies the confirmed on-chain challenge event,
-then cooperatively closes both notes. This tests the live challenge path without
-waiting for the 24-hour finalization window. The ordinary flow sends four
-acceptance-account transactions; `--challenge` sends seven, plus the daemon's
-challenge transaction. Run it against an otherwise idle fresh test vault so
-balance and root checks are unambiguous.
-
-Acceptance transactions use legacy fees at 125% of the current RPC gas price with an
-explicit gas limit 20% above the live estimate. `--gas-price-wei` fixes that
-price; `--max-gas-price-wei` caps it (default 3 gwei). Each send checks the
-account balance against the maximum upfront fee and records its estimate.
-Set `--wait-for-gas-seconds 900` to allow a top-up to arrive during a run: the
-helper polls only the balance every ten seconds, then refreshes the gas estimate
-and price before signing. The default is to stop immediately on insufficient ETH.
-Each transaction's exact nonce and call are saved before asynchronous submission,
-and its hash is saved immediately afterward. Receipt polling lasts up to 900
-seconds (`--receipt-timeout-seconds` overrides this). An unresolved transaction
-retains its records and blocks further sends; reconcile or replace that exact
-nonce before restarting a run. The helper never automatically resubmits it.
-At roughly 1 gwei, budget around 0.06 ETH for the acceptance account and
-0.02 ETH for the separate challenge sender for the complete challenge flow;
-actual requirements vary with gas prices. The challenge daemon independently
-uses its live estimate plus 20%; the signer's default 12-million gas ceiling
-accommodates estimates up to 10 million. A 6.9-million-gas estimate therefore
-needs about 8.3 million gas of upfront capacity, not merely the expected final
-charge. The script reports bounded, sanitized `cast` error details on failure.
-
-The helper verifies the manifest/on-chain signing keys, cap and token, public
-proof files, private dashboard blocking, and indexer/server/contract root
-agreement before funding. `ETH_RPC_URL` can override the manifest's read RPC
-for chain calls. Keep the full source checkout and matching setup available;
-the native client's proof loader uses `protocol/setup/v2` relative to it. All
-wallets, generated proofs, logs, receipts and `summary.json` are preserved in
-the new mode-0700 run directory. A failure stops local client processes but
-does not delete wallet recovery state or initiate additional transactions.
+Run the local SDK, Rust, Solidity, launcher and signer tests before rollout.
+The historical ERC20 acceptance scripts were removed with the token client.
+Use a separately authorized native ETH lifecycle check for the intended network;
+read-only health/quote checks alone do not establish paid inference, withdrawal
+or live escape-challenge success. Preserve server data, checkpoints and signer
+funding throughout any deployment change.

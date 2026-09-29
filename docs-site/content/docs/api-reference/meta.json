@@ -1,4 +1,9 @@
 {
   "title": "API Reference",
-  "pages": ["index", "clientd", "serverd", "indexer", "vault"]
+  "pages": [
+    "index",
+    "serverd",
+    "indexer",
+    "vault"
+  ]
 }

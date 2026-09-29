@@ -59,17 +59,8 @@ default (`./`) since you're already inside `docs-site/`.
 
 ### Environment
 
-The documentation pages need no environment variables. The password-protected
-Sepolia faucet at `/faucet` and `/api/faucet` requires:
-
-- `ZKAPI_FAUCET_PASSWORD`: the shared password accepted by the server;
-- `ZKAPI_FAUCET_PRIVATE_KEY`: a dedicated Sepolia-only wallet key used to pay
-  gas for the fixed five-ZKAPI mint;
-- `ZKAPI_SEPOLIA_RPC_URL`: optional Sepolia JSON-RPC URL.
-
-Copy `.env.example` to `.env.local` for local development. Configure the first
-two values as encrypted secrets in Vercel. Never expose either value through a
-`NEXT_PUBLIC_` variable.
+The documentation site needs no environment variables or signing credentials.
+The retired token faucet and its API route have been removed.
 
 ### Custom domain
 
@@ -84,7 +75,5 @@ the CNAME record your registrar shows.
 | `/docs` | Docs index |
 | `/docs/[…slug]` | Individual pages |
 | `/api/search` | Orama search endpoint |
-| `/faucet` | Password-protected Sepolia ZKAPI faucet |
-| `/api/faucet` | Server-side fixed-amount mint endpoint |
 | `/og/docs/[…slug]/image.png` | Per-page OG image |
 | `/llms.txt`, `/llms-full.txt` | LLM-friendly content dumps |

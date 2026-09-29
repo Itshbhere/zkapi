@@ -11,7 +11,9 @@ function manifest() {
         deployment_id: 'note-bound-test',
         chain_id: 1,
         contract_address: '0x' + '11'.repeat(20),
-        billing_token_address: '0x' + '22'.repeat(20),
+        billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000',
+        native_price_feed_address: '0x' + '22'.repeat(20), native_price_feed_decimals: 8,
+        native_price_max_age_seconds: 3600, rpc_url: 'https://rpc.example',
         protocol_server_url: 'https://server.example',
         indexer_url: 'https://indexer.example',
         request_charge_cap: 1000,
@@ -93,4 +95,25 @@ test('historical packaged vault pins cannot be relabeled as a repaired deploymen
     const runtime = new BrowserWalletRuntime();
     runtime.browserConfig = { deployment_status: 'migration_required' };
     assert.throws(() => runtime.validateManifestTrust({}), /newly deployed note-bound vault/);
+});
+
+test('token deployments are rejected before deployment selection, worker creation or wallet writes', async t => {
+    const oldLocation = globalThis.location;
+    const oldStorage = globalThis.localStorage;
+    t.after(() => { globalThis.location = oldLocation; globalThis.localStorage = oldStorage; });
+    globalThis.location = { href: 'https://host.example/', search: '' };
+    globalThis.localStorage = {
+        getItem: () => null,
+        setItem: () => assert.fail('unsupported deployments must not change saved selection'),
+        removeItem: () => assert.fail('no stored selection to remove')
+    };
+    for (const asset of ['erc20', undefined]) {
+        const runtime = new BrowserWalletRuntime();
+        runtime.loadBrowserConfig = async () => ({ deployment_manifest_url: 'https://server.example/config.json' });
+        runtime.directJson = async () => ({ ...manifest(), billing_asset: asset,
+            billing_token_address: `0x${'44'.repeat(20)}` });
+        await assert.rejects(runtime.prepareDeposit(1000), /only native ETH deployments are supported/);
+        assert.equal(runtime.worker, null);
+        assert.equal(runtime.initialized, false);
+    }
 });

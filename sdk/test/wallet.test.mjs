@@ -3,13 +3,6 @@ import assert from "node:assert/strict";
 
 import wallet from "../wallet.js";
 
-test("credit amounts round-trip at six decimals", () => {
-  assert.equal(wallet.parseTokenAmount("0.10"), 100_000n);
-  assert.equal(wallet.parseTokenAmount("2.000001"), 2_000_001n);
-  assert.equal(wallet.formatTokenAmount(2_000_001n), "2.000001");
-  assert.throws(() => wallet.parseTokenAmount("0.0000001"));
-});
-
 test("escape-period labels follow the deployed vault duration", () => {
   assert.equal(wallet.ABI.currentRoot, "fdab463d");
   assert.equal(wallet.ABI.challengePeriod, "f3f480d9");

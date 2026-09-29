@@ -1,44 +1,27 @@
 ---
 title: API Reference
-description: Every API surface touched in a zkAPI deployment
+description: Browser SDK, v2 server, indexer, and native ETH vault
 ---
 
-zkAPI has four API surfaces:
+The browser SDK builds proofs and owns wallet recovery. Its package exports and
+integration contract are documented in `sdk/README.md` in the repository.
 
 <Cards>
-  <Card
-    title="clientd"
-    description="HTTP server on localhost:11434. Users call it as if it were the upstream API."
-    href="/docs/api-reference/clientd"
-  />
-  <Card
-    title="serverd"
-    description="HTTP server on :3000. Verifies proofs, forwards to upstream, signs next state."
-    href="/docs/api-reference/serverd"
-  />
-  <Card
-    title="indexer"
-    description="HTTP server on :3001. Mirrors the on-chain Merkle tree."
-    href="/docs/api-reference/indexer"
-  />
-  <Card
-    title="ZkApiVault"
-    description="Ethereum settlement contract: deposits, mutual-close, escape-hatch."
-    href="/docs/api-reference/vault"
-  />
+  <Card title="serverd" description="v2 requests, OpenRouter leases, recovery, and withdrawal clearance." href="/docs/api-reference/serverd" />
+  <Card title="indexer" description="Current roots, note snapshots, and depth-32 Merkle paths." href="/docs/api-reference/indexer" />
+  <Card title="ZkApiVault" description="Native ETH deposits, mutual close, escapes, and challenges." href="/docs/api-reference/vault" />
 </Cards>
 
-## Data flow
-
-```
-User app  ──►  clientd  ──►  serverd  ──►  upstream API
-                 │              │
-                 ▼              ▼
-               indexer      nullifier store (SQLite)
-                 │
-                 ▼
-          ZkApiVault (chain)
+```text
+Browser SDK -> WASM prover -> server -> usage settlement and signed next state
+     |                         |
+     v                         v
+  indexer                 SQLite transcripts
+     |
+     v
+Native ETH vault <-------- challenge service
 ```
 
-Full JSON shapes and error codes for all endpoints live in `docs/openapi.yaml`
-and `docs/api-spec.md` in the repository.
+`protocol/rust/crates/zkapi-types/src/wire.rs` defines the protocol's JSON
+messages. Runtime handlers in `crates/zkapi-serverd/src/routes.rs` and
+`crates/zkapi-indexerd/src/http.rs` define the supported routes.

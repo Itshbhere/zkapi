@@ -39,26 +39,6 @@ test('transport omits account credentials for both direct and opt-in host proxy 
     }
 });
 
-test('optional daemon requests retain their explicit session header without host account cookies', async () => {
-    const { ZkapiClient, SESSION_HEADER } = await import('../index.js');
-    const originalFetch = globalThis.fetch;
-    const calls = [];
-    globalThis.fetch = async (...args) => { calls.push(args); return new Response('{"ok":true}'); };
-    try {
-        const client = new ZkapiClient();
-        const signal = new AbortController().signal;
-        assert.deepEqual(await client.apiJson('/zkapi/v1/openrouter/leases', {
-            method: 'POST', body: '{"spending_limit_usd":2}', signal,
-            headers: { [SESSION_HEADER]: 'same-chat' }, credentials: 'include'
-        }), { ok: true });
-        assert.equal(calls[0][1].credentials, 'omit');
-        assert.equal(calls[0][1].headers[SESSION_HEADER], 'same-chat');
-        assert.equal(calls[0][1].headers['content-type'], 'application/json');
-        assert.equal(calls[0][1].signal, signal);
-        assert.equal(calls[0][1].body, '{"spending_limit_usd":2}');
-    } finally { globalThis.fetch = originalFetch; }
-});
-
 test('host configuration resolves explicit paths and retains trusted same-origin proxy routing', async () => {
     const originalLocation = globalThis.location;
     const originalFetch = globalThis.fetch;
@@ -121,7 +101,9 @@ test('packaged proof assets and host-built worker are independent of source subm
 });
 
 test('SDK rejects unsupported options and cannot change its trust/transport configuration after initialization begins', () => {
-    assert.throws(() => configureBrowserSdk({ mode: 'invalid' }), /mode/);
+    for (const mode of ['invalid', 'auto', 'daemon']) {
+        assert.throws(() => configureBrowserSdk({ mode }), /Only browser mode is supported/);
+    }
     assert.throws(() => configureBrowserSdk({ transport: {} }), /transport/);
     assert.throws(() => configureBrowserSdk({ configUrl: 'https://user:secret@example.com/config' }), /credentials/);
     assert.throws(() => configureBrowserSdk({ ignoredOption: true }), /Unknown/);

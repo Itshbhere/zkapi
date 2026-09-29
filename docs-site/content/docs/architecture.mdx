@@ -1,131 +1,55 @@
 ---
 title: Architecture
-description: Daemons, contracts, and crypto module layout
+description: Browser wallet, proof libraries, runtime services, and native ETH vault
 ---
 
-zkAPI ships two daemons that wire the simplified-nullifier protocol into a
-drop-in OpenAI-compatible proxy. All crypto primitives live in the
-`protocol/` directory, tracked directly in this repository. The
-operational layer is **orchestration, not crypto**.
+The protocol code is tracked directly under `protocol/`. The root workspace
+owns runtime services; the browser SDK owns user wallet state and proving.
 
-## Repository layout
-
-```
-protocol/
-  cairo/        - ZK proof programs (request + withdrawal)
-  contracts/    - Solidity settlement contract (ZkApiVault)
-  rust/         - Off-chain protocol Rust implementation
-    crates/
-      zkapi-types   - Shared types, serialization, domain constants
-      zkapi-core    - Poseidon hash, Merkle tree, nullifier, leaf helpers
-      zkapi-crypto  - Pedersen commitment, XMSS/WOTS+ signatures
-      zkapi-proof   - Proof generation/verification orchestration
-      zkapi-client  - Client wallet, note lifecycle, recovery
-crates/         - Application Rust implementation
-  zkapi-serverd     - Server: proof verification, nullifier store, signing
-  zkapi-indexerd    - Merkle tree mirror from on-chain events
-  zkapi-cli         - Command-line interface
+```text
+sdk/                       Browser wallet, worker, transport, and public assets
+protocol/rust/crates/
+  zkapi-types              Canonical fields and v2 wire statements
+  zkapi-core               BN254 Poseidon and Merkle/note helpers
+  zkapi-proof              Groth16 circuits, commitments, and Schnorr signing
+  zkapi-browser            WASM wallet core
+  zkapi-client             Native wallet library and request journal
+protocol/contracts/        Native ETH vault and Groth16 verifier
+protocol/setup/v2/         Matching development setup keys
+crates/
+  zkapi-serverd            Proof verification, leases, transcripts, challenger
+  zkapi-indexerd           Contract-event indexer and Merkle-path API
+  zkapi-cli                Operator commands
 ```
 
-## `clientd` launch
+## Request path
 
 ```mermaid
-flowchart TD
-  A[zkapi-clientd] --> B[AuthService::new]
-  B --> C[lock state_dir; load note_state + journal]
-  C --> D[construct zkapi-client Wallet]
-  D --> E[init HTTP clients to serverd + indexer]
-  E --> F[build_router]
-  F --> G[axum::serve 127.0.0.1:11434]
+flowchart LR
+  B[Browser SDK] --> I[Indexer]
+  B --> P[WASM prover]
+  P --> B
+  B --> S[Billing server]
+  S --> N[Durable nullifier store]
+  S --> K[Short-lived OpenRouter key]
+  K --> B
+  B --> O[OpenRouter inference]
+  S --> U[Usage settlement and next-state signature]
+  U --> B
 ```
 
-Routes registered: LLM-compat (`/v1/chat/completions`, `/v1/responses`,
-`/api/chat`), core (`POST /request`), wallet (`/status`, `/wallet/recover`),
-deposit (`/deposit/{prepare,confirm}`), funding UI (`/funding`,
-`/funding/api/*`).
+The browser retains the note secret, balance opening, anchor, and state
+signature. Proofs establish note membership and solvency without revealing
+those values to the server. A durable reservation prevents competing spends;
+recovery returns the finalized transition after an interrupted request.
 
-## `serverd` launch
+## Chain path
 
-```mermaid
-flowchart TD
-  A[zkapi-cli server] --> B[load ServerConfig]
-  B --> C[open SQLite NullifierStore]
-  C --> D[init ServerSigner: state + clear XMSS, h=20]
-  D --> E[build ApiProvider: Echo or HttpProxy]
-  E --> F[fetch initial Merkle root from indexer]
-  F --> G[spawn root poller]
-  G --> H[create_router]
-  H --> I[axum::serve :3000]
-```
+A deposit attaches native ETH to the vault's payable `deposit` call. The
+contract inserts the full note leaf and emits an event. The indexer mirrors
+that event and serves a depth-32 path for later proofs.
 
-Routes registered: `/health`, `/v1/attestation`, `POST /v1/requests`,
-`POST /v1/withdraw/clearance`, `GET /v1/requests/{id}`, `GET /v1/nullifiers/{x}`.
-
-## Modularity
-
-The auth craft on `clientd` and the auth check on `serverd` are each a single
-trait. Swapping schemes is a trait swap, nothing else touches.
-
-| Mode | clientd auth craft | serverd auth check |
-|---|---|---|
-| ZK (default) | build `x`, `E(B)_anon`, `π_req` | verify proof, spend nullifier, sign next state |
-| User-supplied API key | inject `Authorization: Bearer …` | passthrough; `serverd` is a plain proxy |
-| Future (RLN / ARC) | alternate credential scheme | alternate verifier |
-
-The upstream-provider side of `serverd` is a separate `ApiProvider` trait with
-two working impls — `EchoProvider` for tests, `HttpProxyProvider` for anything
-speaking HTTP (Ollama, OpenAI, web search, Ethereum RPC). None of it touches
-the crypto path.
-
-## Deposit flow
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as User
-  participant C as clientd
-  participant I as indexer
-  participant V as ZkApiVault
-  U->>C: POST /deposit/prepare { amount: D }
-  C->>I: GET /v1/tree/next-note-id + /tree/notes/{id}/zero-path
-  I-->>C: note_id, siblings
-  C-->>U: { s, C_reg, note_id, siblings, vault calldata }
-  U->>V: vault.deposit(C_reg, D, siblings)
-  V-->>I: emit NoteDeposited(note_id, C_reg, D, expiry_ts, newRoot)
-  U->>C: POST /deposit/confirm { s, note_id, D, expiry_ts }
-  C-->>U: ok
-```
-
-## Authenticated request flow
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as User app
-  participant C as clientd
-  participant I as indexer
-  participant S as serverd
-  participant X as Upstream API
-  U->>C: POST /v1/chat/completions
-  C->>I: GET /tree/root + /tree/notes/{id}/path
-  I-->>C: active_root, siblings
-  C->>S: POST /v1/requests { public_inputs, proof, payload }
-  S->>X: forward payload with server-held API key
-  X-->>S: response, charge Δ
-  S-->>C: { response, E(B_new), τ_new, σ_new, Δ, blind_delta }
-  C-->>U: translated response
-```
-
-## Mutual-close withdrawal
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant C as clientd
-  participant S as serverd
-  participant V as ZkApiVault
-  C->>S: POST /v1/withdraw/clearance { x_w }
-  S-->>C: { σ_clear, epoch, root }
-  C->>V: vault.mutualClose(B_final, Dest, x_w, π_wd, σ_clear)
-  V-->>C: settled
-```
+A mutual close proves the final balance and server clearance. An escape
+withdrawal removes the active leaf immediately and starts a challenge period.
+`zkapi-challenged` submits an archived request proof if its nullifier matches
+a stale withdrawal. Uncontested escapes settle after their deadline.

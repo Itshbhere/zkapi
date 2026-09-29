@@ -1,5 +1,9 @@
 # Sepolia note-bound deployment (2026-09-22)
 
+> Historical repair/validation record. The subsequent [native-only cleanup](../native-only-cleanup.md)
+> removes legacy paths; the revision and deployment evidence below remains historical.
+
+
 This isolated test deployment uses circuit `zkapi-v2-note-bound-v1`, protocol v2,
 with a fresh demo billing token and immutable signing keys. The Groth16 setup is
 for development and the freely mintable token has no value.

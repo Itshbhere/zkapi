@@ -1,56 +1,53 @@
 ---
 title: serverd
-description: Authenticated-request channel on :3000
+description: v2 proof authorization, native billing, leases, and state recovery
 ---
 
-`clientd` calls `serverd` to submit authenticated requests, obtain withdrawal
-clearance signatures, and recover transcripts.
+The server accepts Groth16-authorized requests, reserves nullifiers durably,
+and returns Schnorr-signed state transitions after usage settlement.
 
-## Submit authenticated request
+## Requests and clearance
 
-| Field | Value |
-|---|---|
-| Method + path | `POST /v1/requests` |
-| Request | `ApiRequest { client_request_id: uuid, payload: string, payload_hash: Felt252, public_inputs: RequestPublicInputs, proof: { backend: "stwo_cairo", public_output_hash: Felt252, proof: base64 } }` |
-| Response (200) | `RequestResponse { status, client_request_id, request_nullifier, response_code, response_payload, response_hash, charge_applied, next_commitment: {x,y}, next_anchor, blind_delta_srv, next_state_sig: XmssSignature, policy_reason_code?, policy_evidence_hash? }` |
-| Errors | `400 INVALID_PROOF`, `409 STALE_ROOT {latest_root}`, `409 REPLAY`, `410 NOTE_EXPIRED`, `500 CAPACITY_EXHAUSTED` |
+| Method and path | Interface |
+| --- | --- |
+| `POST /v2/requests` | `ApiRequestV2` to `RequestResponseV2` |
+| `POST /v2/withdraw/clearance` | Withdrawal nullifier to `ClearanceResponseV2` |
+| `GET /v2/requests/{client_request_id}` | Recover a prepared/finalized request |
+| `GET /v2/nullifiers/{nullifier}` | Recover state by nullifier |
 
-Production requests carry opaque Stwo proof bytes plus their canonical public-
-output hash. Private witness envelopes are available only in builds compiled
-with the explicit `dev-witness-envelope` feature. `serverd` recomputes request
-and response payload hashes from the exact bytes at its boundary.
+`ApiRequestV2` contains `client_request_id`, `payload`, `payload_hash`,
+`public_inputs`, and `proof`. A proof has backend `groth16_bn254` and
+base64-encoded Arkworks compressed proof bytes. The server verifies the supplied
+public inputs directly and recomputes the canonical payload digest.
 
-## Request mutual-close clearance
+A finalized response includes the exact response payload and hash, applied
+charge, next commitment, next anchor, server blinding delta, and
+`next_state_signature` with `r_x`, `r_y`, and `s` fields. A clearance response
+contains the withdrawal nullifier and a Schnorr `signature`. Full shapes live
+in `protocol/rust/crates/zkapi-types/src/wire.rs`.
 
-| Field | Value |
-|---|---|
-| Method + path | `POST /v1/withdraw/clearance` |
-| Request | `ClearanceRequest { withdrawal_nullifier: Felt252 }` |
-| Response (200) | `ClearanceResponse { clear_sig: XmssSignature, clear_sig_epoch: u32, clear_sig_root: Felt252 }` |
-| Errors | `409 NULLIFIER_USED` |
+## Native billing and OpenRouter leases
 
-## Recover a transcript
+| Method and path | Purpose |
+| --- | --- |
+| `GET /v2/billing/quote` | Native ETH billing quote |
+| `POST /v2/openrouter/leases` | Open a proof-authorized short-lived runtime-key lease |
+| `GET /v2/openrouter/leases/{client_request_id}` | Read non-secret lease status |
+| `POST /v2/openrouter/leases/{client_request_id}` | Retire a rejected runtime-key lease |
+| `POST /v2/openrouter/leases/{client_request_id}/expire` | Expire a native lease |
 
-| Field | Value |
-|---|---|
-| Method + path | `GET /v1/requests/{client_request_id}` |
-| Path param | `client_request_id: uuid` |
-| Response | `RecoveryResponse { nullifier_status: "Reserved" \| "Finalized" \| "ClearanceReserved" \| "NotFound", request_response?: RequestResponse }` |
+The live issuance response carries the runtime key once. Recovery and lease
+status responses do not return its plaintext. Prompt and response traffic for
+direct leases goes between the browser and OpenRouter.
 
-## Health and attestation
+## Operations
 
-| Method + path | Purpose |
-|---|---|
-| `GET /health` | Liveness |
-| `GET /v1/attestation` | Returns attestation report (shape is correct; platform-signed report for Nitro is `[open]`) |
-| `GET /v1/nullifiers/{x}` | Check nullifier status |
+`GET /health` reports process health and deployment configuration.
+`GET /v1/attestation` publishes deployment and signing-key metadata.
+The read-only dashboard uses `/v1/dashboard/summary`, `/v1/dashboard/recent`,
+and `/v1/dashboard/events`.
 
-## Upstream provider trait
-
-`serverd` dispatches requests through an `ApiProvider` trait:
-
-- `EchoProvider` — used in tests, echoes back a synthetic response.
-- `HttpProxyProvider` — forwards verbatim to any HTTP upstream using the
-  operator's API key. Works for OpenAI (`POST
-  https://api.openai.com/v1/chat/completions`), Ollama (`POST
-  http://localhost:11434/api/chat`), web search, Ethereum RPC.
+Protocol errors have `error_code`, `error_message`, and `retriable`, plus
+optional latest-root, server-time, and retry-delay data. Throttled responses
+also carry `Retry-After` when available. A deployment's reverse proxy defines
+which private protocol routes the browser may access.

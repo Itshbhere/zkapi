@@ -1,7 +1,7 @@
 # Protocol source provenance
 
 `protocol/` is tracked directly by this repository. A normal clone includes the
-Rust and Cairo workspaces, Solidity contracts, selected proof setup, and Solidity
+Rust workspace, Solidity contracts, selected proof setup, and Solidity
 dependencies; no submodule initialization or separate protocol checkout is needed.
 Make protocol changes here and commit them with the application changes that use
 them. The Rust workspace under `rust/` remains separate from the root workspace.
@@ -26,3 +26,12 @@ direct dependency versions.
 
 The files in `setup/v2/` are unchanged from the pinned protocol revision. In
 particular, this import does not regenerate the proving keys or verifiers.
+
+## Native-only source cleanup
+
+The later native-only cleanup removes the retired Cairo/XMSS implementation and
+token payment code. The import revisions above describe provenance, not the
+current set of files. OpenZeppelin is trimmed to Ownable, Context,
+ReentrancyGuard and StorageSlot, with its license; forge-std retains its source
+helpers and licenses. Unused upstream tests, tooling and nested libraries are
+removed. Required library source bytes and setup artifacts are unchanged.

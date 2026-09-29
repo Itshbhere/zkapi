@@ -1,63 +1,31 @@
 ---
 title: ZkApiVault
-description: Ethereum settlement contract
+description: Native ETH deposits, withdrawals, and stale-state challenges
 ---
 
-The user's wallet calls `ZkApiVault` directly on chain for deposits, mutual
-close, and escape-hatch withdrawals.
+`protocol/contracts/src/ZkApiVault.sol` implements protocol version 2 and pins
+the Groth16 proof adapter and separate server state/clearance signing keys.
+The vault accounts in whole gwei with maximum amount `2^53 - 1`.
 
-## Deposit
+| Function | Behavior |
+| --- | --- |
+| `deposit(commitment, amount, siblings)` | Payable; requires exact `amount * 1 gwei`, inserts the full note leaf |
+| `mutualClose(inputs, proof, siblings)` | Verifies withdrawal and clearance, removes the leaf, settles ETH |
+| `initiateEscapeWithdrawal(inputs, proof, siblings)` | Verifies withdrawal without clearance, removes the leaf, starts the challenge period |
+| `challengeEscapeWithdrawal(noteId, inputs, proof, siblings)` | Verifies an archived request with the matching nullifier and restores the leaf |
+| `finalizeEscapeWithdrawal(noteId)` | Settles an uncontested escape after its deadline |
+| `claimExpired(noteId, siblings)` | Removes an expired active note and pays the treasury |
 
-| Field | Value |
-|---|---|
-| Method | `deposit(bytes32 commitment, uint128 amount, uint256[32] siblings)` |
-| Caller | User's wallet (first calls `token.approve(vault, amount)`) |
-| Effect | Verifies siblings + empty leaf against current root; updates root with new leaf; escrows `amount` of token; emits `NoteDeposited(noteId, commitment, amount, expiryTs, newRoot)` |
+Only deposits carry transaction value. Withdrawal statements bind the
+network, vault, keys, root, note ID, final balance, destination, nullifier, and
+clearance mode. The vault enforces current note state and rejects reused
+withdrawal nullifiers.
 
-## Mutual close
+A close pays the final balance to the chosen destination and the deposit minus
+that balance to the treasury. The owner can update the treasury and pause or
+unpause new deposits and normal close initiation. Challenge and finalization
+paths remain available according to their contract conditions.
 
-| Field | Value |
-|---|---|
-| Method | `mutualClose(WithdrawalPublicInputs inputs, bytes proofEnvelope)` |
-| Caller | User's wallet |
-| Effect | Verifies proof via `IZkApiProofAdapter`; checks `inputs.clear_sig_epoch / root` match registered XMSS root; transfers `final_balance → destination`, `deposit − final_balance → treasury`; marks note `Closed`; emits `MutualClose` |
-
-## Initiate escape-hatch withdrawal
-
-| Field | Value |
-|---|---|
-| Method | `initiateEscapeWithdrawal(WithdrawalPublicInputs inputs, bytes proofEnvelope)` |
-| Caller | User's wallet |
-| Effect | Verifies proof; zeroes leaf immediately; stores `challengeDeadline = now + 24h`; emits `EscapeWithdrawalInitiated` |
-
-## Challenge a stale escape withdrawal
-
-| Field | Value |
-|---|---|
-| Method | `challengeEscapeWithdrawal(uint32 noteId, RequestPublicInputs inputs, bytes proofEnvelope)` |
-| Caller | Server's wallet (during 24h window) |
-| Effect | Verifies the prior request proof; checks its nullifier matches the withdrawal nullifier; restores the leaf; cancels the pending withdrawal; emits `EscapeWithdrawalChallenged` |
-
-## Finalize escape withdrawal
-
-| Field | Value |
-|---|---|
-| Method | `finalizeEscapeWithdrawal(uint32 noteId, address destination, uint128 finalBalance)` |
-| Caller | Anyone (after deadline) |
-| Effect | Requires `now > challengeDeadline`; transfers `finalBalance → destination`, `deposit − finalBalance → treasury`; emits `EscapeWithdrawalFinalized` |
-
-## Claim expired note (treasury sweep)
-
-| Field | Value |
-|---|---|
-| Method | `claimExpired(uint32 noteId, uint256[32] siblings)` |
-| Caller | Anyone (funds go to treasury regardless) |
-| Effect | Requires `now > expiry_ts`; zeroes leaf; transfers full `deposit` to treasury; emits `ExpiredClaimed` |
-
-## Rotate server's XMSS roots
-
-| Field | Value |
-|---|---|
-| Method | `rotateServerRoots(uint32 epoch, bytes32 stateSigRoot, bytes32 clearSigRoot)` |
-| Caller | Contract owner (operator only) |
-| Effect | Publishes XMSS public roots for the new epoch, enabling withdrawal-proof verification against this epoch |
+`Types.sol` fixes the public input structs. `Groth16ProofAdapter.sol` contains
+the verifier for the matching `zkapi-v2-note-bound-v1` setup; changing setup
+artifacts requires a compatible verifier and a fresh deployment migration.

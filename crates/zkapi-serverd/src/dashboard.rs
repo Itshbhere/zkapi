@@ -1,33 +1,20 @@
 //! Live dashboard feed for the zkAPI server.
 //!
-//! The server's durable transcript store deliberately keeps only a hash of the
-//! request payload, not the prompt. The dashboard, by contrast, is meant to
-//! show an operator *exactly* what the server sees and signs for each request —
-//! decoded prompt, upstream response, token usage, the zk proof/nullifier/anchor
-//! fields, the charge, and the freshly-signed next state. This module holds a
-//! bounded in-memory feed of those rich events plus a broadcast channel that
-//! powers the Server-Sent-Events stream. It is observability only; nothing here
-//! affects protocol state.
+//! Events expose lease authorizations, proof bindings, aggregate upstream cost,
+//! whole-gwei settlement, and signed state transitions. Inference prompts stay
+//! between the client and its leased upstream key. This bounded feed is
+//! observability only and does not affect protocol state.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use serde_json::Value;
 use tokio::sync::broadcast;
 use zkapi_types::wire::CurvePointWire;
 use zkapi_types::Felt252;
 
-use crate::pricing;
-use crate::provider::UsageInfo;
-
-/// A decoded chat message for display.
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatMessageView {
-    pub role: String,
-    pub content: String,
-}
+use crate::settlement::UsageInfo;
 
 /// One fully-detailed request as the server saw it.
 #[derive(Debug, Clone, Serialize)]
@@ -36,7 +23,6 @@ pub struct DashboardEvent {
     pub ts_ms: u64,
     pub client_request_id: String,
     pub billing_label: String,
-    pub upstream_model: Option<String>,
 
     // --- zk authentication / payment proof ---
     pub request_nullifier: Felt252,
@@ -44,16 +30,11 @@ pub struct DashboardEvent {
     pub anon_commitment: CurvePointWire,
     pub solvency_bound: u128,
     pub solvency_bound_usd: f64,
-    pub statement_type: u8,
-    pub state_sig_epoch_in: u32,
     pub proof_backend: String,
     pub proof_public_output_hash: Felt252,
     pub proof_size_bytes: usize,
 
-    // --- request content (decoded; the server *does* see this in Mode 1) ---
-    pub request_path: String,
-    pub request_model: Option<String>,
-    pub request_messages: Vec<ChatMessageView>,
+    // --- prompt-free lease authorization ---
     pub request_raw: String,
 
     // --- upstream response ---
@@ -61,7 +42,7 @@ pub struct DashboardEvent {
     pub response_text: String,
     pub response_hash: Felt252,
 
-    // --- token usage + billing ---
+    // --- aggregate upstream cost and gwei billing ---
     pub usage: Option<UsageInfo>,
     pub charge_applied: u128,
     pub charge_usd: f64,
@@ -70,9 +51,6 @@ pub struct DashboardEvent {
     pub next_commitment: CurvePointWire,
     pub next_anchor: Felt252,
     pub blind_delta_srv: Felt252,
-    pub next_state_sig_epoch: u32,
-    pub next_state_sig_leaf_index: u64,
-    pub next_state_sig_root: Felt252,
 
     // --- timing ---
     pub upstream_ms: u64,
@@ -83,11 +61,8 @@ pub struct DashboardEvent {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct DashboardTotals {
     pub request_count: u64,
-    pub total_credits_charged: u128,
+    pub total_gwei_charged: u128,
     pub total_cost_usd: f64,
-    pub total_prompt_tokens: u64,
-    pub total_completion_tokens: u64,
-    pub total_tokens: u64,
 }
 
 /// Bounded in-memory feed + broadcast hub.
@@ -125,19 +100,10 @@ impl DashboardHub {
         {
             let mut totals = self.totals.lock().unwrap();
             totals.request_count += 1;
-            totals.total_credits_charged = totals
-                .total_credits_charged
+            totals.total_gwei_charged = totals
+                .total_gwei_charged
                 .saturating_add(event.charge_applied);
             totals.total_cost_usd += event.charge_usd;
-            if let Some(usage) = &event.usage {
-                totals.total_prompt_tokens = totals
-                    .total_prompt_tokens
-                    .saturating_add(usage.prompt_tokens);
-                totals.total_completion_tokens = totals
-                    .total_completion_tokens
-                    .saturating_add(usage.completion_tokens);
-                totals.total_tokens = totals.total_tokens.saturating_add(usage.total_tokens);
-            }
         }
         {
             let mut recent = self.recent.lock().unwrap();
@@ -161,71 +127,6 @@ impl DashboardHub {
     pub fn totals(&self) -> DashboardTotals {
         self.totals.lock().unwrap().clone()
     }
-}
-
-/// Decode the `{method,path,headers,body}` envelope (or a bare body) into the
-/// display fields: path, model, and chat messages.
-pub fn decode_request_view(payload: &str) -> (String, Option<String>, Vec<ChatMessageView>) {
-    let value: Value = match serde_json::from_str(payload) {
-        Ok(v) => v,
-        Err(_) => return ("/v1/chat/completions".to_string(), None, Vec::new()),
-    };
-    let (path, body) = if value.get("path").is_some() && value.get("body").is_some() {
-        (
-            value
-                .get("path")
-                .and_then(|p| p.as_str())
-                .unwrap_or("/v1/chat/completions")
-                .to_string(),
-            value.get("body").cloned().unwrap_or(Value::Null),
-        )
-    } else {
-        ("/v1/chat/completions".to_string(), value)
-    };
-
-    let model = body
-        .get("model")
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string());
-
-    let mut messages = Vec::new();
-    if let Some(arr) = body.get("messages").and_then(|m| m.as_array()) {
-        for msg in arr {
-            let role = msg
-                .get("role")
-                .and_then(|r| r.as_str())
-                .unwrap_or("")
-                .to_string();
-            let content = stringify_content(msg.get("content"));
-            messages.push(ChatMessageView { role, content });
-        }
-    }
-    (path, model, messages)
-}
-
-/// Flatten OpenAI message content (string, or array of parts) to text.
-fn stringify_content(content: Option<&Value>) -> String {
-    match content {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Array(parts)) => {
-            let mut out = String::new();
-            for part in parts {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                    out.push_str(text);
-                } else if let Some(kind) = part.get("type").and_then(|t| t.as_str()) {
-                    out.push_str(&format!("[{kind}]"));
-                }
-            }
-            out
-        }
-        Some(other) => other.to_string(),
-        None => String::new(),
-    }
-}
-
-/// USD value of a credit amount (for display).
-pub fn charge_usd(credits: u128) -> f64 {
-    pricing::credits_to_usd(credits)
 }
 
 /// Mask bearer-style API keys (`sk-...`) before they reach the dashboard feed
@@ -264,17 +165,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_request_view_extracts_messages() {
-        let payload = r#"{"path":"/v1/chat/completions","body":{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}}"#;
-        let (path, model, messages) = decode_request_view(payload);
-        assert_eq!(path, "/v1/chat/completions");
-        assert_eq!(model.unwrap(), "gpt-4o-mini");
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].content, "hello");
-    }
-
-    #[test]
     fn redact_masks_bearer_keys() {
         let s = r#"{"api_key":"sk-or-v1-3527c84aabcdef0123456789","request_id":"49802767d5a1"}"#;
         let red = redact_secrets(s);
@@ -289,15 +179,6 @@ mod tests {
     }
 
     #[test]
-    fn stringify_handles_multimodal_parts() {
-        let content = serde_json::json!([
-            {"type":"text","text":"describe"},
-            {"type":"image_url","image_url":{"url":"data:..."}}
-        ]);
-        assert_eq!(stringify_content(Some(&content)), "describe[image_url]");
-    }
-
-    #[test]
     fn hub_tracks_totals_and_ring_buffer() {
         let hub = DashboardHub::new(2);
         for i in 0..3 {
@@ -305,8 +186,8 @@ mod tests {
         }
         let totals = hub.totals();
         assert_eq!(totals.request_count, 3);
-        assert_eq!(totals.total_credits_charged, 6); // 1 + 2 + 3
-                                                     // Ring buffer capped at 2.
+        assert_eq!(totals.total_gwei_charged, 6); // 1 + 2 + 3
+                                                  // Ring buffer capped at 2.
         assert_eq!(hub.recent().len(), 2);
     }
 
@@ -315,8 +196,7 @@ mod tests {
             seq,
             ts_ms: 0,
             client_request_id: format!("req-{seq}"),
-            billing_label: "passthrough:openrouter".to_string(),
-            upstream_model: Some("gpt-4o-mini".to_string()),
+            billing_label: "direct:openrouter-ephemeral".to_string(),
             request_nullifier: Felt252::from_u64(seq),
             active_root: Felt252::ZERO,
             anon_commitment: CurvePointWire {
@@ -325,30 +205,22 @@ mod tests {
             },
             solvency_bound: 1_000_000,
             solvency_bound_usd: 1.0,
-            statement_type: 1,
-            state_sig_epoch_in: 0,
-            proof_backend: "dev_witness_envelope".to_string(),
+            proof_backend: "groth16_bn254".to_string(),
             proof_public_output_hash: Felt252::ZERO,
             proof_size_bytes: 100,
-            request_path: "/v1/chat/completions".to_string(),
-            request_model: Some("gpt-4o-mini".to_string()),
-            request_messages: Vec::new(),
             request_raw: "{}".to_string(),
             response_code: 200,
             response_text: "{}".to_string(),
             response_hash: Felt252::ZERO,
             usage: None,
             charge_applied: charge,
-            charge_usd: charge_usd(charge),
+            charge_usd: 0.000001 * charge as f64,
             next_commitment: CurvePointWire {
                 x: Felt252::ZERO,
                 y: Felt252::ZERO,
             },
             next_anchor: Felt252::ZERO,
             blind_delta_srv: Felt252::ZERO,
-            next_state_sig_epoch: 1,
-            next_state_sig_leaf_index: 0,
-            next_state_sig_root: Felt252::ZERO,
             upstream_ms: 0,
             total_ms: 0,
         }

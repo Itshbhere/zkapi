@@ -1,5 +1,9 @@
 # Note-bound circuit revision
 
+> Historical repair/validation record. The subsequent [native-only cleanup](native-only-cleanup.md)
+> removes legacy paths; the revision and deployment evidence below remains historical.
+
+
 The September 22 review demonstrated that a valid server signature on a balance
 could be transplanted between two active notes. The original commitment only
 bound balance and randomness. Membership, nullifier and signature verification

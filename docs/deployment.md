@@ -1,185 +1,52 @@
-# Deployment
+# Native ETH deployment
 
-Every new deployment now requires circuit `zkapi-v2-note-bound-v1`, revised
-setup/WASM/proof hashes, a fresh immutable verifier/vault, the historical-root
-challenge repair, and the compatible [challenge service](challenge-service.md).
-See [Note-bound migration](note-binding-review.md). Do not use the abandoned first
-native Sepolia vault or legacy unbound verifier. Existing legacy wallets require
-their corresponding legacy recovery tools; they cannot be silently migrated.
+The source supports native ETH vaults and the note-bound Groth16 circuit
+`zkapi-v2-note-bound-v1`. The current selected setup remains a single-party
+experimental setup; publishing code does not establish an independent audit or
+setup ceremony. See [setup provenance](../protocol/setup/v2/README.md).
 
-The [September 22 deployment record](deployments/sepolia-note-bound-20260922.md)
-and acceptance helpers describe the separate ERC-20 review stack. The packaged
-browser configuration retains the current native ETH deployment; importing the
-review fixes does not replace its vault, signing keys or note storage.
+For an existing deployment, use its exact circuit artifacts, contract and signing
+key pins, oracle feed, denomination, and persistent operator state. Do not
+regenerate keys or copy wallet journals between deployments.
 
-The commands below are ERC-20 examples. Native ETH adds a fresh native vault and
-matching SDK/server pins; see [Native ETH billing](native-eth-billing.md).
+## Build services
 
-This is the v2 deployment sequence. It deploys the real Groth16 adapter; there
-is no mock adapter or Stwo process in the public path.
-
-## 1. Build and choose server keys
-
-```bash
-cargo build --release --bin zkapi
-export ZKAPI_STATE_SEED='0x...'
-export ZKAPI_CLEAR_SEED='0x...'
-./target/release/zkapi signing-keys
+```sh
+cargo build --release --workspace
 ```
 
-Keep the seeds in a secret manager. Put only the returned public coordinates in
-the contract deployment and client manifest. Replacing either seed requires a
-fresh vault deployment because the keys are immutable security parameters.
+`zkapi serverd` requires `--native-billing-rpc-url` and
+`--native-price-feed-address` (or corresponding `ZKAPI_NATIVE_*` variables), plus
+an OA org/service credential or direct OpenRouter management credential.
+Supply chain ID, vault, gwei request cap, matching signing seeds, database path,
+indexer URL and the exact proof directory. Run `zkapi serverd --help` for flags.
+Native prices come from the pinned finalized oracle round; a generic RPC/chain
+or USD token configuration is not interchangeable with these pins.
 
-## 2. Deploy contracts
+## Fresh contracts
 
-The selected setup is `protocol/setup/v2`; its generated verifier is already in
-the contract tree. Poseidon is a linked Solidity library, so deploy it first.
-From `demo/contracts`:
+`demo/contracts/script/Deploy.s.sol` deploys the real Groth16 adapter and a
+native-only vault. It reads `PRIVATE_KEY`, `TREASURY`, `OUTPUT_PATH`, state and
+clearance public-key coordinates, optional `CHAIN_ID`, `REQUEST_CHARGE_CAP`
+and `CHALLENGE_PERIOD_SECONDS`. The deployment output is constructor metadata;
+prepare the public SDK manifest with circuit/key hashes and oracle/deployment
+pins separately. The vault no longer accepts a token constructor argument.
 
-```bash
-export PRIVATE_KEY='0x...'
-export TREASURY='0x...'
-export STATE_SIGNING_KEY_X='0x...'
-export STATE_SIGNING_KEY_Y='0x...'
-export CLEARANCE_SIGNING_KEY_X='0x...'
-export CLEARANCE_SIGNING_KEY_Y='0x...'
-export MINT_AMOUNT='1000000000'
-export RPC_URL='https://...'
-export CHAIN_ID='1'
-export OUTPUT_PATH="$PWD/../../.demo/deployment-v2.json"
+Use a fresh directory for any intentional development setup. Existing immutable
+contracts are not modified by this source cleanup. Keep challenger coverage and
+persistent server/indexer state for every funded deployment during a rollout.
 
-export POSEIDON_ADDRESS=$(forge create \
-  ../../protocol/contracts/src/libraries/Bn254Poseidon.sol:Bn254Poseidon \
-  --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --broadcast \
-  --json | jq -r .deployedTo)
+## Runtime
 
-forge script script/Deploy.s.sol:DeployScript \
-  --rpc-url "$RPC_URL" --broadcast --private-key "$PRIVATE_KEY" \
-  --libraries "zkapi-contracts/libraries/Bn254Poseidon.sol:Bn254Poseidon:$POSEIDON_ADDRESS"
-```
+The [Docker guide](../docker/aws/README.md) configures API, indexer, gateway,
+challenger and a restricted private signer. The challenger needs a funded
+exclusive account and must fit RPC/indexer/retry delays inside the challenge
+window; see [challenge operation](challenge-service.md).
 
-The script deploys the 6-decimal demo billing token, circuit-specific
-`Groth16ProofAdapter`, and immutable-key `ZkApiVault`, then writes their
-addresses and client parameters to `OUTPUT_PATH`. The demo token has a public
-`mint` and has no value.
+The host application packages the SDK assets for the selected network. Review
+its trusted config against finalized on-chain deployment state, the public
+manifest and the selected proof hashes before enabling funding.
 
-For Ethereum Mainnet, set `BILLING_TOKEN` to an existing 6-decimal production
-token and leave `MINT_AMOUNT=0`. The script refuses to create the freely
-mintable demo token on chain ID 1. For USDC, independently verify
-[Circle's published Ethereum address](https://developers.circle.com/stablecoins/usdc-contract-addresses)
-before deployment:
-
-```bash
-export BILLING_TOKEN='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
-export MINT_AMOUNT=0
-```
-
-The client manifest for a faucet-style test token must explicitly set
-`"demo_mint_enabled": true`. Omit it or set it to `false` for a real token;
-the one-command client will then approve and deposit existing tokens without
-attempting the test-only `mint(address,uint256)` call.
-
-## 3. Run indexer and server
-
-Start the indexer from the vault deployment block:
-
-```bash
-./target/release/zkapi indexer \
-  --listen 0.0.0.0:3001 \
-  --rpc-url "$RPC_URL" \
-  --contract-address "$VAULT" \
-  --from-block "$DEPLOY_BLOCK" \
-  --cursor-path /data/indexer.cursor
-```
-
-Start the protocol server with the exact setup and the secret seeds whose
-public keys are pinned in the vault:
-
-```bash
-export ZKAPI_OPENROUTER_INFERENCE_KEY='...'
-# Separate OpenRouter Management API key; required only for direct leases.
-export ZKAPI_OPENROUTER_MANAGEMENT_KEY='...'
-export ZKAPI_STATE_SEED='0x...'
-export ZKAPI_CLEAR_SEED='0x...'
-
-./target/release/zkapi \
-  --protocol-version 2 \
-  --chain-id "$CHAIN_ID" \
-  --contract-address "$VAULT" \
-  --request-charge-cap 1000000 \
-  --proof-setup-dir "$PWD/protocol/setup/v2" \
-  serverd --listen 127.0.0.1:3000 --provider metered \
-  --indexer-url http://127.0.0.1:3001 \
-  --openrouter-lease-ttl-seconds 300 \
-  --openrouter-settlement-grace-seconds 5 \
-  --db-path /data/zkapi-server.db
-```
-
-The inference and management keys are different credentials. OpenRouter
-management keys cannot perform completions; they create, inspect, and revoke
-the short-lived runtime keys used by direct mode. Omitting
-`ZKAPI_OPENROUTER_MANAGEMENT_KEY` disables only direct leases: the configured
-proxy provider continues to run. Both `/v2/requests` and
-`/v2/openrouter/leases` are served by the same process when it is present.
-
-Put TLS/reverse-proxy routing in front of the services. Route `/v2/*`,
-`/health`, `/v1/attestation`, and at most `/v1/dashboard/summary` to serverd;
-route `/v1/tree/*` to indexerd. Never expose `/v1/dashboard/recent` or
-`/v1/dashboard/events` through a public proxy: those operator-only routes hold
-decoded prompts and responses in memory. Keep them reachable only from a
-loopback-bound local daemon. Do not expose the OpenRouter key or signing seeds
-in the client manifest, image, shell history, or repository. The management
-key must have permission to create, list, inspect, and delete OpenRouter API
-keys.
-
-As a verifier-backed alternative, configure a dedicated credential on an OA
-org and start serverd with the org source instead of
-`ZKAPI_OPENROUTER_MANAGEMENT_KEY`:
-
-```bash
-export ZKAPI_OA_ORG_SHARED_SECRET='...'
-
-./target/release/zkapi \
-  --protocol-version 2 \
-  --chain-id "$CHAIN_ID" \
-  --contract-address "$VAULT" \
-  --request-charge-cap 1000000 \
-  --proof-setup-dir "$PWD/protocol/setup/v2" \
-  serverd --listen 127.0.0.1:3000 \
-  --oa-org-url https://org.example \
-  --openrouter-lease-ttl-seconds 300 \
-  --openrouter-settlement-grace-seconds 5 \
-  --db-path /data/zkapi-server.db
-```
-
-The OA org must expose `POST /api/zkapi/request_key` and
-`POST /api/zkapi/key_usage`, set the same dedicated `ZKAPI_SHARED_SECRET`,
-configure `VERIFIER_URL`, and cap credit/duration at least as tightly as the
-zkAPI deployment. The station must enforce provider expiry and retain signed
-final-usage receipts; zkAPI will keep a lease pending rather than charge its
-reserved cap when a receipt is unavailable. OA-org TTLs are whole minutes. The
-client trusts `https://verifier2.openanonymity.ai` by default; override
-`--oa-verifier-url` only when the independently audited verifier endpoint is
-different. The server reads the service credential only from
-`ZKAPI_OA_ORG_SHARED_SECRET`, not a command-line flag. Never reuse the org
-admin secret as the zkAPI service credential.
-
-Protected clients must also set `--require-oa-org-key-source`. The verifier URL
-and OpenRouter inference base are independently pinned client settings; the
-daemon rejects redirects and any lease that attempts to substitute either
-origin or downgrade to a direct key.
-
-## 4. Publish client parameters
-
-Publish the vault address, chain ID, request cap, the four public signing-key
-coordinates, public base URL, exact Git revision, and exact setup files. Client
-instructions are in the repository [README](../README.md).
-
-## Security qualification
-
-This setup was generated by one party and the implementation is unaudited. It
-is suitable for public testing, not a production-money deployment. Publishing
-the same code on Ethereum Mainnet does not change that qualification: a real
-launch requires a reviewed setup ceremony and audited circuit, Rust, and
-Solidity implementations.
+Historical deployment records in `docs/deployments/` describe their recorded
+revisions and observations. They are not instructions to restart retired token
+clients or assertions that a later source revision is already deployed.

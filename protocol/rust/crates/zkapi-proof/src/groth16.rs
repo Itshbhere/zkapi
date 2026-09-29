@@ -1,8 +1,7 @@
 //! Compact zkAPI v2 request proof over BN254.
 //!
-//! This module intentionally defines a new protocol statement rather than
-//! wrapping the Cairo/Stwo trace. The circuit uses Poseidon over the BN254
-//! scalar field, a Baby-JubJub Pedersen balance commitment, and a Poseidon-
+//! The circuit uses Poseidon over the BN254 scalar field, a note-bound
+//! Baby-JubJub Pedersen balance commitment, and a Poseidon-
 //! challenged Schnorr state signature. Exact balance, note identity, expiry,
 //! state anchor, and server signature stay private. The request context is
 //! bound through a public authorization tag while the state nullifier remains

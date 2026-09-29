@@ -12,7 +12,13 @@ export function isNativeEthFunding(funding) {
 }
 
 export function validateNativeFunding(funding) {
-    if (!isNativeEthFunding(funding) || funding.billing_unit !== 'gwei'
+    if (!isNativeEthFunding(funding)) {
+        throw new Error('Unsupported billing asset: only native ETH deployments are supported. Keep token wallets and their recovery data with their original deployment.');
+    }
+    if (funding.billing_token_address != null || funding.demo_billing_token_address != null || funding.demo_mint_enabled) {
+        throw new Error('Native ETH deployments cannot advertise a billing token or mint.');
+    }
+    if (funding.billing_unit !== 'gwei'
         || String(funding.native_asset_wei_per_unit) !== String(NATIVE_WEI_PER_UNIT)
         || !ADDRESS.test(funding.contract_address || '') || ZERO.test(funding.contract_address)
         || !ADDRESS.test(funding.native_price_feed_address || '') || ZERO.test(funding.native_price_feed_address)
@@ -81,7 +87,6 @@ export function nativeUsdMicros(amount, quote) {
 }
 
 export function nativeDepositValue(amount, funding) {
-    if (!isNativeEthFunding(funding)) return 0n;
     validateNativeFunding(funding);
     const units = BigInt(amount);
     if (units <= 0n || units > MAX_SAFE) throw new Error('The native ETH deposit amount is invalid.');

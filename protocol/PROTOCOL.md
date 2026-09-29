@@ -1,6 +1,10 @@
 # ZK API Usage Credits
 
-This note describes a ZK API usage credits protocol.
+This note describes the active zkAPI v2 usage-credit protocol. The implementation
+uses BN254 Groth16 proofs, BN254 Poseidon hashing, Baby-JubJub Schnorr signatures,
+and native ETH settlement in whole gwei. See [SPEC.md](SPEC.md) for exact public
+statements and [setup compatibility](setup/v2/README.md) for the current circuit
+revision and development setup assumptions.
 
 The goal is: a user deposits funds on-chain once, and then makes many anonymous off-chain API requests. The server must be protected against replay and non-payment, while honest users remain unlinkable.
 
@@ -42,7 +46,10 @@ This makes the protocol naturally sequential: one state authorizes one next requ
 - $C_{\max}$: maximum ordinary per-request charge.
 - $S_{\max}$: optional higher cap for policy-violation deductions.
 - $B$: current private available balance.
-- $E(B)$: homomorphic commitment to $B$.
+- $L = H_{\text{leaf}}(\text{noteId}, C, D, T_{\text{exp}})$: active membership leaf.
+- $E(B)$: shorthand for the note-bound homomorphic commitment
+  $E(B,r,L) = B G + r H + L J$ on Baby-JubJub. The private leaf term remains
+  fixed throughout every state transition and rerandomization.
 - $\tau$: current state anchor.
 - $\sigma_{\text{srv}}$: server signature on the current state $(E(B), \tau)$.
 - $x_w$: withdrawal nullifier.
@@ -71,7 +78,7 @@ $$
 
 into the smart contract.
 
-4. The contract inserts $C$ into the on-chain Merkle tree, records the deposit amount $D$, and sets an expiry time $T_{\text{exp}}$ for the note.
+4. The contract records the deposit amount $D$ and expiry $T_{\text{exp}}$, then inserts the full note leaf $L$ into the on-chain Merkle tree at the note ID.
 
 ## Request Generation
 
@@ -84,7 +91,7 @@ To make a request, the user sends:
 The proof $\pi_{\text{req}}$ proves:
 
 1. **Membership**  
-   $C = H(s, 0)$ is in the Merkle tree.
+   $L = H_{\text{leaf}}(\text{noteId}, H(s, 0), D, T_{\text{exp}})$ is in the active Merkle tree.
 
 2. **Secret knowledge**  
    The prover knows $s$.
@@ -129,6 +136,11 @@ If the optional policy-penalty extension below is enabled, this lower bound beco
 $$
 B \geq \max(C_{\max}, S_{\max})
 $$
+
+The public request statement includes an authorization tag binding the request
+nullifier to the exact client request ID and payload hash. It also includes a
+request time; the proof requires the private note expiry to be at least that
+time. The server validates the current time and deployment-bound public inputs.
 
 ## Server Verification
 
@@ -223,7 +235,7 @@ The user chooses a destination address $\text{Dest}$ and prepares:
 
 The proof shows:
 
-1. membership for $C = H(s, 0)$;
+1. membership for the full note leaf $L$ derived from $C = H(s, 0)$;
 2. knowledge of $s$;
 3. knowledge of the current state $(E(B_{\text{final}}), \tau_{\text{current}}, \sigma_{\text{current}})$;
 4. validity of $\sigma_{\text{current}}$ on $(E(B_{\text{final}}), \tau_{\text{current}})$;
@@ -241,7 +253,7 @@ $$
 x_w = H(s, \tau_{\text{current}})
 $$
 
-The user then has two close-out paths.
+The withdrawal tag also binds the nullifier to the destination, final balance, and clearance mode. The user then has two close-out paths.
 
 ### Mutual Close (Instant Path)
 
@@ -275,7 +287,7 @@ $$
 (B_{\text{final}}, \text{Dest}, x_w, \pi_{\text{wd}})
 $$
 
-The contract verifies $\pi_{\text{wd}}$ and starts a 24-hour challenge window.
+The contract verifies $\pi_{\text{wd}}$, removes the active note leaf immediately, and starts the configured challenge window (24 hours by default).
 
 If the withdrawal is not challenged during that window, the contract settles the note exactly as in the mutual-close path.
 
@@ -323,7 +335,7 @@ This means the server is paid for the user's entire lifetime of API usage in one
 To handle abandoned accounts, each note carries the expiry time $T_{\text{exp}}$. If the note is still open and no withdrawal is in progress when it expires, the server may call:
 
 $$
-\text{claimExpired}(C)
+\text{claimExpired}(\text{noteId}, \text{siblings})
 $$
 
 The contract then closes the note and transfers the full deposit $D$ to the server treasury $A_{\text{srv}}$.

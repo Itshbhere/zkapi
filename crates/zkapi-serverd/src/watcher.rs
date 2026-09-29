@@ -152,10 +152,7 @@ impl ChallengeWatcher {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{
-        config::ServerConfig, processor::RequestProcessor, provider::EchoProvider,
-        signer::ServerSigner,
-    };
+    use crate::{config::ServerConfig, processor::RequestProcessor, signer::ServerSigner};
     use base64::Engine;
     use zkapi_core::v2 as core;
     use zkapi_proof::compact::{balance_commitment, RequestProver, RequestWitnessData};
@@ -187,7 +184,12 @@ pub(crate) mod tests {
                 let leaf = core::note_leaf(0, &registration, 100, expiry);
                 let root = core::merkle_root(0, &leaf, &siblings);
                 let nullifier = core::nullifier(&secret, &Felt252::ONE);
-                let payload = "{\"message\":\"challenge regression\"}".to_string();
+                let test_config = ServerConfig {
+                    native_billing: Some(crate::test_support::native_config()),
+                    openrouter_leases: Some(crate::test_support::lease_config()),
+                    ..Default::default()
+                };
+                let payload = crate::test_support::lease_payload(&test_config, now);
                 let payload_hash = canonical_payload_hash(payload.as_bytes());
                 let request_context = canonical_request_context("challenge-v2", &payload_hash);
                 let blind = Felt252::from_u64(17);
@@ -239,15 +241,14 @@ pub(crate) mod tests {
                         contract_address: public.contract_address,
                         request_charge_cap: 1,
                         proof_setup_dir: setup_dir.to_string_lossy().into_owned(),
-                        ..Default::default()
+                        ..test_config
                     },
                     store.clone(),
                     signer,
-                    Arc::new(EchoProvider::new(1)),
                     root,
                 )
                 .unwrap();
-                processor.process_request(&request).await.unwrap();
+                processor.finalize_test_lease(&request, 1).unwrap();
                 (store, request)
             })
             .await

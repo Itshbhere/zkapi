@@ -189,39 +189,6 @@ test('mainnet browser config pins the finalized native ETH note-bound deployment
     assert.equal(config.openrouter_requests_per_key, undefined);
 });
 
-test('browser chat leases prove only published model budgets without changing the deployment minimum', async () => {
-    const compat = await import(pathToFileURL(path.join(__dirname, 'services/zkapiRequestCompat.mjs')));
-    const sepolia = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/sepolia.json'), 'utf8'));
-    const mainnet = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/mainnet.json'), 'utf8'));
-
-    assert.equal(sepolia.trusted_deployment.request_charge_cap, 50_000);
-    assert.equal(mainnet.trusted_deployment.request_charge_cap, 50_000);
-    assert.deepEqual(compat.CHAT_SPENDING_TIER_USD, [1, 2, 3, 4.5, 6]);
-    assert.equal(compat.selectLeaseSpendingLimitCredits(1_000_000, 50_000), 1_000_000);
-    assert.equal(compat.selectLeaseSpendingLimitCredits(2_000_000, 50_000), 1_000_000);
-    assert.equal(compat.selectLeaseSpendingLimitCredits(100_000_000, 50_000), 1_000_000);
-    for (const dollars of compat.CHAT_SPENDING_TIER_USD) {
-        assert.equal(compat.selectLeaseSpendingLimitCredits(100_000_000, 50_000, 1_000_000, dollars), dollars * 1_000_000);
-        assert.throws(() => compat.selectLeaseSpendingLimitCredits(dollars * 1_000_000 - 1, 50_000, 1_000_000, dollars), error => error.required_credits === dollars * 1_000_000);
-    }
-    assert.throws(() => compat.selectLeaseSpendingLimitCredits(100_000_000, 50_000, 1_000_000, 1.234567), /budget configuration/);
-});
-
-test('browser chat leases give actionable guidance below the selected model budget', async () => {
-    const compat = await import(pathToFileURL(path.join(__dirname, 'services/zkapiRequestCompat.mjs')));
-
-    assert.throws(
-        () => compat.selectLeaseSpendingLimitCredits(999_999, 50_000),
-        error => {
-            assert.equal(error.code, 'insufficient_chat_balance');
-            assert.equal(error.required_credits, 1_000_000);
-            assert.match(error.message, /lower-cap model/i);
-            assert.match(error.message, /at least \$1\.00/i);
-            return true;
-        }
-    );
-});
-
 test('browser direct requests derive output headroom from the proof-backed dollar budget', async () => {
     const compat = await import(pathToFileURL(path.join(__dirname, 'services/zkapiRequestCompat.mjs')));
     assert.deepEqual(
@@ -242,8 +209,8 @@ test('browser direct requests derive output headroom from the proof-backed dolla
         { model: 'openai/gpt-5.6-sol', max_tokens: 90_000 }
     );
     assert.deepEqual(
-        compat.ensureDirectCompletionLimit({ model: 'daemon/model' }),
-        { model: 'daemon/model' }
+        compat.ensureDirectCompletionLimit({ model: 'example/model' }),
+        { model: 'example/model' }
     );
     assert.equal(compat.ensureDirectCompletionLimit({ max_tokens: 32 }).max_tokens, 32);
     assert.equal(compat.ensureDirectCompletionLimit({ max_completion_tokens: 48 }).max_completion_tokens, 48);
@@ -307,7 +274,7 @@ test('browser withdrawal refreshes stale Merkle roots before retrying', () => {
     assert.match(runtime, /sameFelt\(existing\.public_inputs\?\.active_root, path\.active_root\)/);
     assert.match(rootSync, /indexer_root_lag/);
     assert.match(client, /`0x\$\{ABI\.currentRoot\}`/);
-    assert.match(client, /const attempts = this\.browserMode \? 3 : 1/);
+    assert.match(client, /const attempts = 3/);
     assert.match(client, /Refreshing the Merkle path and proof/);
 });
 
@@ -339,7 +306,7 @@ test('only a never-submitted prepared deposit can be replaced after cancellation
     assert.match(runtime, /A previous deposit may already be in MetaMask\. Recover it before changing the amount/);
 });
 
-test('browser deposits refresh an unsigned Merkle path after token approval', () => {
+test('browser deposits refresh an unsigned Merkle path before submission', () => {
     const runtime = fs.readFileSync(path.join(__dirname, 'services/browserWalletRuntime.js'), 'utf8');
     const client = fs.readFileSync(path.join(__dirname, 'services/zkapiClient.js'), 'utf8');
     const refresh = sourceMethodAt(runtime, 'async refreshPendingDeposit(');
@@ -347,6 +314,6 @@ test('browser deposits refresh an unsigned Merkle path after token approval', ()
     assert.match(refresh, /const refreshed = \{[\s\S]*\.\.\.pending,[\s\S]*next_note_id: path\.note_id,[\s\S]*active_root: path\.active_root,[\s\S]*zero_path: path\.siblings/);
     assert.doesNotMatch(refresh, /secret:/);
     assert.match(client, /await browserWalletRuntime\.refreshPendingDeposit\([\s\S]*Number\(amount\),[\s\S]*expectedActiveRoot/);
-    assert.match(client, /const attempts = this\.browserMode \? 3 : 1/);
+    assert.match(client, /const attempts = 3/);
     assert.match(client, /error\?\.code !== 'stale_root'/);
 });

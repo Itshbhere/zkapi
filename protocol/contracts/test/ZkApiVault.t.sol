@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {ZkApiVault} from "../src/ZkApiVault.sol";
 import {IZkApiProofAdapter} from "../src/interfaces/IZkApiProofAdapter.sol";
 import {Types} from "../src/libraries/Types.sol";
@@ -33,7 +32,6 @@ contract ZkApiVaultTest is Test {
     uint256 constant CLEAR_X = 13;
     uint256 constant CLEAR_Y = 14;
 
-    ERC20Mock token;
     MockProofAdapter adapter;
     ZkApiVault vault;
     address user = address(0x1234);
@@ -46,29 +44,16 @@ contract ZkApiVaultTest is Test {
             emptySiblings[level] = zero;
             zero = Bn254Poseidon.hash3(DOMAIN_NODE, zero, zero);
         }
-        token = new ERC20Mock();
         adapter = new MockProofAdapter();
         vault = new ZkApiVault(
-            address(token),
-            treasury,
-            30 days,
-            24 hours,
-            100_000,
-            address(adapter),
-            STATE_X,
-            STATE_Y,
-            CLEAR_X,
-            CLEAR_Y,
-            address(this)
+            treasury, 30 days, 24 hours, 100_000, address(adapter), STATE_X, STATE_Y, CLEAR_X, CLEAR_Y, address(this)
         );
-        token.mint(user, DEPOSIT);
-        vm.prank(user);
-        token.approve(address(vault), type(uint256).max);
+        vm.deal(user, uint256(DEPOSIT) * 1 gwei);
     }
 
     function test_depositAndMutualClose() public {
         vm.prank(user);
-        vault.deposit(bytes32(uint256(42)), DEPOSIT, emptySiblings);
+        vault.deposit{value: uint256(DEPOSIT) * 1 gwei}(bytes32(uint256(42)), DEPOSIT, emptySiblings);
         uint256 depositedRoot = vault.currentRoot();
 
         Types.WithdrawalPublicInputs memory inputs = Types.WithdrawalPublicInputs({
@@ -88,8 +73,8 @@ contract ZkApiVaultTest is Test {
             withdrawalTag: 100
         });
         vault.mutualClose(inputs, "", emptySiblings);
-        assertEq(token.balanceOf(user), 700_000);
-        assertEq(token.balanceOf(treasury), 300_000);
+        assertEq(user.balance, 700_000 gwei);
+        assertEq(treasury.balance, 300_000 gwei);
         assertTrue(vault.usedNullifiers(99));
         (,,, Types.NoteStatus status) = vault.notes(0);
         assertEq(uint256(status), uint256(Types.NoteStatus.Closed));
@@ -97,7 +82,7 @@ contract ZkApiVaultTest is Test {
 
     function test_escapeHatchWaitsThenFinalizesFromAnyAccount() public {
         vm.prank(user);
-        vault.deposit(bytes32(uint256(42)), DEPOSIT, emptySiblings);
+        vault.deposit{value: uint256(DEPOSIT) * 1 gwei}(bytes32(uint256(42)), DEPOSIT, emptySiblings);
         uint256 depositedRoot = vault.currentRoot();
 
         Types.WithdrawalPublicInputs memory inputs = Types.WithdrawalPublicInputs({
@@ -132,8 +117,8 @@ contract ZkApiVaultTest is Test {
         vm.prank(address(0xbeef));
         vault.finalizeEscapeWithdrawal(0);
 
-        assertEq(token.balanceOf(user), 800_000);
-        assertEq(token.balanceOf(treasury), 200_000);
+        assertEq(user.balance, 800_000 gwei);
+        assertEq(treasury.balance, 200_000 gwei);
         (,,, Types.NoteStatus finalStatus) = vault.notes(0);
         assertEq(uint256(finalStatus), uint256(Types.NoteStatus.Closed));
         (bool stillExists,,,,,) = vault.pendingWithdrawals(0);
@@ -159,7 +144,7 @@ contract ZkApiVaultTest is Test {
         _challengeAndAssertRestored(request, siblings, escapeRoot);
         (,,, Types.NoteStatus otherStatus) = vault.notes(1);
         assertEq(uint256(otherStatus), uint256(Types.NoteStatus.Active));
-        assertEq(token.balanceOf(address(vault)), 2 * DEPOSIT);
+        assertEq(address(vault).balance, 2 * uint256(DEPOSIT) * 1 gwei);
     }
 
     function test_challengesHistoricalRequestAfterUnrelatedClose() public {
@@ -176,7 +161,7 @@ contract ZkApiVaultTest is Test {
         _challengeAndAssertRestored(request, emptySiblings, escapeRoot);
         (,,, Types.NoteStatus otherStatus) = vault.notes(1);
         assertEq(uint256(otherStatus), uint256(Types.NoteStatus.Closed));
-        assertEq(token.balanceOf(address(vault)), DEPOSIT);
+        assertEq(address(vault).balance, uint256(DEPOSIT) * 1 gwei);
     }
 
     function test_historicalChallengeRestoresAgainstTreeChangedWhilePending() public {
@@ -187,7 +172,7 @@ contract ZkApiVaultTest is Test {
         _challengeAndAssertRestored(request, emptySiblings, request.activeRoot);
         (,,, Types.NoteStatus otherStatus) = vault.notes(1);
         assertEq(uint256(otherStatus), uint256(Types.NoteStatus.Closed));
-        assertEq(token.balanceOf(address(vault)), DEPOSIT);
+        assertEq(address(vault).balance, uint256(DEPOSIT) * 1 gwei);
     }
 
     function test_historicalChallengeRejectsDifferentNullifier() public {
@@ -251,7 +236,7 @@ contract ZkApiVaultTest is Test {
         vault.challengeEscapeWithdrawal(0, request, hex"cafe", siblings);
         _assertPending();
         vault.finalizeEscapeWithdrawal(0);
-        assertEq(token.balanceOf(user), 800_000);
+        assertEq(user.balance, 800_000 gwei);
     }
 
     function test_escapeStillRejectsStaleRootAfterUnrelatedDeposit() public {
@@ -265,14 +250,14 @@ contract ZkApiVaultTest is Test {
 
     function _depositFirstNote() private {
         vm.prank(user);
-        vault.deposit(bytes32(uint256(42)), DEPOSIT, emptySiblings);
+        vault.deposit{value: uint256(DEPOSIT) * 1 gwei}(bytes32(uint256(42)), DEPOSIT, emptySiblings);
     }
 
     function _depositSecondNote() private {
-        token.mint(user, DEPOSIT);
+        vm.deal(user, user.balance + uint256(DEPOSIT) * 1 gwei);
         uint256[32] memory siblings = _siblingsWithOtherLeaf(0);
         vm.prank(user);
-        vault.deposit(bytes32(uint256(43)), DEPOSIT, siblings);
+        vault.deposit{value: uint256(DEPOSIT) * 1 gwei}(bytes32(uint256(43)), DEPOSIT, siblings);
     }
 
     function _siblingsWithOtherLeaf(uint32 otherNoteId) private view returns (uint256[32] memory siblings) {

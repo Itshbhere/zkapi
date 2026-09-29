@@ -1,3 +1,4 @@
+import { nativeFunding } from './helpers/native-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { registerHooks } from 'node:module';
@@ -311,7 +312,7 @@ function withdrawalReceipt({
 function useStoreBackedSingletonRuntime() {
     browserWalletRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
     browserWalletRuntime.config = {
-        funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+        funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
     };
     return patch(browserWalletRuntime, {
         init: async () => browserWalletRuntime.snapshot(),
@@ -1435,7 +1436,7 @@ test('browser withdrawal recovery invariants', async t => {
             const reloadedRuntime = new BrowserWalletRuntime();
             reloadedRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
             reloadedRuntime.config = {
-                funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+                funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
             };
             await reloadedRuntime.reload();
             assert.equal(reloadedRuntime.withdrawals[0].finalizeTransactionHash, transactionHash);
@@ -2258,7 +2259,7 @@ test('browser withdrawal recovery invariants', async t => {
         });
         const restoreClient = patch(zkapiClient, {
             browserMode: true,
-            config: { funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS } },
+            config: { funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS }) },
             wallet: { has_note: false, note: null },
             withdrawal: null,
             withdrawals: [withdrawal],
@@ -2397,7 +2398,7 @@ test('browser withdrawal recovery invariants', async t => {
         });
         const restoreClient = patch(zkapiClient, {
             browserMode: true,
-            config: { funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS } },
+            config: { funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS }) },
             wallet: { has_note: false, note: null },
             withdrawal: null,
             withdrawals: [withdrawal],
@@ -2455,7 +2456,7 @@ test('browser withdrawal recovery invariants', async t => {
         await browserWalletRuntime.reload();
         const restoreClient = patch(zkapiClient, {
             browserMode: true,
-            config: { funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS } },
+            config: { funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS }) },
             wallet: { has_note: false, note: null },
             withdrawal: null,
             withdrawals: [withdrawal],
@@ -2495,7 +2496,7 @@ test('browser withdrawal recovery invariants', async t => {
         const lateRuntime = new BrowserWalletRuntime();
         lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
         lateRuntime.config = {
-            funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+            funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
         };
         await lateRuntime.reload();
         const transactionHash = `0x${'31'.repeat(32)}`;
@@ -2586,7 +2587,7 @@ test('browser withdrawal recovery invariants', async t => {
         const lateRuntime = new BrowserWalletRuntime();
         lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
         lateRuntime.config = {
-            funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+            funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
         };
         await lateRuntime.reload();
         await lateRuntime.rememberPreparedWithdrawalTransaction(transactionHash, {
@@ -2689,7 +2690,7 @@ test('browser withdrawal recovery invariants', async t => {
         const lateRuntime = new BrowserWalletRuntime();
         lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
         lateRuntime.config = {
-            funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+            funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
         };
         await lateRuntime.reload();
         await lateRuntime.rememberPreparedWithdrawalTransaction(transactionHash, {
@@ -2788,7 +2789,7 @@ test('browser withdrawal recovery invariants', async t => {
         const lateRuntime = new BrowserWalletRuntime();
         lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
         lateRuntime.config = {
-            funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+            funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
         };
         await lateRuntime.reload();
         await lateRuntime.rememberPreparedWithdrawalTransaction(transactionHash, {
@@ -2872,7 +2873,7 @@ test('browser withdrawal recovery invariants', async t => {
         const lateRuntime = new BrowserWalletRuntime();
         lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
         lateRuntime.config = {
-            funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+            funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
         };
         await lateRuntime.reload();
         await lateRuntime.rememberPreparedWithdrawalTransaction(staleHash, {
@@ -2957,7 +2958,7 @@ test('browser withdrawal recovery invariants', async t => {
             const lateRuntime = new BrowserWalletRuntime();
             lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
             lateRuntime.config = {
-                funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+                funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
             };
             await lateRuntime.reload();
             await lateRuntime.rememberPreparedWithdrawalTransaction(transactionHash, {
@@ -3059,7 +3060,7 @@ test('browser withdrawal recovery invariants', async t => {
         const lateRuntime = new BrowserWalletRuntime();
         lateRuntime.manifest = { deployment_id: DEPLOYMENT_ID };
         lateRuntime.config = {
-            funding: { chain_id: 11155111, contract_address: VAULT_ADDRESS }
+            funding: nativeFunding({ chain_id: 11155111, contract_address: VAULT_ADDRESS })
         };
         await lateRuntime.reload();
         await lateRuntime.rememberPreparedWithdrawalTransaction(

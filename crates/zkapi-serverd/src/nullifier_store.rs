@@ -5,9 +5,8 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zkapi_types::wire::ApiRequestV2;
@@ -31,8 +30,6 @@ pub struct TranscriptRecord {
     pub next_commitment_y: Option<Felt252>,
     pub next_anchor: Option<Felt252>,
     pub blind_delta_srv: Option<Felt252>,
-    pub next_state_sig_epoch: Option<u32>,
-    pub next_state_sig_root: Option<Felt252>,
     pub next_state_sig: Option<SchnorrSignature>,
     pub policy_reason_code: Option<u32>,
     pub policy_evidence_hash: Option<Felt252>,
@@ -53,7 +50,7 @@ pub struct OpenRouterLeaseRecord {
     pub request_nullifier: Felt252,
     pub api_request: ApiRequestV2,
     /// Native OA requests use a deployment/proof-bound upstream namespace.
-    /// None preserves the historical browser-ID namespace for legacy leases.
+    /// Optional for decoding historical rows; new OA leases require a bound ID.
     pub oa_client_request_id: Option<String>,
     pub key_hash: Option<String>,
     pub key_source: String,
@@ -70,7 +67,6 @@ pub struct OpenRouterLeaseRecord {
 /// SQLite-backed nullifier store.
 pub struct NullifierStore {
     conn: Mutex<Connection>,
-    execution_locks: Mutex<HashMap<Felt252, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 /// Bind the complete semantically decoded v2 wire request. Serde emits struct
@@ -166,7 +162,6 @@ impl NullifierStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
-            execution_locks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -175,28 +170,9 @@ impl NullifierStore {
         Self::new(":memory:")
     }
 
-    /// Coordinate provider execution for a nullifier across processors sharing
-    /// this store. Weak entries keep completed requests from growing the map.
-    /// Crash/transport ambiguity still requires upstream idempotency by request ID.
-    pub fn execution_lock(
-        &self,
-        nullifier: &Felt252,
-    ) -> Result<Arc<tokio::sync::Mutex<()>>, ServerError> {
-        let mut locks = self
-            .execution_locks
-            .lock()
-            .map_err(|error| ServerError::Internal(format!("execution lock poisoned: {error}")))?;
-        locks.retain(|_, lock| lock.strong_count() > 0);
-        if let Some(lock) = locks.get(nullifier).and_then(Weak::upgrade) {
-            return Ok(lock);
-        }
-        let lock = Arc::new(tokio::sync::Mutex::new(()));
-        locks.insert(*nullifier, Arc::downgrade(&lock));
-        Ok(lock)
-    }
-
     /// Reserve a nullifier. Returns Ok(()) if the nullifier was successfully reserved.
     /// Returns Err(Replay) if the nullifier already exists.
+    #[cfg(test)]
     pub fn reserve(
         &self,
         nullifier: &Felt252,
@@ -204,12 +180,6 @@ impl NullifierStore {
         payload_hash: &Felt252,
     ) -> Result<(), ServerError> {
         self.reserve_with_kind(nullifier, client_request_id, payload_hash, "proxy", None)
-    }
-
-    /// Reserve a v2 proxy request and bind every semantically decoded wire
-    /// field. This permits only an exact retry to skip proof verification.
-    pub fn reserve_v2(&self, request: &ApiRequestV2) -> Result<(), ServerError> {
-        self.reserve_bound_v2(request, "proxy")
     }
 
     pub fn reserve_openrouter_lease(&self, request: &ApiRequestV2) -> Result<(), ServerError> {
@@ -322,8 +292,8 @@ impl NullifierStore {
                     transcript.next_commitment_y.map(|c| c.to_hex()),
                     transcript.next_anchor.map(|a| a.to_hex()),
                     transcript.blind_delta_srv.map(|b| b.to_hex()),
-                    transcript.next_state_sig_epoch.map(|e| e as i32),
-                    transcript.next_state_sig_root.map(|r| r.to_hex()),
+                    Option::<i32>::None,
+                    Option::<String>::None,
                     sig_json,
                     transcript.policy_reason_code.map(|c| c as i32),
                     transcript.policy_evidence_hash.map(|h| h.to_hex()),
@@ -806,8 +776,6 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptRecord> 
     let next_commitment_y: Option<String> = row.get("next_commitment_y")?;
     let next_anchor: Option<String> = row.get("next_anchor")?;
     let blind_delta_srv: Option<String> = row.get("blind_delta_srv")?;
-    let next_state_sig_epoch: Option<i32> = row.get("next_state_sig_epoch")?;
-    let next_state_sig_root: Option<String> = row.get("next_state_sig_root")?;
     let next_state_sig_json: Option<String> = row.get("next_state_sig_json")?;
     let policy_reason_code: Option<i32> = row.get("policy_reason_code")?;
     let policy_evidence_hash: Option<String> = row.get("policy_evidence_hash")?;
@@ -834,8 +802,6 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptRecord> 
         next_commitment_y: parse_opt_felt(next_commitment_y),
         next_anchor: parse_opt_felt(next_anchor),
         blind_delta_srv: parse_opt_felt(blind_delta_srv),
-        next_state_sig_epoch: next_state_sig_epoch.map(|e| e as u32),
-        next_state_sig_root: parse_opt_felt(next_state_sig_root),
         next_state_sig,
         policy_reason_code: policy_reason_code.map(|c| c as u32),
         policy_evidence_hash: parse_opt_felt(policy_evidence_hash),
@@ -952,8 +918,6 @@ mod tests {
             next_commitment_y: Some(Felt252::from_u64(20)),
             next_anchor: Some(Felt252::from_u64(30)),
             blind_delta_srv: Some(Felt252::from_u64(40)),
-            next_state_sig_epoch: Some(1),
-            next_state_sig_root: Some(Felt252::from_u64(50)),
             next_state_sig: None,
             policy_reason_code: None,
             policy_evidence_hash: None,

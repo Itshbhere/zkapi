@@ -21,7 +21,9 @@ for (const role of ['server', 'challenger']) {
                     VAULT_ADDRESS: '0x0000000000000000000000000000000000000001',
                     DEPLOY_BLOCK: '1',
                     CIRCUIT_ID: 'zkapi-v2-note-bound-v1',
-                    REQUEST_CHARGE_CAP: '1000000',
+                    REQUEST_CHARGE_CAP: '50000',
+                    ZKAPI_NATIVE_BILLING_RPC_URL: 'https://rpc.example',
+                    ZKAPI_NATIVE_PRICE_FEED_ADDRESS: '0x0000000000000000000000000000000000000003',
                     ZKAPI_STATE_SEED: 'test-state-seed',
                     ZKAPI_CLEAR_SEED: 'test-clear-seed',
                     ZKAPI_CHALLENGE_RPC_URL: 'http://signer:8547',
@@ -36,6 +38,10 @@ for (const role of ['server', 'challenger']) {
                 const index = args.indexOf('--proof-setup-dir');
                 assert.ok(index >= 0);
                 assert.equal(args[index + 1], override || '/srv/zkapi/protocol/setup/v2');
+                if (role === 'server') {
+                    assert.equal(args[args.indexOf('--native-billing-rpc-url') + 1], env.ZKAPI_NATIVE_BILLING_RPC_URL);
+                    assert.equal(args[args.indexOf('--native-price-feed-address') + 1], env.ZKAPI_NATIVE_PRICE_FEED_ADDRESS);
+                }
                 assert.ok(!result.stdout.includes('test-state-seed'));
                 assert.ok(!result.stdout.includes('test-clear-seed'));
             } finally {

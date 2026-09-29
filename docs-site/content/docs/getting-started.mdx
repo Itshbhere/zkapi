@@ -1,80 +1,63 @@
 ---
 title: Getting Started
-description: Build zkAPI from source and run the end-to-end demo
+description: Build the active workspace and integrate the browser SDK
 ---
 
-The zkAPI repository is a monorepo containing Rust daemons, Solidity contracts,
-and Cairo proof circuits.
+The repository contains the browser SDK, Rust runtime and proof libraries,
+and Solidity native ETH vault. Use Rust, Node.js 24 or later, and Foundry for
+local development.
 
-## Prerequisites
+## Build and test
 
-- **Rust** 1.80+ (`rustup default stable`)
-- **Foundry** for Solidity (`curl -L https://foundry.paradigm.xyz | bash`)
-- **Scarb** 2.8+ for Cairo (`curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh`)
-
-## Build
+From the repository root:
 
 ```bash
-# Rust daemons
-cd rust
-cargo build
-cargo test
-
-# Solidity contract (ZkApiVault)
-cd ../contracts
-forge build
-forge test
-
-# Cairo proof circuits
-cd ../cairo
-scarb build
+cargo build --workspace --locked
+cargo test --release --workspace --locked
+cargo test --release --manifest-path protocol/rust/Cargo.toml --workspace --locked
+npm ci
+npm run test:sdk
+npm run verify:assets
 ```
 
-## End-to-end demo
+Run `forge test` from `protocol/contracts/` for vault and verifier tests.
+Committed proof assets are already included; consuming the SDK does not
+require generating new setup keys.
 
-```bash
-./scripts/e2e-demo.sh
-```
+## Browser integration
 
-This spins up Anvil, deploys `ZkApiVault` plus a mock ERC-20, starts the
-indexer, `serverd`, and `clientd`, then runs:
+Install the SDK from a reviewed immutable repository revision or its `npm pack`
+tarball. Configure it before initializing the wallet:
 
-1. Keygen
-2. Deposit
-3. Deposit confirmation
-4. Three authenticated requests
-5. Mutual-close withdrawal
-6. On-chain net settlement verification
+```js
+import { configureBrowserSdk } from '@openanonymity/zkapi-browser-sdk';
+import client from '@openanonymity/zkapi-browser-sdk/client';
 
-## Use `clientd` as a drop-in OpenAI proxy
-
-Once `clientd` is running on `:11434`, point your OpenAI SDK at it:
-
-```ts
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:11434/v1',
-  apiKey: 'not-used', // clientd handles auth
+configureBrowserSdk({
+  configUrl: '/zkapi/browser-config.json',
+  workerUrl: '/zkapi/assets/zkapiWasmWorker.js',
 });
 
-const res = await client.chat.completions.create({
-  model: 'gpt-4o-mini',
-  messages: [{ role: 'user', content: 'hello' }],
-});
+await client.init();
+const unsubscribe = client.subscribe(snapshot => renderBalance(snapshot));
 ```
 
-The response carries a standard OpenAI `ChatCompletion` shape with an extra
-`zkapi` field:
+The host supplies the payment UI and an EIP-1193 wallet provider. The SDK owns
+private note state, proof generation, transaction journals, receipt recovery,
+and settlement. Build the static worker, WASM, keys, and configuration with
+`buildBrowserSdkAssets` from the package's `/build` export.
 
-```json
-{
-  "id": "chatcmpl-…",
-  "choices": [ … ],
-  "zkapi": {
-    "charge_applied": 1200,
-    "next_anchor": "0x…",
-    "remaining_balance": 48800
-  }
-}
-```
+Use the repository's `sdk/README.md` for the complete integration contract,
+including external wallet providers, durable manual signing, and recovery.
+The trusted configuration pins the network, native vault, server signing keys,
+proof asset hashes, and deployment manifest. Protocol amounts are whole gwei.
+
+## Runtime services
+
+The root workspace builds `zkapi-serverd`, `zkapi-indexerd`,
+`zkapi-challenged`, and the `zkapi` operator CLI. Use `--help` for their current
+configuration flags. The server and browser must use the same deployment,
+keys, and `zkapi-v2-note-bound-v1` circuit revision.
+
+The committed circuit setup is a single-party development setup. Its exact
+compatibility and review status are documented in `protocol/setup/v2/README.md`.

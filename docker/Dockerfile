@@ -1,14 +1,14 @@
 FROM rust:bookworm AS builder
 
-# The Rust daemon embeds its small local help page. OA Chat builds separately
-# and consumes the browser SDK; no browser toolchain is required here.
+# The operator image runs native ETH API, indexer and challenge services.
+# The browser SDK and host application build separately.
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY protocol ./protocol
 
-RUN cargo build --locked --release -p zkapi-cli -p zkapi-clientd -p zkapi-indexerd -p zkapi-serverd --bins
+RUN cargo build --locked --release -p zkapi-cli -p zkapi-indexerd -p zkapi-serverd --bins
 
 FROM debian:bookworm-slim
 
@@ -20,7 +20,6 @@ RUN apt-get update \
 WORKDIR /srv/zkapi
 
 COPY --from=builder /app/target/release/zkapi /usr/local/bin/zkapi
-COPY --from=builder /app/target/release/zkapi-clientd /usr/local/bin/zkapi-clientd
 COPY --from=builder /app/target/release/zkapi-indexerd /usr/local/bin/zkapi-indexerd
 COPY --from=builder /app/target/release/zkapi-challenged /usr/local/bin/zkapi-challenged
 COPY --from=builder /app/protocol/setup/v2 /srv/zkapi/protocol/setup/v2
@@ -32,5 +31,5 @@ USER zkapi
 ENV RUST_LOG=info
 VOLUME ["/data"]
 
-ENTRYPOINT ["zkapi-clientd"]
-CMD ["--listen", "0.0.0.0:11434", "--state-dir", "/data/.zkapi", "--protocol-server-url", "http://zkapi-serverd:3000", "--indexer-url", "http://zkapi-indexerd:3001"]
+ENTRYPOINT ["zkapi-run"]
+CMD ["server"]

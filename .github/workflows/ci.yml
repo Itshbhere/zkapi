@@ -50,10 +50,10 @@ jobs:
         run: cargo run --release --manifest-path protocol/rust/Cargo.toml -p zkapi-proof --example wasm_roundtrip -- "$PWD/scripts/prove-browser-fixture.mjs" "$PWD/sdk"
 
       - name: Clippy app crates
-        run: cargo clippy --workspace --exclude zkapi-integration-tests -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
-      - name: Validate demo scripts
-        run: bash -n scripts/e2e-demo.sh docker/tee/attestation-hook.sh
+      - name: Validate operator scripts
+        run: bash -n scripts/build-browser-client.sh docker/tee/attestation-hook.sh && sh -n docker/aws/run-daemon.sh
 
   protocol-rust:
     runs-on: ubuntu-latest
@@ -62,22 +62,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Provision swap for the Stwo prover
-        run: |
-          sudo fallocate -l 8G /mnt/zkapi-stwo.swap
-          sudo chmod 600 /mnt/zkapi-stwo.swap
-          sudo mkswap /mnt/zkapi-stwo.swap
-          sudo swapon /mnt/zkapi-stwo.swap
-          free -h
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install Scarb for the production proof backend
-        uses: software-mansion/setup-scarb@v1
 
       - name: Clippy protocol Rust workspace
         run: cargo clippy --manifest-path protocol/rust/Cargo.toml --workspace -- -D warnings
@@ -102,24 +91,6 @@ jobs:
       - name: Forge test
         working-directory: protocol/contracts
         run: forge test -vvv
-
-  cairo:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Install Scarb
-        uses: software-mansion/setup-scarb@v1
-
-      - name: Scarb build
-        working-directory: protocol/cairo
-        run: scarb build
-
-      - name: Scarb test
-        working-directory: protocol/cairo
-        run: scarb test
 
   docker:
     runs-on: ubuntu-latest

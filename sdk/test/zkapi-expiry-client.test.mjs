@@ -135,10 +135,7 @@ test('no overdue unclaimed deposits means no RPC, wallet prompt or claim save', 
     assert.equal(h.calls.length, 0);
     assert.equal(h.remember.mock.calls.length, 0);
     assert.equal(h.archive.mock.calls.length, 0);
-    h.client.browserMode = false;
-    const reads = h.history.mock.calls.length;
-    await h.client.syncExpiryHistory();
-    assert.equal(h.history.mock.calls.length, reads, 'daemon mode must not read a different browser wallet');
+
 });
 
 test('missing wallet and wrong-chain failures preserve history/cursor and can be retried', async t => {

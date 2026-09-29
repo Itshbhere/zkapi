@@ -1,5 +1,9 @@
 # Native ETH browser billing
 
+The current tree is native ETH only. The token-only CLI/client daemon and
+ordinary proxy mode have been removed.
+Use the browser SDK with server/indexer/challenger; see [cleanup details](native-only-cleanup.md).
+
 Native ETH deployments hold ETH and use integer **gwei** in the existing proof
 ledger: one unit is 1,000,000,000 wei. The browser displays an approximate USD reference value;
 the USD value changes with ETH's price. This is not a stable-dollar deposit or a
@@ -13,10 +17,10 @@ integer, 9,007,199,254,740,991 units. Withdrawal and expiry payouts convert ledg
 units back to wei and retain the existing proof, nullifier, destination, timing
 and reentrancy protections. Failed recipient transfers revert the complete close.
 
-Nonzero-token deployments retain the ERC-20 behavior and reject ETH on deposit.
-Existing vaults are immutable and do not gain native support from a frontend
-update. Publish a fresh deployment ID, contract address and native asset pins;
-preserve the legacy wallet and withdrawal route for old notes. This asset change
+Historical token vaults are immutable and do not gain native support from a
+frontend update. Their recovery code remains available in earlier Git revisions.
+Publish a fresh deployment ID, contract address and native asset pins; preserve
+legacy wallet data for any old notes. This asset change
 requires circuit `zkapi-v2-note-bound-v1`, its exact revised setup/WASM/key hashes,
 and the historical-root challenge repair. Integer gwei accounting does not itself
 require a new circuit, but the old circuit allowed signed balance state to move
@@ -146,16 +150,15 @@ other result preserves the journal. It allows interrupted startup/withdrawal rec
 starting a chat solely to test whether an old proof is still issuable. Matching
 reserved/provisioning requests retain their old quote and remain recoverable
 after expiry. Other errors do not authorize discarding a
-pending journal. Native `/v2/requests` proxy billing is explicitly disabled;
-only prompt-private leases currently have native settlement support. Legacy
-ERC-20 leases reject native quote fields and preserve their old conversion.
+pending journal. `POST /v2/requests` has been removed; all new authorizations
+require prompt-private leases with a proof-bound native quote.
 
 ## Deployment and current scope
 
-The deploy script accepts `NATIVE_ETH=true`, `MINT_AMOUNT=0`, zero/absent
-`BILLING_TOKEN`, and an explicit `REQUEST_CHARGE_CAP` in gwei. It checks an
-optional `CHAIN_ID` against the connected chain. These flags require a new vault;
-they must not overwrite a live legacy deployment's manifest.
+The deploy script creates a native-only vault and accepts `REQUEST_CHARGE_CAP`
+in gwei. It checks an optional `CHAIN_ID` against the connected chain. Token and
+mint options have been removed. A new deployment must have its own manifest;
+do not overwrite the manifest for an existing funded vault.
 
 Start the native server with its fresh vault/chain/request cap and ordinary
 signer, indexer, proof and OA-source settings, plus:
@@ -168,8 +171,8 @@ zkapi ... serverd ... \
   --native-price-max-age-seconds 4500
 ```
 
-The server requires prompt-private lease configuration and rejects proxy policy
-for native mode. Operate the compatible v2 [challenge daemon](challenge-service.md)
+The server requires native oracle and prompt-private lease configuration.
+Operate the compatible v2 [challenge daemon](challenge-service.md)
 alongside server and indexer, with a dedicated funded signer restricted to the
 new vault. It reads the exact historical request root from the native server's
 finalized transcript or exact active-lease request and uses a current zero-slot
@@ -177,9 +180,8 @@ restoration path. A missing station usage receipt does not prevent an already
 issued lease from being challenged. Native usage
 settlement preserves the original proof/public inputs required for that challenge.
 Do not reuse a daemon, verifier or setup from another circuit. Configure the published manifest separately; these flags do
-not rewrite static frontend manifests. Current native integration targets the
-browser SDK. The existing local CLI/clientd funding flow still expects ERC-20
-and does not prepare native quotes; it must not be advertised as native-ready.
+not rewrite static frontend manifests. The browser SDK handles funding and
+withdrawals; the operator CLI runs setup, signing-key, server and indexer commands.
 
 Validation includes legacy replay-mutation regressions, native quote identity,
 RPC chain/round/freshness verification, rounding and overflow checks, persisted
@@ -203,5 +205,5 @@ nullifier, browser request ID, payload/quote, and proof). This separate ID is
 persisted atomically with the lease and reused for key issuance and usage
 recovery. It prevents two deployments that share an org from redeeming the same
 key by choosing the same browser request ID. The browser-visible ID stays
-unchanged; legacy lease rows retain their historical namespace. Native rows
-with a missing or mismatched upstream ID fail closed.
+unchanged. Historical SQLite rows remain readable without a destructive migration;
+OA lease recovery rejects a missing or mismatched native upstream ID.

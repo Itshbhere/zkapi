@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     template: '%s — zkAPI',
   },
   description:
-    'zkAPI lets users deposit funds on-chain once, then make many anonymous off-chain API requests. Post-quantum where practical, drop-in OpenAI proxy.',
+    'Private prepaid API usage with browser Groth16 proofs, short-lived OpenRouter keys, and native ETH settlement.',
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {

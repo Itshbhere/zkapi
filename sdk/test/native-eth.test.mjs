@@ -139,12 +139,13 @@ test('native deposit preflights and submits payable value once, without token mi
     const client = new ZkapiClient();
     t.mock.method(client, 'emitChange', () => {});
     client.config = { funding };
-    client.browserMode = false;
     const calls = [];
     client.setWalletProvider({ async request({ method, params }) {
         calls.push({ method, params });
         if (method === 'eth_chainId') return '0xaa36a7';
         if (method === 'eth_getBalance') return '0xde0b6b3a7640000';
+        if (method === 'eth_call') return '0x77';
+        if (method === 'eth_getTransactionCount') return '0x1';
         if (method === 'eth_estimateGas') return '0x100000';
         if (method === 'eth_sendTransaction') return HASH;
         assert.fail(`Unexpected RPC ${method}`);
@@ -152,11 +153,14 @@ test('native deposit preflights and submits payable value once, without token mi
     t.mock.method(client, 'connectWallet', async () => FROM);
     t.mock.method(client, 'refresh', async () => {});
     const plan = { commitment: '0x1', secret: 'local-secret', amount: 3333334, zero_path: Array(32).fill('0x0') };
-    t.mock.method(client, 'apiJson', async (url, init) => {
-        assert.equal(JSON.parse(init.body).amount, 3333334);
-        assert.ok(['/deposit/prepare', '/deposit/confirm'].includes(url));
-        return plan;
-    });
+    const { default: runtime } = await import('../services/browserWalletRuntime.js');
+    t.mock.method(runtime, 'pendingDeposit', async () => null);
+    t.mock.method(runtime, 'prepareDeposit', async amount => { assert.equal(amount, 3333334); return plan; });
+    t.mock.method(runtime, 'refreshPendingDeposit', async () => plan);
+    t.mock.method(runtime, 'claimPendingDepositSubmission', async () => ({ operationId: 'native-deposit', plan }));
+    t.mock.method(runtime, 'rememberPendingDepositSubmissionMetadata', async () => {});
+    t.mock.method(runtime, 'rememberPendingDepositTransaction', async () => {});
+    t.mock.method(client, 'confirmBrowserDepositReceipt', async () => ({ amount: plan.amount }));
     t.mock.method(client, 'waitForReceipt', async () => ({ status: '0x1', transactionHash: HASH,
         logs: [{ address: VAULT, topics: [codec.ABI.noteDeposited, '0x1', '0x1'],
             data: `0x${[3333334, 2_000_000_000, 7].map(word).join('')}` }] }));
@@ -202,7 +206,7 @@ test('native manifest trust pins asset, denomination, feed, freshness and RPC wi
     assert.equal(built.funding.billing_asset, 'native_eth');
     assert.equal(built.funding.billing_token_symbol, 'ETH');
     assert.equal(built.funding.billing_token_decimals, 9);
-    assert.equal(built.funding.demo_billing_token_address, null);
+    assert.equal(built.funding.demo_billing_token_address, undefined);
 });
 
 test('native lease proves a fixed USD tier with its exact feed quote and keeps pending proof unchanged', async () => {
@@ -460,8 +464,6 @@ test('prefunding quote exposes only the exact public native call and never conne
     for (const from of [undefined, '0x0', `0x${'00'.repeat(20)}`]) {
         await assert.rejects(client.prepareDepositQuote('0.1', { from }), /valid funding address/);
     }
-    client.browserMode = false;
-    await assert.rejects(client.prepareDepositQuote('0.1', { from: FROM }), /browser wallet/);
 });
 
 function nativeReceiptHarness() {
@@ -608,4 +610,12 @@ test('preparing an address retry only checks recovery and authorizes exact fee r
     t.mock.method(client, 'recoverBrowserDeposit', async () => ({ status: 'confirmed', feeWei: '123' }));
     assert.deepEqual(await client.prepareDepositRetry(), { status: 'confirmed', feeWei: '123' });
     assert.equal(authorized, 1);
+});
+
+test('token funding never reaches a wallet connection or note preparation', async () => {
+    const client = new ZkapiClient();
+    client.config = { funding: { ...funding, billing_asset: 'erc20' } };
+    client.connectWallet = async () => assert.fail('unsupported funding must fail before wallet connection');
+    await assert.rejects(client.performDeposit('1'), /only native ETH deployments are supported/);
+    assert.throws(() => nativeDepositValue(1n, client.config.funding), /only native ETH deployments are supported/);
 });

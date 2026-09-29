@@ -3,62 +3,36 @@ pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {ZkApiVault} from "zkapi-contracts/ZkApiVault.sol";
 import {Groth16ProofAdapter} from "zkapi-contracts/adapters/Groth16ProofAdapter.sol";
 
-/// @title DemoBillingToken – billing token for the local demo.
-/// @notice Uses 6 decimals so the protocol's integer credit amounts line up
-///         with the integration's credit model (1 credit = 1 micro-USD): one
-///         whole token = 1,000,000 credits = $1. A wallet then displays the
-///         balance directly in dollars (e.g. 5 ZKAPI = $5), instead of an
-///         arbitrary scale. Exposes a public `mint` for funding.
-contract DemoBillingToken is ERC20 {
-    constructor() ERC20("zkAPI Demo Credit", "ZKAPI") {}
-
-    function decimals() public pure override returns (uint8) {
-        return 6;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
-
 /// @title DeployScript – Local demo deployment for the zkAPI EF stack.
-/// @notice Deploys an ERC20 billing token, the circuit-specific Groth16
-///         verifier, and the ZkApiVault, then writes a
-///         deployment manifest JSON to $OUTPUT_PATH with the exact keys the
-///         demo harness reads: {vault, billingToken, treasury, noteTtl}.
+/// @notice Deploys the circuit-specific Groth16 verifier and native ETH
+///         ZkApiVault, then writes constructor and native-asset metadata to
+///         $OUTPUT_PATH. Add proof hashes and oracle pins separately when
+///         preparing the SDK's public deployment manifest.
 /// @dev    Reads these environment variables:
 ///           PRIVATE_KEY – deployer key (becomes vault owner).
 ///           TREASURY    – operator payout address.
-///           MINT_AMOUNT – billing tokens minted to the deployer (depositor).
 ///           OUTPUT_PATH – absolute path for the deployment manifest JSON.
 ///           STATE_SIGNING_KEY_X/Y – deployment-pinned Baby-JubJub key.
 ///           CLEARANCE_SIGNING_KEY_X/Y – deployment-pinned Baby-JubJub key.
-///           BILLING_TOKEN – existing token; required for ERC-20 mode on Mainnet.
-///           NATIVE_ETH – accept native ETH in whole gwei instead of a billing token.
 ///           CHALLENGE_PERIOD_SECONDS – escape delay; defaults to 24 hours.
 ///           CHAIN_ID – optional expected chain ID; mismatches abort deployment.
-///           REQUEST_CHARGE_CAP – positive per-request credit limit; defaults to 1,000,000.
+///           REQUEST_CHARGE_CAP – positive per-request gwei limit; defaults to 1,000,000.
 contract DeployScript is Script {
     uint64 internal constant NOTE_TTL = 30 days;
 
     function run() external {
         require(block.chainid == vm.envOr("CHAIN_ID", block.chainid), "CHAIN_ID does not match RPC");
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        uint256 mintAmount = vm.envOr("MINT_AMOUNT", uint256(0));
         string memory outputPath = vm.envString("OUTPUT_PATH");
         address deployer = vm.addr(deployerKey);
         uint256 stateKeyX = vm.envUint("STATE_SIGNING_KEY_X");
         uint256 stateKeyY = vm.envUint("STATE_SIGNING_KEY_Y");
         uint256 clearanceKeyX = vm.envUint("CLEARANCE_SIGNING_KEY_X");
         uint256 clearanceKeyY = vm.envUint("CLEARANCE_SIGNING_KEY_Y");
-        address billingTokenAddress = vm.envOr("BILLING_TOKEN", address(0));
-        bool nativeEth = vm.envOr("NATIVE_ETH", false);
-        if (nativeEth) require(billingTokenAddress == address(0) && mintAmount == 0, "native ETH cannot configure or mint an ERC20");
         uint256 challengePeriodValue = vm.envOr("CHALLENGE_PERIOD_SECONDS", uint256(24 hours));
         require(
             challengePeriodValue > 0 && challengePeriodValue <= type(uint64).max,
@@ -67,8 +41,8 @@ contract DeployScript is Script {
         uint64 challengePeriod = uint64(challengePeriodValue);
         uint256 requestChargeCapValue = vm.envOr("REQUEST_CHARGE_CAP", uint256(1_000_000));
         require(
-            requestChargeCapValue > 0 && requestChargeCapValue <= type(uint128).max,
-            "REQUEST_CHARGE_CAP must fit a positive uint128"
+            requestChargeCapValue > 0 && requestChargeCapValue <= 9_007_199_254_740_991,
+            "REQUEST_CHARGE_CAP must be positive safe gwei units"
         );
         uint128 requestChargeCap = uint128(requestChargeCapValue);
         address poseidonLibrary = vm.envOr("POSEIDON_ADDRESS", address(0));
@@ -81,23 +55,9 @@ contract DeployScript is Script {
 
         vm.startBroadcast(deployerKey);
 
-        if (nativeEth) {
-            require(requestChargeCap <= 9_007_199_254_740_991, "invalid native gwei request cap");
-        } else if (billingTokenAddress == address(0)) {
-            require(block.chainid != 1, "BILLING_TOKEN is required on Mainnet");
-            DemoBillingToken demoToken = new DemoBillingToken();
-            billingTokenAddress = address(demoToken);
-            if (mintAmount > 0) {
-                demoToken.mint(deployer, mintAmount);
-            }
-        } else {
-            require(mintAmount == 0, "cannot mint an existing billing token");
-        }
-
         Groth16ProofAdapter proofAdapter = new Groth16ProofAdapter();
 
         ZkApiVault vault = new ZkApiVault(
-            billingTokenAddress,
             treasury,
             NOTE_TTL,
             challengePeriod,
@@ -118,13 +78,13 @@ contract DeployScript is Script {
         vm.serializeString(manifest, "circuitId", "zkapi-v2-note-bound-v1");
         vm.serializeAddress(manifest, "owner", deployer);
         vm.serializeAddress(manifest, "vault", address(vault));
-        vm.serializeAddress(manifest, "billingToken", billingTokenAddress);
+        vm.serializeAddress(manifest, "billingToken", vault.billingToken());
         vm.serializeAddress(manifest, "proofAdapter", address(proofAdapter));
         vm.serializeAddress(manifest, "poseidonLibrary", poseidonLibrary);
         vm.serializeAddress(manifest, "treasury", treasury);
         vm.serializeUint(manifest, "requestChargeCap", requestChargeCap);
-        vm.serializeString(manifest, "billing_asset", nativeEth ? "native_eth" : "erc20");
-        vm.serializeString(manifest, "billing_unit", nativeEth ? "gwei" : "token_base_unit");
+        vm.serializeString(manifest, "billing_asset", "native_eth");
+        vm.serializeString(manifest, "billing_unit", "gwei");
         vm.serializeUint(manifest, "nativeAssetWeiPerUnit", vault.nativeAssetWeiPerUnit());
         vm.serializeUint(manifest, "challengePeriod", challengePeriod);
         vm.serializeUint(manifest, "stateSigningKeyX", stateKeyX);
@@ -135,7 +95,6 @@ contract DeployScript is Script {
         vm.writeJson(serialized, outputPath);
 
         console2.log("vault       ", address(vault));
-        console2.log("billingToken", billingTokenAddress);
         console2.log("treasury    ", treasury);
         console2.log("proofAdapter", address(proofAdapter));
         console2.log("noteTtl     ", uint256(NOTE_TTL));

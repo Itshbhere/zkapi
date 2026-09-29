@@ -2,7 +2,7 @@
 //!
 //! - depth: 32
 //! - zero leaf value: 0
-//! - node hash: Poseidon(domain("zkapi.node"), left, right)
+//! - node hash: Poseidon(domain("zkapi.v2.node"), left, right)
 
 use zkapi_types::{Felt252, MERKLE_DEPTH};
 

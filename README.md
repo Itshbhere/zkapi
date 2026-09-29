@@ -1,174 +1,78 @@
-# zkAPI EF
+# zkAPI
 
-This checkout includes the candidate repairs from the September 22 review.
-The note-bound circuits require a fresh vault and setup; the historical public
-deployments are not upgraded by these source changes. See the [migration and
-security assumptions](docs/note-binding-review.md) and [challenge service](docs/challenge-service.md).
+zkAPI provides a browser wallet and backend for private, prepaid API access funded
+with native ETH. The browser proves that a private note can cover a bounded
+runtime-key lease, calls the inference provider directly, and verifies the signed
+balance returned after usage settlement. The host application owns its UI.
 
-zkAPI is a private, prepaid API client. A user deposits billing credits into an
-Ethereum vault, then proves locally that an unlinkable private note can pay for
-each request. It supports the existing server-proxy mode and a prompt-private
-OpenRouter mode in which the server issues a short-lived, spending-limited key,
-and never receives prompts or responses. Keys can be minted directly with an
-OpenRouter management credential or relayed through an OA org/station so the
-client can verify the provider account's privacy settings before inference.
+The active protocol uses Groth16 over BN254, Poseidon, note-bound Baby-JubJub
+commitments and Schnorr signatures, and a 32-level Merkle tree. The ledger uses
+integer gwei. This is an experimental, unaudited protocol with a single-party
+setup; see [the note-binding review](docs/note-binding-review.md).
 
-The current protocol uses:
+## Build and test
 
-- Groth16 over BN254 for request and withdrawal proofs;
-- Poseidon over the BN254 scalar field;
-- Baby-JubJub Pedersen commitments and Poseidon-challenged Schnorr signatures;
-- a 32-level active-note Merkle tree and state-derived nullifiers;
-- OpenAI-compatible chat and responses endpoints on the local client daemon.
-
-## Browser SDK and OA Chat
-
-This repository provides `@openanonymity/zkapi-browser-sdk`. OA Chat consumes
-that SDK and owns the chat UI, payment switch, model pricing, and application
-runtime. The dependency runs from OA Chat to this package; this repository no
-longer checks out or builds OA Chat.
-
-The SDK owns wallet storage, proof generation, ephemeral keys, settlement,
-withdrawals, and public payment history. It contains the pinned public WASM
-and proving artifacts and has no runtime npm dependency. Consumers can install
-an immutable Git commit without building the protocol source or installing
-Rust. See [SDK integration](sdk/README.md).
-
-```bash
+```sh
 npm ci
 npm test
-npm run build:browser # SDK assets for Sepolia, not a chat application
-npm run build:mainnet # SDK assets for the separate native ETH Mainnet deployment
-npm pack             # installable browser SDK
-```
-
-The host's own build emits the SDK assets and configures its privacy transport,
-asset URLs, and selected network before wallet initialization. Sepolia pins the current [native ETH deployment](docs/native-eth-billing.md).
-The [September 22 acceptance](docs/deployments/sepolia-note-bound-20260922.md)
-describes a separate ERC20 review deployment.
-Mainnet pins separate native ETH contracts verified at finalized chain state.
-The backend and [native Mainnet application](https://oa-wallet-eth-mainnet.vercel.app)
-are published. See the
-[Mainnet rollout record](docs/deployments/mainnet-native-eth-20260928.md).
-Legacy USDC wallets keep their original vault and recovery client; their notes
-cannot be converted or migrated by this SDK configuration change.
-
-## Build and test the Rust clients
-
-The protocol source and its Solidity dependencies are tracked directly under
-`protocol/`. A normal clone includes them; no submodule initialization is needed.
-See [source provenance](protocol/VENDORED.md) for the imported revisions.
-
-```bash
-cargo build --release --bin zkapi
-cargo test --workspace
+npm run build:browser
+npm run build:mainnet
+npm run verify:assets
+cargo build --release --workspace
+cargo test --release --workspace
+cargo test --release --manifest-path protocol/rust/Cargo.toml --workspace
 (cd protocol/contracts && forge test)
 ```
 
-The daemon is independent of Node and OA Chat. Its default `/funding/` is a
-small help page. An application may optionally supply a prebuilt frontend with
-`ZKAPI_FRONTEND_DIST`; see [local client setup](docs/local-client-quickstart.md).
-To deliberately rebuild the SDK's public WASM from the protocol source,
-use `scripts/build-browser-client.sh`; review and commit the updated artifact
-hashes. Ordinary SDK consumers do not need that step.
+The protocol and required Solidity libraries are ordinary files in this repository.
+No submodule initialization, Cairo compiler or STARK prover is needed. See
+[source provenance](protocol/VENDORED.md).
 
-The selected proving keys are stored in `protocol/setup/v2`. Do not run the
-`setup` command merely to use an existing deployment: it creates a new,
-incompatible setup. For an intentionally fresh deployment:
+## Browser SDK
 
-```bash
-./target/release/zkapi setup --output-dir protocol/setup/new-deployment
-```
+`@openanonymity/zkapi-browser-sdk` owns native ETH funding, wallet persistence,
+proof generation, lease recovery, settlement and withdrawals. Mainnet and Sepolia
+have independent deployment pins, signing keys and wallet state. Applications
+configure the SDK before initializing a wallet; see [SDK integration](sdk/README.md)
+and [native billing](docs/native-eth-billing.md).
 
-## Local client
+The packaged WASM and proving keys support the current circuit
+`zkapi-v2-note-bound-v1`. Ordinary SDK consumers do not need Rust. To rebuild
+WASM deliberately, use `scripts/build-browser-client.sh` and review the changed
+artifact hashes. A source cleanup does not require new proving keys.
 
-For prompt-private Mainnet and Sepolia setup, see the
-[local client quickstart](docs/local-client-quickstart.md).
+## Operator services
 
-After building, start a ready-to-use local gateway with one command:
+- `zkapi serverd`: native ETH lease authorization, settlement and Schnorr signing.
+- `zkapi-indexerd` / `zkapi indexer`: vault event indexing and Merkle paths.
+- `zkapi-challenged`: durable escape monitoring and challenge submission.
+- `zkapi signing-keys`: derive deployment public keys from operator seeds.
+- `zkapi setup --output-dir NEW_DIRECTORY`: generate a fresh development setup.
 
-```bash
-./target/release/zkapi client
-```
+Native server startup requires a pinned oracle RPC/feed and a lease issuer.
+Use [deployment instructions](docs/deployment.md), [Docker operation](docker/aws/README.md)
+and [challenge service operation](docs/challenge-service.md). The browser sends
+prompts directly to the inference provider; this server does not offer a legacy
+inference proxy.
 
-It loads the experimental Ethereum Mainnet manifest, stores private state
-outside the repository, reuses an existing note, and serves the chat and
-MetaMask funding UI at `http://127.0.0.1:11434/`. No wallet key is pasted into
-the daemon or browser page. A new note defaults to 2 USDC and the selected
-MetaMask account needs that USDC plus ETH for gas. The same process serves
-standard APIs on `127.0.0.1:11434`:
+The existing keys in `protocol/setup/v2` are bound to deployed verifiers. Do not
+run `setup` to connect to an existing deployment. A new setup requires its own
+verifier/vault and explicit client/fund migration.
 
-- OpenAI Chat Completions: `/v1/chat/completions`
-- OpenAI Responses: `/v1/responses`
-- Ollama chat: `/api/chat`
+## Source layout
 
-Use a different deployment manifest with `--deployment`. The configured vault
-accepts its configured ERC-20 billing token. The default Mainnet vault uses real
-USDC; native ETH is used for transaction gas, not request credits. The former
-terminal flow remains available as `--fund-with-cast` for headless setups.
+| Directory | Purpose |
+| --- | --- |
+| `sdk/` | Browser native ETH wallet, public artifacts and SDK tests |
+| `protocol/rust/` | Shared v2 types, BN254 helpers, circuits and Rust/WASM wallets |
+| `protocol/contracts/` | Native ETH vault, Groth16 verifier and contract tests |
+| `protocol/setup/v2/` | Selected circuit setup and verifier artifacts |
+| `crates/` | Operator CLI, server, indexer and challenger |
+| `demo/contracts/` | Native ETH verifier/vault deployment script |
+| `docker/aws/` | API/indexer/challenger image configuration and restricted signer |
 
-The default `--mode proxy` sends each request through `zkapi-serverd`. On a
-deployment that advertises `direct_openrouter`, opt into the prompt-private
-mode with:
-
-```bash
-./target/release/zkapi client --mode direct-openrouter
-```
-
-The first local LLM call creates one Groth16 authorization and receives a
-short-lived OpenRouter runtime key. The bundled UI assigns a stable local
-session ID to each conversation. Requests with that ID—including concurrent
-answer and title generation and later follow-ups—reuse that key and can run in
-parallel for the lifetime of that chat's lease. A different conversation cannot
-silently inherit an active key. The key is replaced only on expiry, explicit
-settlement, provider rejection, or credit exhaustion. OpenRouter still sees the
-LLM traffic; the zkAPI server does not. Runtime keys are held only in local
-process memory and are never stored by the server.
-
-When the server is configured with `--oa-org-url`, the response also contains
-the station ID, expiry, station signature, org signature, and verifier URL used
-by oa-chat. The local daemon submits that evidence to its independently
-configured `--oa-verifier-url` and refuses to send a prompt unless the verifier
-accepts the key. Because the station owns the OpenRouter management account,
-the station disables each key when zkAPI explicitly retires it (or at its
-provider-enforced expiry), waits for usage to
-stabilize, and persists a signed aggregate-usage receipt before deleting the
-key. The org verifies and
-countersigns that receipt, and zkAPI charges the reported micro-dollar usage
-rather than the reserved hard limit.
-
-Clients that require this protection must set `--require-oa-org-key-source`
-(or `ZKAPI_REQUIRE_OA_ORG_KEY_SOURCE=true`). This independent policy rejects a
-server downgrade to a direct or legacy, unverifiable key.
-
-For example, with `zkapi client` running:
-
-```bash
-curl -fsS http://127.0.0.1:11434/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -H 'x-zkapi-session-id: chat-example' \
-  -d '{"model":"openai/gpt-4o-mini","max_tokens":256,"messages":[{"role":"user","content":"explain HTTPS briefly"}]}' | jq .
-```
-
-The local gateway also exposes equivalent OpenAI Responses and Ollama routes.
-Clients that omit `X-ZkAPI-Session-Id` use the compatibility session named
-`default`. OpenAI chat streams use SSE. Ollama `/api/chat` streams use
-newline-delimited JSON and stream by default, so either OpenWebUI connection
-type receives tokens as OpenRouter produces them.
-
-The bundled balance panel also closes notes without exposing the note secret.
-Mutual close returns the remaining token balance in one MetaMask transaction.
-If server clearance is unavailable, the escape hatch starts a challengeable
-withdrawal using the vault's configured safety window (24 hours by default),
-preserves the local note across daemon restarts, and
-enables finalization after the on-chain deadline. Inference is blocked while a
-withdrawal proof is prepared or an escape is pending.
-
-## Components
-
-- `zkapi-clientd`: local wallet, proof generation, recovery, and OpenAI/Ollama compatibility.
-- `zkapi-serverd`: proof verification, nullifier/lease DB, proxy execution or aggregate lease billing, and next-state signing.
-- `zkapi-indexerd`: Ethereum event indexer and Merkle-path service.
-- `protocol/rust`: shared protocol primitives, circuits, proof code, and wallet SDK.
-- `protocol/contracts`: the real Groth16 adapter and Ethereum settlement vault.
-- `demo/contracts`: deploys the demo token, real adapter, and vault.
+The retired STARK/XMSS implementation, token-payment SDK branches, local token
+client and token deployment demos were removed. Historical releases remain in
+Git history. Existing token wallets must use their matching historical client;
+this SDK rejects them instead of reinterpreting their balances as ETH. See
+[cleanup details](docs/native-only-cleanup.md).
