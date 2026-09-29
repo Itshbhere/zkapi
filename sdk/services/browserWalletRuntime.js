@@ -1,6 +1,7 @@
 import { browserSdkOptions, beginBrowserSdkInitialization, browserSdkTransport } from '../configure.js';
 import { assertNativeVault, validateNativeFunding, validateNativeQuote, readNativeQuote, nativeUnitsForUsd, nativeUsdMicros, sameNativeQuote, requestBillingQuote } from './zkapiNativeEth.mjs';
 import { CHAT_SPENDING_TIER_USD } from './zkapiRequestCompat.mjs';
+import { TestnetPasswordAuth, testnetPasswordRequired } from './testnetPasswordAuth.mjs';
 import { sameFelt, waitForExpectedActiveRoot } from './zkapiWithdrawalRoot.mjs';
 import { isUnsubmittedParkedMutualWithdrawal } from './zkapiWithdrawalRecovery.mjs';
 import {
@@ -313,6 +314,11 @@ class BrowserWalletRuntime extends EventTarget {
         this.validateManifestTrust(this.manifest);
         localStorage.setItem('zkapi-browser-deployment', manifestUrl);
         this.config = this.buildClientConfig(this.manifest, this.browserConfig);
+        this.testnetAuth = new TestnetPasswordAuth({
+            funding: this.config.funding,
+            fetch: (url, init) => this.remoteFetchRaw(url, init),
+            requestPassword: browserSdkOptions().requestTestnetPassword
+        });
         await assertNativeVault(this.config.funding);
         this.worker = new WorkerBridge();
         // Initialization participates in the same global lock as every later
@@ -766,6 +772,10 @@ class BrowserWalletRuntime extends EventTarget {
     }
 
     async remoteFetch(url, init = {}) {
+        return this.testnetAuth ? this.testnetAuth.fetch(url, init) : this.remoteFetchRaw(url, init);
+    }
+
+    async remoteFetchRaw(url, init = {}) {
         const proxyUrl = this.deploymentProxyUrl(url);
         if (proxyUrl) {
             try {
@@ -785,6 +795,7 @@ class BrowserWalletRuntime extends EventTarget {
 
     async remoteJson(url, init = {}) {
         const response = await this.remoteFetch(url, init);
+        if (response.status === 401 && this.testnetAuth?.protects(url)) throw testnetPasswordRequired();
         let payload = await responsePayload(response);
         if (!response.ok) {
             const retryAfterHeader = response.headers.get('retry-after');

@@ -2,8 +2,37 @@ openapi: 3.1.0
 info:
   title: zkAPI v2
   version: 2.0.0-testnet
-  description: Native ETH lease, settlement and withdrawal Groth16 protocol API.
+  description: >-
+    Native ETH lease, settlement and withdrawal Groth16 protocol API.
+    Sepolia deployments may require a shared password, advertised by public
+    /health testnet_password_required. All service routes then require the
+    TestnetPassword header and return 401 testnet_password_required when absent
+    or incorrect. Mainnet does not use this gate.
+security:
+  - TestnetPassword: []
+  - {}
 paths:
+  /health:
+    get:
+      security: []
+      summary: Public deployment summary and testnet password requirement
+      responses:
+        "200":
+          description: Public health, including chain_id and testnet_password_required
+  /v2/auth:
+    get:
+      summary: Validate the Sepolia service password without side effects
+      responses:
+        "200":
+          description: Password accepted, or service access is not password-gated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated]
+                properties:
+                  authenticated: {const: true}
+        "401": {$ref: "#/components/responses/TestnetPasswordRequired"}
   /v2/billing/quote:
     get:
       summary: Read the pinned finalized native ETH billing quote
@@ -62,6 +91,27 @@ paths:
         "200": {description: Finalized transcript}
         "404": {description: Unknown request}
 components:
+  securitySchemes:
+    TestnetPassword:
+      type: apiKey
+      in: header
+      name: X-ZKAPI-Testnet-Password
+      description: Required only when Sepolia health reports testnet_password_required.
+  responses:
+    TestnetPasswordRequired:
+      description: Missing or invalid shared password; no request processing occurred.
+      headers:
+        Cache-Control:
+          schema: {const: no-store}
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error_code, error, retriable]
+            properties:
+              error_code: {const: testnet_password_required}
+              error: {const: "Sepolia password required or invalid"}
+              retriable: {const: false}
   schemas:
     Groth16Proof:
       type: object

@@ -499,8 +499,10 @@ fn words(value: &Value) -> anyhow::Result<Vec<Felt252>> {
     let bytes = hex::decode(raw)?;
     ensure!(bytes.len().is_multiple_of(32), "malformed ABI words");
     Ok(bytes
-        .chunks_exact(32)
-        .map(|chunk| Felt252(chunk.try_into().unwrap()))
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .map(|chunk| Felt252(*chunk))
         .collect())
 }
 

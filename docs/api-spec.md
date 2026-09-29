@@ -8,6 +8,7 @@ HTTP API and server-side inference proxy are removed.
 | --- | --- | --- |
 | GET | `/health` | Process and deployment summary |
 | GET | `/v1/attestation` | Public signing keys and protocol pins |
+| GET | `/v2/auth` | Validate the configured Sepolia shared password without side effects |
 | GET | `/v2/billing/quote` | Pinned finalized native ETH billing quote |
 | POST | `/v2/openrouter/leases` | Verify proof and reserve a bounded runtime key |
 | GET | `/v2/openrouter/leases/{client_request_id}` | Non-secret lease status |
@@ -16,6 +17,12 @@ HTTP API and server-side inference proxy are removed.
 | POST | `/v2/withdraw/clearance` | Mutual-close Schnorr clearance |
 | GET | `/v2/requests/{client_request_id}` | Recover signed settlement |
 | GET | `/v2/nullifiers/{nullifier}` | Recover by nullifier |
+
+When public `/health` reports `testnet_password_required: true`, all `/v2/*`
+routes require `X-ZKAPI-Testnet-Password`. Missing or incorrect passwords return
+HTTP 401 with `error_code: "testnet_password_required"` before request parsing.
+See [Sepolia shared password](testnet-auth.md) for the complete access,
+transport and credential-lifecycle contract. Mainnet is unaffected.
 
 A lease uses `ApiRequestV2`: client request ID, canonical prompt-free payload,
 payload hash, public inputs and `{backend: "groth16_bn254", proof: "base64..."}`.
