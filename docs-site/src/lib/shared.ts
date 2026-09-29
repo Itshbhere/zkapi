@@ -5,6 +5,6 @@ export const docsContentRoute = '/llms.mdx/docs';
 
 export const gitConfig = {
   user: 'OpenAnonymity',
-  repo: 'zkapi-EF-collab',
+  repo: 'zkapi',
   branch: 'main',
 };

@@ -29,7 +29,7 @@ export default function HomePage() {
           Protocol overview
         </Link>
         <a
-          href="https://github.com/OpenAnonymity/zkapi-EF-collab"
+          href="https://github.com/OpenAnonymity/zkapi"
           className="inline-flex h-11 items-center rounded-md border border-fd-border bg-fd-card px-6 text-sm font-medium hover:bg-fd-accent"
         >
           GitHub
