@@ -8,11 +8,6 @@ export function baseOptions(): BaseLayoutProps {
         <span className="font-semibold tracking-tight">{appName}</span>
       ),
     },
-    links: [
-      { text: 'Documentation', url: '/docs' },
-      { text: 'Protocol', url: '/docs/protocol' },
-      { text: 'API Reference', url: '/docs/api-reference' },
-    ],
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };
 }
