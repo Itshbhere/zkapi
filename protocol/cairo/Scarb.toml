@@ -1,0 +1,47 @@
+[package]
+name = "zkapi_cairo"
+version = "0.1.0"
+edition = "2024_07"
+
+[dependencies]
+cairo_execute = "2.16.1"
+
+[dev-dependencies]
+cairo_test = "2.16.1"
+
+[lib]
+
+[[target.executable]]
+name = "request_genesis"
+function = "zkapi_cairo::executables::request_genesis"
+
+[[target.executable]]
+name = "request_non_genesis"
+function = "zkapi_cairo::executables::request_non_genesis"
+
+[[target.executable]]
+name = "request_from_args"
+function = "zkapi_cairo::executables::request_from_args"
+
+[[target.executable]]
+name = "withdrawal_genesis_escape"
+function = "zkapi_cairo::executables::withdrawal_genesis_escape"
+
+[[target.executable]]
+name = "withdrawal_non_genesis_escape"
+function = "zkapi_cairo::executables::withdrawal_non_genesis_escape"
+
+[[target.executable]]
+name = "withdrawal_mutual_close"
+function = "zkapi_cairo::executables::withdrawal_mutual_close"
+
+[[target.executable]]
+name = "withdrawal_from_args"
+function = "zkapi_cairo::executables::withdrawal_from_args"
+
+[cairo]
+enable-gas = false
+sierra-replace-ids = true
+
+[tool.fmt]
+sort-module-level-items = true

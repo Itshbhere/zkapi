@@ -1,0 +1,24 @@
+[package]
+name = "zkapi-client"
+description = "Wallet state, note lifecycle, proof generation, persistence, and recovery for zkAPI"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+zkapi-types  = { workspace = true }
+zkapi-core   = { workspace = true }
+zkapi-crypto = { workspace = true }
+zkapi-proof  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+hex          = { workspace = true }
+base64       = { workspace = true }
+rand         = { workspace = true }
+uuid         = { workspace = true }
+tokio        = { workspace = true }
+reqwest      = { workspace = true }
+thiserror       = { workspace = true }
+anyhow          = { workspace = true }
+tracing         = { workspace = true }
+starknet-crypto = { workspace = true }

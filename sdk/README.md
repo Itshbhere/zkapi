@@ -6,7 +6,7 @@ recovery, and public payment-history reconciliation. It has no OA Chat, UI,
 model-catalog, or chat-storage dependency. The host owns chat and payment UI.
 
 Install a reviewed immutable Git revision, or install its `npm pack` tarball.
-No submodules, Rust compiler, setup ceremony, or npm publish step are needed to
+No Rust compiler, setup ceremony, or npm publish step is needed to
 consume this package. The public proving keys and WASM are included and hashed
 in `sdk/assets/manifest.json`; these are public artifacts, not wallet secrets.
 

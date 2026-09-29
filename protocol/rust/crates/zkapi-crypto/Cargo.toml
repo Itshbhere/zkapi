@@ -1,0 +1,20 @@
+[package]
+name = "zkapi-crypto"
+description = "Pedersen commitment and XMSS/WOTS+ implementation for zkAPI"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+zkapi-types     = { workspace = true }
+zkapi-core      = { workspace = true }
+serde           = { workspace = true }
+hex             = { workspace = true }
+sha3            = { workspace = true }
+rand            = { workspace = true }
+thiserror       = { workspace = true }
+lazy_static     = { workspace = true }
+num-bigint      = "0.4"
+starknet-crypto      = { workspace = true }
+starknet-curve       = { workspace = true }
+starknet-types-core  = { workspace = true }

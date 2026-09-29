@@ -5,24 +5,26 @@ description: Daemons, contracts, and crypto module layout
 
 zkAPI ships two daemons that wire the simplified-nullifier protocol into a
 drop-in OpenAI-compatible proxy. All crypto primitives live in the
-[`curryrasul/zkAPI`](https://github.com/curryrasul/zkAPI) submodule. The
+`protocol/` directory, tracked directly in this repository. The
 operational layer is **orchestration, not crypto**.
 
 ## Repository layout
 
 ```
-cairo/          - ZK proof programs (request + withdrawal)
-contracts/      - Solidity settlement contract (ZkApiVault)
-rust/           - Off-chain Rust implementation
-  crates/
-    zkapi-types     - Shared types, serialization, domain constants
-    zkapi-core      - Poseidon hash, Merkle tree, nullifier, leaf helpers
-    zkapi-crypto    - Pedersen commitment, XMSS/WOTS+ signatures
-    zkapi-proof     - Proof generation/verification orchestration
-    zkapi-client    - Client wallet, note lifecycle, recovery
-    zkapi-serverd   - Server: proof verification, nullifier store, signing
-    zkapi-indexerd  - Merkle tree mirror from on-chain events
-    zkapi-cli       - Command-line interface
+protocol/
+  cairo/        - ZK proof programs (request + withdrawal)
+  contracts/    - Solidity settlement contract (ZkApiVault)
+  rust/         - Off-chain protocol Rust implementation
+    crates/
+      zkapi-types   - Shared types, serialization, domain constants
+      zkapi-core    - Poseidon hash, Merkle tree, nullifier, leaf helpers
+      zkapi-crypto  - Pedersen commitment, XMSS/WOTS+ signatures
+      zkapi-proof   - Proof generation/verification orchestration
+      zkapi-client  - Client wallet, note lifecycle, recovery
+crates/         - Application Rust implementation
+  zkapi-serverd     - Server: proof verification, nullifier store, signing
+  zkapi-indexerd    - Merkle tree mirror from on-chain events
+  zkapi-cli         - Command-line interface
 ```
 
 ## `clientd` launch

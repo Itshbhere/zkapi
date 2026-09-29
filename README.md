@@ -31,8 +31,8 @@ longer checks out or builds OA Chat.
 The SDK owns wallet storage, proof generation, ephemeral keys, settlement,
 withdrawals, and public payment history. It contains the pinned public WASM
 and proving artifacts and has no runtime npm dependency. Consumers can install
-an immutable Git commit without initializing this repository's protocol
-submodule or installing Rust. See [SDK integration](sdk/README.md).
+an immutable Git commit without building the protocol source or installing
+Rust. See [SDK integration](sdk/README.md).
 
 ```bash
 npm ci
@@ -55,8 +55,11 @@ cannot be converted or migrated by this SDK configuration change.
 
 ## Build and test the Rust clients
 
+The protocol source and its Solidity dependencies are tracked directly under
+`protocol/`. A normal clone includes them; no submodule initialization is needed.
+See [source provenance](protocol/VENDORED.md) for the imported revisions.
+
 ```bash
-git submodule update --init --recursive protocol
 cargo build --release --bin zkapi
 cargo test --workspace
 (cd protocol/contracts && forge test)
@@ -65,7 +68,7 @@ cargo test --workspace
 The daemon is independent of Node and OA Chat. Its default `/funding/` is a
 small help page. An application may optionally supply a prebuilt frontend with
 `ZKAPI_FRONTEND_DIST`; see [local client setup](docs/local-client-quickstart.md).
-To deliberately rebuild the SDK's public WASM from the pinned protocol source,
+To deliberately rebuild the SDK's public WASM from the protocol source,
 use `scripts/build-browser-client.sh`; review and commit the updated artifact
 hashes. Ordinary SDK consumers do not need that step.
 

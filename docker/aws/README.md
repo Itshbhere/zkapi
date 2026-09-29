@@ -11,7 +11,7 @@ manifest. Do not replace that launcher or vault with this ERC20 example; native
 pricing, gwei billing, signing keys, and persistent state must match the deployment.
 
 Build on a Linux VM with Docker Engine and Compose, from the complete source
-tree (including the updated `protocol` submodule and uncommitted integration
+tree (including the in-repository `protocol/` source and uncommitted integration
 changes, if those are the intended release):
 
 ```sh

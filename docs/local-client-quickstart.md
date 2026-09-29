@@ -1,12 +1,11 @@
 # Local client quickstart
 
 Prerequisite: Rust. Foundry's `cast` is required for the terminal funding flow below.
-Clone and build:
+Clone and build; the protocol source is included in this repository:
 
 ```bash
 git clone https://github.com/OpenAnonymity/zkapi-EF-collab.git
 cd zkapi-EF-collab
-git submodule update --init --recursive
 cargo build --release --bin zkapi
 ```
 

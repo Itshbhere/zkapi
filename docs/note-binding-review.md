@@ -132,8 +132,8 @@ Groth16 adapter. A separate test rejects a rewritten archived request root.
 The WASM command generates proofs using the packaged JS/WASM/proving-key bytes
 and verifies them against the native keys; it requires Node 24 or later.
 
-The protocol submodule repair is commit `49164f6`, published on
-`codex/zkapi-review-fixes-sepolia` in `mingyech/zkapi`. The merged native integration pins protocol `8b2d4e3`, whose circuit, setup,
+The original protocol repair is commit `49164f6`, published on
+`codex/zkapi-review-fixes-sepolia` in `mingyech/zkapi`. The merged native integration pinned protocol `8b2d4e3`, whose circuit, setup,
 WASM sources and challenge regressions are identical to `49164f6`, with native
 ETH contract support added. The native challenge path also preserves active
 issued-lease evidence during usage-receipt outages and full deployment/request
@@ -141,6 +141,11 @@ binding for replay. Native ETH rejects ordinary proxy billing; the ERC-20 proxy
 and direct OpenRouter optional-mode fixes are retained for their supported deployments. The fresh Sepolia deployment is recorded separately
 in the [deployment notes](deployments/sepolia-note-bound-20260922.md); existing
 vaults are not upgraded by this source revision.
+
+The protocol source is now tracked directly under `protocol/` in this
+repository, imported from `8b2d4e3da921f956e1eb6b93afbf722a877c060c`.
+The revisions above record the source provenance of the earlier validation
+and deployments; no submodule checkout is required.
 
 Verified locally on September 22, 2026: 82 protocol Rust tests, 124 integration
 Rust tests, 189 SDK tests, and 20 Solidity tests passed. The shipped-WASM proof
@@ -156,7 +161,7 @@ Current host application verification is tracked separately in oa-chat docs.
 ## Native merge acceptance, 2026-09-27
 
 The native branch merges review commit `2eda8f3` with the existing `6f12f3b`
-line. Protocol `8b2d4e3` remains pinned for native ETH compatibility; no new
+line. That merge retained protocol `8b2d4e3` for native ETH compatibility; no new
 trusted setup or deployed-vault migration is introduced by this merge.
 
 The merge additionally preserves escape challenge evidence for direct leases

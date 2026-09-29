@@ -1,0 +1,29 @@
+[package]
+name = "zkapi-cli"
+description = "Command-line interface for zkAPI"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zkapi"
+path = "src/main.rs"
+
+[dependencies]
+zkapi-types   = { workspace = true }
+zkapi-core    = { workspace = true }
+zkapi-crypto  = { workspace = true }
+zkapi-proof   = { workspace = true }
+zkapi-client  = { workspace = true }
+zkapi-server  = { workspace = true }
+zkapi-indexer = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+hex                = { workspace = true }
+rand               = { workspace = true }
+tokio              = { workspace = true }
+clap               = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }

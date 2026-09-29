@@ -1,0 +1,32 @@
+[package]
+name = "zkapi-server"
+description = "Proof verification, nullifier storage, API execution, and signing for zkAPI"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+dev-witness-envelope = ["zkapi-proof/dev-witness-envelope"]
+
+[dependencies]
+zkapi-types  = { workspace = true }
+zkapi-core   = { workspace = true }
+zkapi-crypto = { workspace = true }
+zkapi-proof  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+hex             = { workspace = true }
+base64          = { workspace = true }
+rand            = { workspace = true }
+uuid            = { workspace = true }
+starknet-crypto      = { workspace = true }
+starknet-curve       = { workspace = true }
+starknet-types-core  = { workspace = true }
+tokio        = { workspace = true }
+axum         = { workspace = true }
+rusqlite     = { workspace = true }
+thiserror    = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { workspace = true }

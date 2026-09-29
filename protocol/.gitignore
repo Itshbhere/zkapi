@@ -1,0 +1,26 @@
+.DS_Store
+
+# Rust
+rust/target/
+
+target/
+
+# Cairo / Scarb
+cairo/target/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# mdBook
+docs/book/
+
+# Local runtime state
+.zkapi/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+# The selected v2 Groth16 proving/verifying keys are versioned intentionally:
+# clients must use the exact setup bound into the deployed Solidity verifier.

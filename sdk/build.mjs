@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const sdkRoot = path.dirname(fileURLToPath(import.meta.url));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
-/** Read and verify the package's public artifacts without any source submodule. */
+/** Read and verify the package's public artifacts without building protocol source. */
 export async function verifyBrowserSdkAssets() {
     const manifest = JSON.parse(await fs.readFile(path.join(sdkRoot, 'assets/manifest.json'), 'utf8'));
     if (manifest.circuitId !== 'zkapi-v2-note-bound-v1') throw new Error('Incompatible SDK circuit artifacts.');
@@ -23,7 +23,7 @@ export async function verifyBrowserSdkAssets() {
 /**
  * Publish one deployment's immutable proof assets beneath the host's app route.
  * The host supplies its esbuild `build` function; esbuild is not a runtime SDK
- * dependency. No network, private credentials, Rust, or submodules are required.
+ * dependency. No network, private credentials, or Rust are required.
  */
 export async function buildBrowserSdkAssets({ outDir, network = 'sepolia', publicPath = '/zkapi/', build } = {}) {
     if (!['sepolia', 'mainnet'].includes(network)) throw new Error('Network must be sepolia or mainnet.');
