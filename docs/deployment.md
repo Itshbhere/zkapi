@@ -30,6 +30,10 @@ See [Sepolia shared password](testnet-auth.md) for client behavior, proxy header
 forwarding, validation and rotation. Never put this value in the public SDK
 manifest or configure it on Mainnet.
 
+The [September 29 Sepolia rollout record](deployments/sepolia-auth-20260929.md)
+records the deployed authentication revision, preserved native deployment and
+read-only web/CLI acceptance results.
+
 ## Fresh contracts
 
 `demo/contracts/script/Deploy.s.sol` deploys the real Groth16 adapter and a
