@@ -90,7 +90,14 @@ Ctrl+C preserves saved progress. A signed pending withdrawal resumes its exact
 transaction without another approval. A reverted transaction is never retried
 automatically. Explicit recovery offers a reviewed retry or confirmation of a
 matching payout submitted independently. Public ETH return remains a separate
-wallet menu action with its own approval.
+wallet menu action with its own approval. Return quotes expire after 30 seconds;
+if one expires before signing, run the same wallet menu again and review a
+fresh quote. A saved signed return resumes its original transaction instead.
+
+Returning `all` requires an ordinary Ethereum account with no deployed code.
+For a delegated or contract recipient, choose an exact ETH amount and leave
+room for the displayed maximum fee. The exact-amount path still simulates the
+transfer and requires destination, amount and fee approval.
 
 ## Inference and activity
 
