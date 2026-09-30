@@ -1,5 +1,44 @@
 # Current implementation notes
 
+## 2026-09-30: Fresh Sepolia client deployment pins
+
+- Update only the client embedded Sepolia manifest, manifest URL, canonical
+  browser-profile fixture and existing QR test pins to
+  `zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930`. Chain 11155111 uses
+  vault `0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F` and server
+  `https://sepolia.100.21.48.23.sslip.io`. The four proof hashes and the
+  pinned historical Rust helper remain unchanged; no runtime trust override,
+  verifier bypass, mainnet update or automatic wallet migration is added.
+- Preserve old deployment profiles and their matching client. An isolated new
+  configuration is required for the fresh Sepolia wallet; see
+  [client configuration](../zkapi-clientd/docs/CLI_ZKAPI.md#sepolia).
+- An isolated native Darwin arm64 test build uses these exact four source
+  files, matching installed helper/patch provenance and all proof hashes.
+  `CGO_ENABLED=0 go test ./...`, vet and build pass; installer (30), source
+  preparation (1) and packaging (11) tests pass. The local Xcode license prevented
+  full local race testing; [CI](https://github.com/OpenAnonymity/zkapi/actions/runs/36767392475)
+  passed race tests and vet on both Ubuntu and macOS for the exact tested source.
+  App, contracts, Rust and Docker checks also passed. Independent review
+  approved the narrow pin change.
+- Live Sepolia CLI acceptance passed: isolated funding and deposit finalized,
+  the model catalog loaded, and one short inference returned HTTP 200 with
+  station verification marked verified and nonempty response content. Exact
+  response text was not asserted. Settlement, private withdrawal and unused
+  public ETH return completed with finalized receipts. A graceful restart
+  resumed the same saved return transaction without another approval; a later
+  restart confirmed the same funding account, zero private balance, no active
+  note or pending inference, and completed wallet operations. Only a prudent
+  public fee reserve remains. Test services were stopped and the private
+  profile retained. Exact amounts and wallet/transaction identifiers stay in
+  protected operational evidence. No release has been published or installed,
+  and existing user wallets/binaries remain unchanged.
+- Return acceptance covered the ordinary exact-amount path for a delegated
+  recipient. An expired quote failed closed without signing; a fresh quote was
+  reviewed before submission. The CLI's quote and recipient guards were not
+  changed. [Client details](../zkapi-clientd/docs/CLI_ZKAPI.md#withdrawals)
+  describe this existing behavior and preservation of signed recovery state.
+
+
 ## 2026-09-30: Recoverable deposit approval and accurate progress
 
 - An approval may return unsigned `waiting_funds` with no error when the last

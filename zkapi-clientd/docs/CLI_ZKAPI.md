@@ -55,13 +55,21 @@ with input hidden. Fund with Sepolia ETH, never mainnet ETH. Mainnet and
 Sepolia have separate signing keys and wallet state. Switching networks keeps
 the other network's recovery data.
 
-The live manifests, contracts, issuer, verifier and inference services are
-unchanged from the OA Chat daemon. Mainnet uses the deployment behind
-<https://staging.openanonymity.ai/>; Sepolia uses the one behind
-<https://oa-wallet-eth-sepolia.vercel.app/>. Their manifest origins remain
-`https://54.67.93.98.sslip.io/config.json` and
-`https://52.52.207.206.sslip.io/config.json`, respectively. Deployment pins are
-validated locally. No server or contract is deployed by installing the client.
+Sepolia is pinned to the September 30 fresh deployment used by
+<https://oa-wallet-eth-sepolia.vercel.app/>:
+`https://sepolia.100.21.48.23.sslip.io/config.json`, chain `11155111`, vault
+`0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F`. The embedded manifest also pins
+its new state/clearance signing keys and the unchanged proof setup. The OA
+issuer, verifier and provider routing remain unchanged. The mainnet client pin
+remains `https://54.67.93.98.sslip.io/config.json`; this change updates only
+Sepolia. Installing the client does not deploy a server or contract.
+
+Preserve old Sepolia profiles and the matching earlier client for recovery.
+A fresh deployment needs a separate `--config-dir`; saved manifests and funding
+records are never silently rebound. Do not delete an existing profile to get
+past a deployment mismatch. The September 30 change is source-only until a
+new client bundle is explicitly published; installing an older release retains
+its older embedded deployment.
 
 ## Withdrawals
 
@@ -82,7 +90,14 @@ Ctrl+C preserves saved progress. A signed pending withdrawal resumes its exact
 transaction without another approval. A reverted transaction is never retried
 automatically. Explicit recovery offers a reviewed retry or confirmation of a
 matching payout submitted independently. Public ETH return remains a separate
-wallet menu action with its own approval.
+wallet menu action with its own approval. Return quotes expire after 30 seconds;
+if one expires before signing, run the same wallet menu again and review a
+fresh quote. A saved signed return resumes its original transaction instead.
+
+Returning `all` requires an ordinary Ethereum account with no deployed code.
+For a delegated or contract recipient, choose an exact ETH amount and leave
+room for the displayed maximum fee. The exact-amount path still simulates the
+transfer and requires destination, amount and fee approval.
 
 ## Inference and activity
 
