@@ -1,23 +1,23 @@
 {
-  "deployment_manifest_url": "https://52.52.207.206.sslip.io/config.json",
+  "deployment_manifest_url": "https://sepolia.100.21.48.23.sslip.io/config.json",
   "allowed_deployment_manifest_urls": [
-    "https://52.52.207.206.sslip.io/config.json"
+    "https://sepolia.100.21.48.23.sslip.io/config.json"
   ],
   "trusted_deployment": {
-    "deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260928",
+    "deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930",
     "chain_id": 11155111,
-    "contract_address": "0x999F40773e47f7e07f435C0CC69225c409B64329",
+    "contract_address": "0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F",
     "billing_token_address": null,
-    "protocol_server_url": "https://52.52.207.206.sslip.io",
-    "indexer_url": "https://52.52.207.206.sslip.io",
+    "protocol_server_url": "https://sepolia.100.21.48.23.sslip.io",
+    "indexer_url": "https://sepolia.100.21.48.23.sslip.io",
     "request_charge_cap": 50000,
     "state_signing_key": {
-      "x": "0x11133b0c68d0f18d64819f706078e5f90cc678504496127bda8ce7a6835dc0d6",
-      "y": "0x17611452c29bd3dafe702c434a262f236e1210344d856c9933bbbee812e12934"
+      "x": "0x25a4453190e930f9716eebcab165170706d31d1b3969d106a50d7ae374a23d61",
+      "y": "0x1b0f74306dfce1371752a0d7c7d27359c398b8305798492fd1095074c0639953"
     },
     "clearance_signing_key": {
-      "x": "0x1449e160294044a23cfca16da12e697f80e3f3d72be8218cbb0d55b532501aa9",
-      "y": "0x1068acb20d56fb54ea5ab32f7c116d17e6f7abf4f0fd9058e11e0660a5a43af1"
+      "x": "0x2b8dc190013bb10de72398ca462027f21b7a35eb6cb957b9319d76bd3c3c1b7d",
+      "y": "0xa6744dc1bc99bf78b29d6e76db2a0b5598c79d1ce2377b9044aa9dc323dd963"
     },
     "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
     "billing_asset": "native_eth",

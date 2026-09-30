@@ -21,7 +21,7 @@ import (
 
 const (
 	MainnetManifest         = "https://54.67.93.98.sslip.io/config.json"
-	SepoliaManifest         = "https://52.52.207.206.sslip.io/config.json"
+	SepoliaManifest         = "https://sepolia.100.21.48.23.sslip.io/config.json"
 	CompanionRevision       = "20aa542ae98e767c0507133fd34b12a56f5ccd3d"
 	DefaultClientURL        = "http://127.0.0.1:43134"
 	DefaultInferenceBaseURL = "https://openrouter.ai/api/v1"

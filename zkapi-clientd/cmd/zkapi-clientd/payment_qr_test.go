@@ -24,8 +24,8 @@ func TestPaymentRequestURI(t *testing.T) {
 		q := paymentQRTestQuote()
 		q.ChainID = chain
 		if chain == 11155111 {
-			q.Contract = "0x999F40773e47f7e07f435C0CC69225c409B64329"
-			q.DeploymentID = "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260928"
+			q.Contract = "0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F"
+			q.DeploymentID = "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930"
 		}
 		uri, err := paymentRequestURI(q)
 		want := "ethereum:" + q.Address + "@" + new(big.Int).SetUint64(chain).String() + "?value=750001000029999"
