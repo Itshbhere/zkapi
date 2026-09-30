@@ -1,0 +1,128 @@
+{
+  "tag": "clientd-v0.1.0",
+  "source_commit": "3ab395aab8832ec467f3afb49cc427018d3f343d",
+  "run": "https://github.com/OpenAnonymity/zkapi/actions/runs/36698217866",
+  "artifacts": {
+    "SHA256SUMS": "9e748edba905ccdefb19f70ed29cee9b858e3e646a20e5d5de10ed2c0cb1bea5",
+    "install.sh": "ad18d99c73871f3c64ee8e6fb2133c16d692fe4657625c0579b369415dca0ea8",
+    "zkapi-clientd-nix.tar.gz": "70aabd0800a66cc6d87c733c50a7f60b743c394b1373c9927006683da022c8dc",
+    "zkapi-clientd-packaging.tar.gz": "dde6c089c739982d4bddb366213a9ca327ae4632b2764962253e57cd8f71aba5",
+    "zkapi-clientd_0.1.0_darwin_amd64.tar.gz": "a4067cbd618fae09fdc0e9665b4e7523e815dec17016a55dbb1a92afa400db3d",
+    "zkapi-clientd_0.1.0_darwin_arm64.tar.gz": "7eeb4fcf3b96148650556c9e757c71bd669e6fcb81cb545fb74258a69ffe3784",
+    "zkapi-clientd_0.1.0_linux_amd64.deb": "cbd4f2e6657b4b8d99701c221eb4a81ba64067b436a23131f41de0bd584ebbaa",
+    "zkapi-clientd_0.1.0_linux_amd64.rpm": "60b38fdea5218dba9f41cbbe47a5db2138850a939867cbf9cfe48668725fefcb",
+    "zkapi-clientd_0.1.0_linux_amd64.tar.gz": "343ec7bcca97ea9f3661bc9382410d33d33df03b9ed41f5d20ebc3b753f360fb",
+    "zkapi-clientd_0.1.0_linux_arm64.deb": "e19c602e98f3dda0b6835dfeb491d2925abdbde879d9a9533f02eef85b0a334b",
+    "zkapi-clientd_0.1.0_linux_arm64.rpm": "3f91734fb6223273a9345881b96403edd936dec2d4e0cf1de2e5ac7471c2c9e9",
+    "zkapi-clientd_0.1.0_linux_arm64.tar.gz": "5422aafe2a9ec6a3f290296c0c56467dc179f5651c21a67f62a6e925c1ede050"
+  },
+  "live_wallet_transactions": false,
+  "native_builds": [
+    {
+      "target": "darwin_amd64",
+      "provenance": {
+        "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+        "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+        "companion_patch_sha256": "2211aa67a6a62e03af115767e6e802a0a0ec0b840da767272897da3f6ce14a3f",
+        "go_toolchain": "go version go1.25.0 darwin/amd64",
+        "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+        "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+        "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+        "source_date_epoch": "1790761569",
+        "zkapi_clientd_commit": "3ab395aab8832ec467f3afb49cc427018d3f343d",
+        "zkapi_clientd_source": "https://github.com/OpenAnonymity/zkapi",
+        "zkapi_clientd_source_dirty": false
+      }
+    },
+    {
+      "target": "darwin_arm64",
+      "provenance": {
+        "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+        "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+        "companion_patch_sha256": "2211aa67a6a62e03af115767e6e802a0a0ec0b840da767272897da3f6ce14a3f",
+        "go_toolchain": "go version go1.25.0 darwin/arm64",
+        "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+        "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+        "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+        "source_date_epoch": "1790761569",
+        "zkapi_clientd_commit": "3ab395aab8832ec467f3afb49cc427018d3f343d",
+        "zkapi_clientd_source": "https://github.com/OpenAnonymity/zkapi",
+        "zkapi_clientd_source_dirty": false
+      }
+    },
+    {
+      "target": "linux_amd64",
+      "provenance": {
+        "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+        "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+        "companion_patch_sha256": "2211aa67a6a62e03af115767e6e802a0a0ec0b840da767272897da3f6ce14a3f",
+        "go_toolchain": "go version go1.25.0 linux/amd64",
+        "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+        "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+        "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+        "source_date_epoch": "1790761569",
+        "zkapi_clientd_commit": "3ab395aab8832ec467f3afb49cc427018d3f343d",
+        "zkapi_clientd_source": "https://github.com/OpenAnonymity/zkapi",
+        "zkapi_clientd_source_dirty": false
+      }
+    },
+    {
+      "target": "linux_arm64",
+      "provenance": {
+        "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+        "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+        "companion_patch_sha256": "2211aa67a6a62e03af115767e6e802a0a0ec0b840da767272897da3f6ce14a3f",
+        "go_toolchain": "go version go1.25.0 linux/arm64",
+        "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+        "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+        "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+        "source_date_epoch": "1790761569",
+        "zkapi_clientd_commit": "3ab395aab8832ec467f3afb49cc427018d3f343d",
+        "zkapi_clientd_source": "https://github.com/OpenAnonymity/zkapi",
+        "zkapi_clientd_source_dirty": false
+      }
+    }
+  ],
+  "public_assets_verified": [
+    "SHA256SUMS",
+    "install.sh",
+    "zkapi-clientd-nix.tar.gz",
+    "zkapi-clientd-packaging.tar.gz",
+    "zkapi-clientd_0.1.0_darwin_amd64.tar.gz",
+    "zkapi-clientd_0.1.0_darwin_arm64.tar.gz",
+    "zkapi-clientd_0.1.0_linux_amd64.deb",
+    "zkapi-clientd_0.1.0_linux_amd64.rpm",
+    "zkapi-clientd_0.1.0_linux_amd64.tar.gz",
+    "zkapi-clientd_0.1.0_linux_arm64.deb",
+    "zkapi-clientd_0.1.0_linux_arm64.rpm",
+    "zkapi-clientd_0.1.0_linux_arm64.tar.gz"
+  ],
+  "release_url": "https://github.com/OpenAnonymity/zkapi/releases/tag/clientd-v0.1.0",
+  "prerelease": true,
+  "public_install_check": {
+    "platform": "darwin-arm64",
+    "public_piped_install": true,
+    "public_piped_reinstall": true,
+    "installed_version": "zkapi-clientd 0.1.0",
+    "previous_bundle_retained": true,
+    "private_state_preserved": true,
+    "no_build_or_path_instructions": true,
+    "missing_config_guidance": true,
+    "user_installation_modified": false,
+    "live_wallet_transactions": false
+  },
+  "release_workflow_conclusion": "success",
+  "native_install_reinstall_targets": [
+    "darwin-amd64",
+    "darwin-arm64",
+    "linux-amd64",
+    "linux-arm64"
+  ],
+  "package_validation_targets": [
+    "darwin-amd64",
+    "darwin-arm64",
+    "linux-amd64",
+    "linux-arm64"
+  ],
+  "published_at": "2026-09-30T10:07:58Z"
+}

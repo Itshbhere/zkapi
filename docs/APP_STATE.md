@@ -13,8 +13,15 @@
 - macOS installer CI exposed Bash 3.2 empty-array handling in the optional source
   installer. Its tests now use the system Bash, with explicit empty-argument and
   failure-propagation coverage. This does not change wallet or server behavior.
-- Publication/validation: pending the four native builds and release package
-  checks. No live inference or wallet transactions are part of this work.
+- Published [clientd-v0.1.0](https://github.com/OpenAnonymity/zkapi/releases/tag/clientd-v0.1.0)
+  as a prerelease from `3ab395aab8832ec467f3afb49cc427018d3f343d`. All four
+  native builds, install/reinstall tests, package checks and release assembly
+  passed in [CI](https://github.com/OpenAnonymity/zkapi/actions/runs/36698217866).
+  All 12 public asset downloads match the reviewed checksums and exact source.
+  The public piped installer passed fresh-install/update tests on Darwin arm64
+  in an isolated prefix, preserving private state and previous bundles with
+  no build or PATH instructions. See [release evidence](releases/clientd-0.1.0.json).
+  No live inference, wallet transaction or actual user installation was changed.
 
 ## 2026-09-30: zkapi-clientd migration from OA Chat
 
