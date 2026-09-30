@@ -225,6 +225,10 @@ class InstallerTests(unittest.TestCase):
     def assert_success(self, result, version="1.2.3", prefix=None):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("unbound variable", result.stderr)
+        self.assertNotIn(str(self.home), result.stdout)
+        self.assertNotIn(str(prefix or self.prefix), result.stdout)
+        self.assertNotIn("export PATH", result.stdout)
+        self.assertNotIn("Your PATH", result.stdout)
         self.assert_installed(version, prefix)
 
     def assert_installed(self, version="1.2.3", prefix=None):
@@ -283,6 +287,9 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.home / ".config/systemd").exists())
         self.assertFalse((self.home / "Library/LaunchAgents").exists())
         self.assertFalse(self.config_log.exists())
+        self.assertIn("Installed zkapi-clientd 1.2.3.", self.last_result.stdout)
+        for developer_instruction in ("go build", "cargo build", "Prerequisites", "build from source"):
+            self.assertNotIn(developer_instruction, self.last_result.stdout)
         self.assertIn("Configure: zkapi-clientd config", self.last_result.stdout)
         self.assertIn("Then serve inference: zkapi-clientd serve", self.last_result.stdout)
         calls = [json.loads(line) for line in self.curl_log.read_text().splitlines()]

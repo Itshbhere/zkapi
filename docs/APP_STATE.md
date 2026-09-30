@@ -1,5 +1,21 @@
 # Current implementation notes
 
+## 2026-09-30: One-command binary installation
+
+- The short README now leads with the pinned `clientd-v0.1.0` binary installer
+  from `OpenAnonymity/zkapi`, followed by `zkapi-clientd config` and `serve`.
+  It contains no build prerequisites, checkout steps or PATH exports. The user
+  explicitly requested assuming PATH is already configured. Installer success
+  output follows that assumption; internal setup still selects its matched helper.
+- The command supports installation and updates, validates native archives with
+  SHA-256, preserves private state and previous bundles, and leaves setup separate.
+  The client uses a prerelease-specific URL instead of repository-wide `latest`.
+- macOS installer CI exposed Bash 3.2 empty-array handling in the optional source
+  installer. Its tests now use the system Bash, with explicit empty-argument and
+  failure-propagation coverage. This does not change wallet or server behavior.
+- Publication/validation: pending the four native builds and release package
+  checks. No live inference or wallet transactions are part of this work.
+
 ## 2026-09-30: zkapi-clientd migration from OA Chat
 
 - `zkapi-clientd/` is the client-side Go daemon formerly at
@@ -13,8 +29,9 @@
   start. [Client details](../zkapi-clientd/docs/CLI_ZKAPI.md),
   [packaging](../zkapi-clientd/docs/CLI_PACKAGING.md), and
   [privacy](../zkapi-clientd/docs/PRIVACY.md) cover advanced settings and recovery.
-  The source installer provides a working installation before binary releases
-  exist. Client release tags use `clientd-v`, separately from SDK/operator tags.
+  End users install prebuilt bundles with a one-command installer. Source builds
+  remain optional developer tooling. Client release tags use `clientd-v`,
+  separately from SDK/operator tags.
 - Default mainnet/direct transport, $20-default deposit prompt, terminal payment
   QR and automatic balance waiting, fee-bound Enter confirmation, guided
   withdrawal, loopback key-free API, serial request queue, 60-second key reuse,

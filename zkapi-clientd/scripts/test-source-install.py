@@ -70,7 +70,8 @@ PYCODE
         self.temporary.cleanup()
 
     def run_install(self, *arguments):
-        return subprocess.run(['bash', str(self.script), *arguments], env=self.env,
+        # Exercise macOS's shipped Bash 3.2 even when Homebrew Bash is on PATH.
+        return subprocess.run(['/bin/bash', str(self.script), *arguments], env=self.env,
                               text=True, capture_output=True, timeout=30)
 
     def calls(self):
@@ -93,8 +94,17 @@ PYCODE
         result = self.run_install('--version', '1.2.3')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.calls()
+        self.assertEqual([call[0] for call in calls], ['prepare', 'build', 'install'])
+        self.assertNotIn('unbound variable', result.stderr)
         self.assertEqual(calls[1][1][0], '1.2.3')
         self.assertNotIn('--setup', calls[-1][1])
+
+    def test_default_no_arguments_completes_installation(self):
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('unbound variable', result.stderr)
+        self.assertEqual([call[0] for call in self.calls()], ['prepare', 'build', 'install'])
+        self.assertEqual(self.calls()[-1][1][:2], ['--version', '0.0.0'])
 
     def test_failures_stop_before_next_stage_and_clean_up(self):
         for index, kind in enumerate(('prepare', 'build', 'install')):

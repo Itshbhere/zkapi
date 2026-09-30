@@ -4,13 +4,10 @@ A local OpenAI-compatible API, paid from your private ETH balance. No OA account
 
 ## Quick start
 
-You need Git, Go 1.25+, Rust 1.93+, Python 3, a C/C++ compiler, CMake, pkg-config, and OpenSSL 3 development libraries. On macOS, install Xcode command-line tools and `brew install go rust cmake pkg-config openssl@3`. The installer builds both client binaries; the first build takes several minutes.
+Install or update:
 
 ```sh
-git clone https://github.com/OpenAnonymity/zkapi.git
-cd zkapi/zkapi-clientd
-./scripts/install-source.sh
-export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.0/install.sh | bash
 ```
 
 Configure your wallet:
@@ -29,6 +26,8 @@ zkapi-clientd serve
 
 Leave that terminal running. In Open WebUI or another OpenAI-compatible client, set the base URL to **`http://127.0.0.1:8787/v1`** and leave the API key empty (use `local` if the app requires a value). Select a model and chat. The endpoint accepts local connections only.
 
+To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved.
+
 To withdraw, run `zkapi-clientd config --menu` and choose `withdraw`. It asks for the destination and waits for extra ETH for fees only if needed.
 
-[More options, including Sepolia and Docker clients](docs/CLI_ZKAPI.md) · [Updates and builds](docs/CLI_PACKAGING.md) · [Privacy](docs/PRIVACY.md)
+[More options, including Sepolia and Docker clients](docs/CLI_ZKAPI.md) · [Installation details](docs/CLI_PACKAGING.md) · [Privacy](docs/PRIVACY.md)

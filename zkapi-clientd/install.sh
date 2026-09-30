@@ -256,20 +256,10 @@ HELP
         mv -fT "$install_root/.install-lock/current" "$install_root/current"
     fi
     activated=1
-    printf '\nInstalled zkapi-clientd %s to %s/bin\n' "$release_version" "$prefix"
-    case ":${PATH:-}:" in
-        *":$prefix/bin:"*) ;;
-        *)
-            # shellcheck disable=SC2016 # Print a command for the user's shell.
-            printf 'Add this directory to PATH (and your shell profile to keep it):\n  export PATH=%q:"$PATH"\n' "$prefix/bin" ;;
-    esac
-    target=$(command -v zkapi-clientd || true)
-    if [[ -n "$target" && "$target" != "$prefix/bin/zkapi-clientd" ]]; then
-        printf 'Your PATH currently selects %s. Put %s/bin first to use this installation.\n' "$target" "$prefix"
-    fi
+    printf '\nInstalled zkapi-clientd %s.\n' "$release_version"
     if [[ -n "$current_target" ]]; then
         printf 'Existing private configuration and wallet state were preserved.\n'
-        printf 'Restart any running daemon to use the new version. Previous release retained at %s/%s.\n' "$install_root" "$current_target"
+        printf 'Restart any running daemon to use the new version. Previous version retained for recovery.\n'
     fi
     [[ "$setup" = 1 ]] || printf 'Configure: zkapi-clientd config\nThen serve inference: zkapi-clientd serve\n'
     cleanup

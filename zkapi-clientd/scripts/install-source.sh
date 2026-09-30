@@ -87,4 +87,10 @@ with Path(sys.argv[1]).open('rb') as source:
 print(digest.hexdigest())
 PY
 )
-bash "$client_dir/install.sh" --version "$version" --archive "$archive" --sha256 "$digest" "${install_args[@]}"
+# Bash 3.2 on macOS treats an empty array as unset with nounset. Construct
+# the argument list before expanding optional arguments so no-options works.
+set -- --version "$version" --archive "$archive" --sha256 "$digest"
+if [[ ${#install_args[@]} -gt 0 ]]; then
+    set -- "$@" "${install_args[@]}"
+fi
+bash "$client_dir/install.sh" "$@"

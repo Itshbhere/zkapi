@@ -1,30 +1,39 @@
 # Installation, updates and development
 
-## Install from source
+## One-command installation
 
-Until a `zkapi-clientd` binary release is published, the source installer is the
-working installation path:
+Install or update the `0.1.0` prerelease:
 
 ```sh
-git clone https://github.com/OpenAnonymity/zkapi.git
-cd zkapi/zkapi-clientd
-./scripts/install-source.sh
-export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.0/install.sh | bash
+```
+
+Then configure and serve:
+
+```sh
 zkapi-clientd config
 zkapi-clientd serve
 ```
 
-Use Git, Go 1.25+, Rust 1.93+, Python 3, C/C++ tools, CMake, pkg-config and
-OpenSSL 3 development headers/libraries. On macOS install Xcode command-line
-tools and `brew install go rust cmake pkg-config openssl@3`. Build as your
-ordinary user. The script builds the Go frontend and an exact pinned Rust
-wallet helper, bundles their proof assets and dependency notices, and activates
-the bundle through the checksum-validating installer. It neither funds a wallet
-nor starts inference. It does not change shell startup files.
+The command downloads a prebuilt native bundle and checks its SHA-256 before
+activation. No compiler, Git or Python is needed. It assumes the installation's
+`bin` directory is already on PATH. The default prefix is `~/.local`; use
+`--prefix` for another writable absolute prefix. Configuration is separate from
+installation unless `--setup` is supplied. A new profile defaults to Ethereum
+Mainnet and direct HTTPS; `config --network sepolia` explicitly selects test ETH.
 
-For updates, stop `serve`, update this checkout with `git pull --ff-only`, rerun
-`./scripts/install-source.sh`, and restart `serve`. Configuration and wallet
-state live outside the installation and are preserved.
+For updates, stop `serve`, rerun the same install command, then restart `serve`.
+The previous bundle is retained, and configuration, signing keys and recovery
+state remain in their private directory. The installer does not start services,
+modify shell startup files or terminate running processes.
+
+This exact-tag command works for prereleases. GitHub's repository-wide
+`latest/download` URL excludes prereleases and may select unrelated operator
+releases, so it is not used. The generated installer is pinned to its release.
+
+Runtime requirements: macOS 13+ or Linux with glibc 2.39+, on amd64 or arm64;
+Bash, curl, tar and SHA-256 tooling (`sha256sum` or `shasum`). Linux also needs
+OpenSSL 3, libgcc and CA certificates.
 
 ## Existing OA Chat wallets
 
@@ -67,6 +76,12 @@ and `serve` commands.
 
 ## Maintainer builds and releases
 
+Source builds are optional developer tooling; the end-user command above uses
+prebuilt binaries. For local development, `./scripts/install-source.sh` builds
+and installs this checkout. It requires Git, Go 1.25+, Rust 1.93+, Python 3,
+C/C++ tools, CMake, pkg-config and OpenSSL 3 development headers/libraries.
+On macOS install Xcode command-line tools and the corresponding Homebrew tools.
+
 ```sh
 ./scripts/prepare-zkapi.sh /tmp/clientd-wallet-source
 ./scripts/build-native.sh 0.1.0 /tmp/clientd-artifacts /tmp/clientd-wallet-source
@@ -80,15 +95,14 @@ The client release namespace is `clientd-vMAJOR.MINOR.PATCH`, separate from
 operator/SDK releases. The client release workflow assembles checksum-pinned
 installers and native archives, Homebrew/AUR/Nix metadata, and Linux packages,
 then creates a draft release for publication. Homebrew taps and AUR packages
-are not automatically published. No client release is implied by the source
-migration. Do not advertise an installation URL for an unpublished tag.
+are not automatically published. Publish a client prerelease only after the
+native, installer and package validation jobs succeed.
 
 `install.sh --version MAJOR.MINOR.PATCH` selects a published native bundle from
 `OpenAnonymity/zkapi`. Its release-generated form is pinned to its own version.
 It supports install/update with the same prefix and optional `--setup`.
 `--setup` runs configuration after activation; no configuration is performed
-by default. Future binary release commands belong in the short README once
-their assets are actually available.
+by default. Update the pinned README URL when publishing another client release.
 
 The root Rust workspace intentionally has a newer native-only operator layout.
 The frontend still prepares historical companion commit
