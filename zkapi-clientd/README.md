@@ -16,8 +16,6 @@ Configure your wallet:
 zkapi-clientd config
 ```
 
-The default is **Ethereum Mainnet**, with direct HTTPS and no network proxy. Enter how many dollars to deposit, or press Enter for **$20**. Send the displayed ETH amount to the address or scan its QR code. The client watches for payment; when enough arrives, press Enter to deposit. Activation usually takes about 15 minutes.
-
 Then start the API:
 
 ```sh
