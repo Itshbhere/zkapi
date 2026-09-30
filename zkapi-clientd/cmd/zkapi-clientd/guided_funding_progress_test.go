@@ -119,8 +119,8 @@ func TestGuidedDepositRestoresFundingStatusAfterQuoteRetry(t *testing.T) {
 func TestGuidedDepositRestoresStageAfterInterruptedRecovery(t *testing.T) {
 	f := newWizardFixture()
 	u := &recordingSetupDisplay{}
-	initial := wizardState("deposit_pending")
-	initial.DepositStage = "finalizing"
+	initial := wizardState("confirming")
+	initial.DepositStage = "activating"
 	f.resume = func(uint64) (zkapi.AddressFundingStatus, error) {
 		if f.resumeCalls == 1 {
 			return zkapi.AddressFundingStatus{}, errors.New("temporary response failure")
@@ -132,7 +132,7 @@ func TestGuidedDepositRestoresStageAfterInterruptedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	updates := strings.Join(u.progress, "\n")
-	if strings.Count(updates, "Deposit mined;") != 2 || !strings.Contains(updates, "Could not confirm") || u.active != "" {
+	if strings.Count(updates, "Deposit confirmed; activating") != 2 || !strings.Contains(updates, "Could not confirm") || u.active != "" {
 		t.Fatalf("stage did not recover after the interruption: %s", updates)
 	}
 	if strings.Contains(u.String(), "waiting") || !strings.Contains(u.String(), "Private inference balance activated") || f.approveCalls != 0 {
@@ -173,7 +173,7 @@ func TestGuidedDepositRestoresWaitAfterFundingFallsBelowApprovedAmount(t *testin
 	}
 }
 
-func TestGuidedDepositDistinguishesMiningFeeWaitFinalityAndActivation(t *testing.T) {
+func TestGuidedDepositConfirmsSuccessfulMiningWithoutFinalityWait(t *testing.T) {
 	f := newWizardFixture()
 	u := &fundingWizardUI{}
 	initial := wizardState("deposit_pending")
@@ -181,8 +181,6 @@ func TestGuidedDepositDistinguishesMiningFeeWaitFinalityAndActivation(t *testing
 	stages := []struct{ phase, stage string }{
 		{"deposit_pending", "fee_wait"},
 		{"deposit_pending", "pending"},
-		{"deposit_pending", "finalizing"},
-		{"deposit_pending", "finalizing"},
 		{"confirming", "activating"},
 		{"active", "active"},
 	}
@@ -201,15 +199,15 @@ func TestGuidedDepositDistinguishesMiningFeeWaitFinalityAndActivation(t *testing
 	}
 	output := u.String()
 	previous := -1
-	for _, want := range []string{"waiting to be mined", "signed fee cap", "Deposit mined; waiting for Ethereum finality", "Deposit finalized; activating", "Private inference balance activated"} {
+	for _, want := range []string{"waiting to be mined", "signed fee cap", "Deposit confirmed; activating", "Deposit confirmed. Private inference balance activated"} {
 		index := strings.Index(output, want)
 		if index <= previous {
 			t.Fatalf("missing or out-of-order progress %q: %s", want, output)
 		}
 		previous = index
 	}
-	if strings.Count(output, "Deposit mined;") != 1 || strings.Contains(output, "untrusted remote") || strings.Contains(output, "submitted; waiting") {
-		t.Fatal("progress repeated unnecessarily, leaked remote data, or conflated mining with finality")
+	if strings.Count(output, "Deposit confirmed; activating") != 1 || strings.Contains(output, "untrusted remote") || strings.Contains(output, "finalit") || strings.Contains(output, "finalized") || strings.Contains(output, "15 minutes") {
+		t.Fatal("successful deposit repeated progress, leaked remote data, or claimed a finality wait")
 	}
 	if f.approveCalls != 0 || f.resumeCalls != len(stages) {
 		t.Fatal("progress changed the recovery authorization")
@@ -241,5 +239,60 @@ func TestGuidedDepositStatusFailureDoesNotInventLostInclusion(t *testing.T) {
 	}
 	if f.resumeCalls != 2 || f.approveCalls != 0 {
 		t.Fatal("uncertain progress changed recovery authorization")
+	}
+}
+
+func TestGuidedDepositFailedReceiptWaitsForFinalityWithoutRetry(t *testing.T) {
+	f := newWizardFixture()
+	u := &recordingSetupDisplay{}
+	initial := wizardState("deposit_pending")
+	initial.DepositStage = "failed_finalizing"
+	waits := 0
+	f.resume = func(amount uint64) (zkapi.AddressFundingStatus, error) {
+		if amount != initial.Amount {
+			t.Fatal("failed receipt changed the saved deposit")
+		}
+		if f.resumeCalls == 1 {
+			return initial, nil
+		}
+		return wizardState("reverted"), nil
+	}
+	err := finishGuidedDeposit(context.Background(), f, initial, u, func(context.Context) error {
+		waits++
+		if !strings.Contains(u.active, "receipt reports failure") || !strings.Contains(u.active, "Ethereum finality before an explicit retry") {
+			t.Fatal("failed receipt wait lost its live recovery status")
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "reverted transaction is never retried automatically") || f.resumeCalls != 2 || f.approveCalls != 0 || waits != 2 {
+		t.Fatalf("failed receipt was not stopped after finality: %v", err)
+	}
+	if len(u.progress) != 1 || u.active != "" || strings.Contains(u.String(), "activated") || strings.Contains(u.String(), "confirmed") {
+		t.Fatal("failed receipt repeated transient output or claimed success")
+	}
+}
+
+func TestGuidedDepositLegacyFinalityStageRemainsNeutral(t *testing.T) {
+	f := newWizardFixture()
+	u := &recordingSetupDisplay{}
+	initial := wizardState("deposit_pending")
+	initial.DepositStage = "finalizing"
+	err := finishGuidedDeposit(context.Background(), f, initial, u, func(context.Context) error { return context.Canceled })
+	output := strings.Join(u.progress, "\n")
+	if !errors.Is(err, context.Canceled) || !strings.Contains(output, "Deposit mined; waiting for Ethereum finality.") || strings.Contains(output, "failure") || strings.Contains(output, "failed") || f.resumeCalls+f.approveCalls != 0 || u.active != "" {
+		t.Fatalf("older daemon finality stage was misclassified: %v; %s", err, output)
+	}
+}
+
+func TestGuidedDepositObservedSuccessMovesDirectlyToActivation(t *testing.T) {
+	f := newWizardFixture()
+	u := &recordingSetupDisplay{}
+	initial := wizardState("deposit_pending")
+	initial.DepositStage = "activating"
+	if err := finishGuidedDeposit(context.Background(), f, initial, u, immediateWizardPoll); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.progress) != 1 || u.progress[0] != "Deposit confirmed; activating your private balance." || u.active != "" || !strings.Contains(u.String(), "Deposit confirmed. Private inference balance activated.") || f.approveCalls != 0 || f.resumeCalls != 1 {
+		t.Fatal("observed success retained a finality wait or changed transaction recovery")
 	}
 }

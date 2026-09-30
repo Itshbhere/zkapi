@@ -295,6 +295,8 @@ func (h *FundingHandler) save(record depositRecord) error {
 	return nil
 }
 
+var errUnconfirmedDepositReceipt = errors.New("deposit receipt is not confirmed")
+
 func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 	if !isHex(tx, 32) {
 		return nil, errors.New("invalid deposit transaction hash")
@@ -306,8 +308,9 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 	if err := h.checkWithdrawalFunding(config); err != nil {
 		return nil, err
 	}
-	if err := h.confirmAddressFinality(ctx, config, tx); err != nil {
-		return nil, err
+	receipt, err := h.confirmedDepositReceipt(ctx, config, tx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errUnconfirmedDepositReceipt, err)
 	}
 	raw, err := os.ReadFile(h.statePath)
 	if err != nil {
@@ -325,10 +328,6 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 			return nil, err
 		}
 	}
-	receipt, err := h.receipt(ctx, config.RPC, tx)
-	if err != nil {
-		return nil, err
-	}
 	noteID, expiry, err := validateReceipt(receipt, record)
 	if err != nil {
 		// A mined revert or unrelated receipt cannot fund this note. Clear
@@ -339,7 +338,7 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 				return nil, saveErr
 			}
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errUnconfirmedDepositReceipt, err)
 	}
 	record.TransactionHash = tx
 	if err := h.save(record); err != nil {

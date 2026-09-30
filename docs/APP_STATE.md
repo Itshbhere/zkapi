@@ -1,25 +1,40 @@
 # Current implementation notes
 
-## 2026-09-30: Mined-receipt activation tradeoff
+## 2026-09-30: Successful client deposits activate at the mined receipt
 
-- Read-only review of successful deposit activation found a concrete reorg
-  downside to removing the CLI's finalized-receipt gate. In the web SDK,
-  `confirmBrowserDepositReceipt` validates the deposit event and calls
-  `browserWalletRuntime.confirmDeposit`, which installs the active note and
-  clears `pendingDeposit`. This is not a complete post-activation reorg recovery
-  mechanism. The CLI likewise treats active notes as committed and refuses to
-  reinitialize an already used balance.
-- The indexer poller reads chain head, advances a block-number cursor and
-  persists a tree snapshot. Its current checkpoint/log representations do not
-  track canonical block hashes or provide a rollback journal. Root divergence
-  is logged, not automatically reconciled. A deposit reorganization can leave
-  local/indexed state inconsistent with the vault; earlier activation may also
-  allow off-chain inference credit to be issued before the backing deposit is
-  stable. Reinitializing the client alone cannot undo issued credit.
-- Faster activation would require an explicit acceptance of this tradeoff and
-  coordinated reorg handling, not simply changing a receipt's block tag.
-  CLI finality remains unchanged. This review did not submit transactions,
-  alter wallet state, rebuild/install a client, or change live deployments.
+- At the user's explicit request, successful native ETH deposits now activate
+  after validating the canonical mined receipt and its saved deposit/event
+  binding, matching the web SDK. They no longer wait for a finalized block.
+  Progress goes from pending inclusion (or signed fee-cap waiting) to balance
+  activation and reports "Deposit confirmed" on completion.
+- A failed receipt retains the finality gate before explicit retry. Missing or
+  ambiguous receipts never authorize a replacement; recovery keeps the exact
+  saved transaction. The transient `failed_finalizing` stage distinguishes this
+  failure wait. The old `finalizing` label remains neutral for configuration
+  attached to an older daemon. The interactive in-place display, spinner,
+  cancellation cleanup and plain-output fallback are preserved. Withdrawal and
+  public-return finality checks are unchanged.
+- This accepts the same pre-finality reorganization exposure as the web wallet.
+  The web confirmation installs its active note and clears `pendingDeposit`;
+  the CLI also treats active notes as committed. Neither supplies complete
+  post-activation rollback. The indexer advances a block-number cursor and tree
+  snapshot without canonical-hash rollback; root divergence is logged rather
+  than automatically reconciled. Local/indexed state can diverge from the vault,
+  and a local reset cannot undo inference credit already issued.
+- Canonical receipt validation does not claim full reorganization recovery.
+  Event validation consumes the same receipt whose block was checked. If
+  inclusion becomes unavailable or invalid before activation, saved
+  `confirming` progress returns to `deposit_pending` while preserving the
+  signed transaction. A local activation outage retains recoverable activation
+  progress; it never reinitializes an already active balance.
+  No operator service, indexer, contract, circuit, helper or live deployment
+  changes are required. [Client configuration](../zkapi-clientd/docs/CLI_ZKAPI.md) and
+  [recovery boundaries](../zkapi-clientd/docs/PRIVACY.md) describe the behavior.
+- Validation: full Go race suite, vet and Linux amd64 build pass. Regression
+  tests cover mined activation, canonical/event guards, provisional failures,
+  changing receipts before activation, and exact transaction recovery.
+  Independent review approved after correcting pre-activation progress.
+  This change performs no live wallet transaction.
 
 ## 2026-09-30: Fresh Sepolia client deployment pins
 
@@ -74,10 +89,12 @@
   recommended fee reserve remains optional; reverts never retry automatically.
 - Deposit progress is transient observation, separate from the durable funding
   phase. It distinguishes pending inclusion, a base fee above the signed cap,
-  mined but unfinalized, finalized but awaiting activation, and active. RPC
-  uncertainty does not invent successful mining or finality. Normal progress
-  refreshes once a minute, without remote error text or private recovery data.
-- CLI success still requires a canonical finalized receipt. The web SDK's
+  mined but unfinalized, finalized but awaiting activation, and active in that
+  revision. Successful native deposits now skip that finality stage as described
+  above. RPC uncertainty does not invent successful mining or finality. Normal
+  progress refreshes once a minute, without remote error text or private recovery data.
+- At that revision, CLI success required a canonical finalized receipt (now
+  superseded by mined-receipt activation above). The web SDK's
   successful deposit path installs its note after a mined receipt; its finality
   guards apply to failed/ambiguous retries. The indexer follows head and the
   issuer uses its current root, so web inference can begin before finality.

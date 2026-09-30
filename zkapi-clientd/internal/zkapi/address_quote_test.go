@@ -317,7 +317,7 @@ func TestFundingResumeCannotRetirePublicReturn(t *testing.T) {
 		t.Fatal("custody journal invalid after return recovery", err)
 	}
 }
-func TestCanonicalActualFeeRecordedOnlyAfterFinality(t *testing.T) {
+func TestCanonicalDepositActualFeeRecordedOnMinedReceipt(t *testing.T) {
 	f := newAddressFixture(t, true)
 	q, err := f.h.QuoteAddressDeposit(context.Background(), 100000)
 	if err != nil {
@@ -331,11 +331,6 @@ func TestCanonicalActualFeeRecordedOnlyAfterFinality(t *testing.T) {
 	f.receipts[status.TransactionHash]["gasUsed"] = "0x10000"
 	f.receipts[status.TransactionHash]["effectiveGasPrice"] = "0x3b9aca00"
 	f.finalized = "0x1"
-	pending, err := f.h.FundAddress(context.Background(), 100000)
-	if err != nil || pending.ActualFeeWei != "" {
-		t.Fatal("unfinalized actual fee persisted")
-	}
-	f.finalized = "0x20"
 	active, err := f.h.FundAddress(context.Background(), 100000)
 	if err != nil || active.ActualFeeWei != "65536000000000" {
 		t.Fatalf("canonical fee missing: %+v %v", active, err)

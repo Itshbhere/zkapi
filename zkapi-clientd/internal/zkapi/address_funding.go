@@ -291,13 +291,31 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 		}
 	}
 	if record.Pending != nil {
-		receipt, final, receiptErr := h.addressFinalReceipt(ctx, config, record.Pending.Hash, record.Pending.Kind == "deposit")
+		// Native deposits match the web wallet: a canonical successful mined
+		// receipt can activate immediately. Reverts still require finality in
+		// addressFinalReceipt before a later explicit retry may use a new nonce.
+		receipt, confirmed, receiptErr := h.addressFinalReceipt(ctx, config, record.Pending.Hash, record.Pending.Kind == "deposit" && !config.nativeETH())
 		if receiptErr != nil {
+			if record.Pending.Kind == "deposit" && record.Phase == "confirming" {
+				record.Phase = "deposit_pending"
+				if err := h.saveAddress(record); err != nil {
+					return update(), err
+				}
+			}
 			return update(), receiptErr
 		}
-		if !final {
+		if !confirmed {
 			if record.Pending.Kind == "deposit" {
+				if record.Phase == "confirming" {
+					record.Phase = "deposit_pending"
+					if err := h.saveAddress(record); err != nil {
+						return update(), err
+					}
+				}
 				depositStage = "finalizing"
+				if receipt != nil && receipt.Status == "0x0" {
+					depositStage = "failed_finalizing"
+				}
 				if receipt == nil {
 					depositStage = h.pendingDepositStage(ctx, config, record.Pending)
 				}
@@ -335,6 +353,15 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 				return update(), err
 			}
 			if _, err := h.confirm(ctx, record.Pending.Hash); err != nil {
+				// Inclusion can change between the first check and activation.
+				// Keep the transaction journal, but do not leave durable status
+				// claiming that an unverified receipt is ready to activate.
+				if errors.Is(err, errUnconfirmedDepositReceipt) {
+					record.Phase = "deposit_pending"
+					if saveErr := h.saveAddress(record); saveErr != nil {
+						return update(), saveErr
+					}
+				}
 				return update(), err
 			}
 			record.Phase = "active"
@@ -823,7 +850,7 @@ func (h *FundingHandler) addressFinalReceipt(ctx context.Context, config funding
 	blockTag := "latest"
 	// A provisional failure can disappear or become successful in a reorg.
 	// Persisting "reverted" grants a later explicit retry a fresh nonce, so
-	// failure always needs finality even when successful approvals do not.
+	// failure always needs finality even when successful transactions do not.
 	if requireFinality || receipt.Status == "0x0" {
 		blockTag = "finalized"
 	}
@@ -853,30 +880,32 @@ func (h *FundingHandler) addressFinalReceipt(ctx context.Context, config funding
 	return receipt, true, nil
 }
 
-// The manual legacy recovery endpoint shares confirm(), so locally signed
-// deposits must retain the same finality policy there as in FundAddress.
-func (h *FundingHandler) confirmAddressFinality(ctx context.Context, config fundingConfig, hash string) error {
-	// Native deposits may also arrive through the manual confirmation route.
-	// Its finality requirement is independent of a local signed-transaction
-	// journal, so another matching receipt cannot bypass the activation wait.
+// Manual confirmation and saved-transaction recovery use the same native
+// activation policy. Return the exact receipt whose block was checked so event
+// validation cannot accidentally use a second, unchecked RPC response.
+func (h *FundingHandler) confirmedDepositReceipt(ctx context.Context, config fundingConfig, hash string) (ethReceipt, error) {
 	if config.nativeETH() {
-		_, final, err := h.addressFinalReceipt(ctx, config, hash, true)
+		receipt, confirmed, err := h.addressFinalReceipt(ctx, config, hash, false)
 		if err != nil {
-			return err
+			return ethReceipt{}, err
 		}
-		if !final {
-			return errors.New("the saved deposit is awaiting Ethereum finality; retry confirmation later")
+		if !confirmed {
+			if receipt != nil && receipt.Status == "0x0" {
+				return ethReceipt{}, errors.New("the failed deposit is awaiting Ethereum finality; retry confirmation later")
+			}
+			return ethReceipt{}, errors.New("the saved deposit is awaiting a canonical mined receipt; retry confirmation later")
 		}
-		return nil
+		return ethReceipt{Status: receipt.Status, To: receipt.To, TransactionHash: receipt.TransactionHash, Logs: receipt.Logs}, nil
 	}
+	// Keep the historical token-wallet confirmation policy for recovery.
 	if _, err := os.Lstat(h.addressStatePath()); errors.Is(err, os.ErrNotExist) {
-		return nil
+		return h.receipt(ctx, config.RPC, hash)
 	} else if err != nil {
-		return errors.New("cannot read payment address recovery data")
+		return ethReceipt{}, errors.New("cannot read payment address recovery data")
 	}
 	record, err := h.loadAddress(config)
 	if err != nil {
-		return err
+		return ethReceipt{}, err
 	}
 	for _, entry := range append(append([]addressTransaction{}, record.History...), pendingAddressTransaction(record.Pending)...) {
 		if entry.Kind != "deposit" || !strings.EqualFold(entry.Hash, hash) {
@@ -884,13 +913,13 @@ func (h *FundingHandler) confirmAddressFinality(ctx context.Context, config fund
 		}
 		_, final, err := h.addressFinalReceipt(ctx, config, hash, true)
 		if err != nil {
-			return err
+			return ethReceipt{}, err
 		}
 		if !final {
-			return errors.New("the saved deposit is awaiting Ethereum finality; retry confirmation later")
+			return ethReceipt{}, errors.New("the saved deposit is awaiting Ethereum finality; retry confirmation later")
 		}
 	}
-	return nil
+	return h.receipt(ctx, config.RPC, hash)
 }
 
 // Receipt fee metadata is useful only after canonicality/finality and exact

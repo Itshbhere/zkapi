@@ -442,15 +442,21 @@ func finishGuidedDeposit(ctx context.Context, service guidedFundingService, init
 			switch state.Phase {
 			case "active":
 				clearSetupProgress(ui)
-				ui.Printf("Deposit finalized. Private inference balance activated.\n")
+				ui.Printf("Deposit confirmed. Private inference balance activated.\n")
 			case "confirming":
-				setupProgress(ui, "Deposit finalized; activating your private balance.")
+				setupProgress(ui, "Deposit confirmed; activating your private balance.")
 			case "deposit_pending":
 				switch state.DepositStage {
+				case "activating":
+					setupProgress(ui, "Deposit confirmed; activating your private balance.")
 				case "fee_wait":
 					setupProgress(ui, "Current Ethereum fees exceed this transaction's signed fee cap. Waiting for fees to fall; retrying the same saved transaction.")
+				case "failed_finalizing":
+					setupProgress(ui, "Deposit receipt reports failure; waiting for Ethereum finality before an explicit retry is allowed.")
 				case "finalizing":
-					setupProgress(ui, "Deposit mined; waiting for Ethereum finality (usually about 15 minutes after mining).")
+					// Older compatible daemons can still wait for successful
+					// receipt finality. Do not misreport that as a failed deposit.
+					setupProgress(ui, "Deposit mined; waiting for Ethereum finality.")
 				case "pending":
 					setupProgress(ui, "Deposit transaction saved; waiting to be mined. Retrying the same transaction as needed.")
 				default:

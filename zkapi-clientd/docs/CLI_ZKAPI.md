@@ -12,8 +12,10 @@ It asks for the deposit amount in USD, defaulting to $20 on Enter, and shows the
 ETH amount, receiving address and locally generated QR. It waits automatically
 for ETH and updates the receiving balance. Once funded, Enter approves the
 shown principal and maximum network fee. It checks the quote again before
-signing, deposits and waits for finalized activation. No model is selected
-or priced during funding.
+signing, deposits and activates the private balance once its successful mined
+receipt is validated against the canonical block and saved deposit. There is
+no additional 15-minute finality gate for successful native ETH deposits, matching
+the web wallet. No model is selected or priced during funding.
 
 If the last fee or balance check leaves the deposit unsigned, configuration
 refreshes the same fixed deposit and continues watching instead of exiting.
@@ -22,25 +24,26 @@ retry. A higher fee ceiling or renewed funding shortage requires Enter again.
 The recommended fee buffer remains optional.
 
 After signing, progress distinguishes waiting to be mined, waiting for network
-fees to fall below the signed cap, Ethereum finality, and local balance
-activation. In an interactive terminal, payment details and progress update in
-place, with a spinner and elapsed time while waiting. Enlarge a short terminal
-to show the payment QR; the receiving address and amounts remain available as
-text. Prompts pause the display while you answer. Redirected output and
-`TERM=dumb` use plain status messages without animation. The same signed
-transaction is retried; the client never silently raises its fee cap or sends a
-second deposit. Finality typically takes about 15 minutes **after mining**, so
-time spent waiting for inclusion is additional. The web wallet currently
-activates at a mined receipt; the CLI keeps its stricter finalized-receipt check.
+fees to fall below the signed cap, and private balance activation. In an
+interactive terminal, payment details and progress update in place, with a
+spinner and elapsed time while waiting. Enlarge a short terminal to show the
+payment QR; the receiving address and amounts remain available as text. Prompts
+pause the display while you answer. Redirected output and `TERM=dumb` use plain
+status messages without animation. The same signed transaction is retried; the
+client never silently raises its fee cap or sends a second deposit.
 
-Mined-receipt activation has a tradeoff: an unfinalized block can be replaced
-in a chain reorganization. The deposit can disappear or be included later with
-different registration data, while the local wallet has already activated its
-private note. The current wallet and indexer do not provide complete rollback
-and reconciliation for this case. Inference or withdrawal may then fail or need
-recovery, and already issued inference credit cannot be undone by a local reset.
-The web wallet's faster activation accepts this exposure; it does not establish
-that removing the CLI's finality check is risk-free.
+A failed receipt still waits for Ethereum finality before an explicit retry is
+allowed. An unavailable or ambiguous receipt does not establish success or
+permit a replacement transaction; recovery retains the exact saved transaction.
+Withdrawal and public-return finality checks are unchanged. When configuration
+attaches to an older running daemon, it may still display that daemon's
+successful-deposit finality wait; restart the daemon to use the updated behavior.
+
+As on the web, activation before finality accepts the possibility of a chain
+reorganization after the note becomes active. The wallet and indexer do not
+provide complete rollback/reconciliation for that case, and already issued
+inference credit cannot be undone by resetting the local wallet. See
+[recovery boundaries](PRIVACY.md).
 
 ```sh
 zkapi-clientd config --status           # show saved settings

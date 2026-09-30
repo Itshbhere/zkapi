@@ -160,7 +160,7 @@ func TestGuidedFundingWaitsForMoneyThenApprovesFreshFixedQuote(t *testing.T) {
 	if f.approveCalls != 1 || f.resumeCalls != 1 || f.quoteCalls != 5 || polls != 3 || u.confirms != 0 || u.continues != 1 || u.asks != 1 {
 		t.Fatalf("unexpected flow: %+v polls=%d UI=%+v", f, polls, u)
 	}
-	for _, want := range []string{"Funding address:", "Waiting for ETH:", "Funds available.", "Deposit finalized.", "Private balance:"} {
+	for _, want := range []string{"Funding address:", "Waiting for ETH:", "Funds available.", "Deposit confirmed.", "Private balance:"} {
 		if !strings.Contains(u.String(), want) {
 			t.Fatalf("missing %q", want)
 		}

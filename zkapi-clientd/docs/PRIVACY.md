@@ -61,6 +61,20 @@ reply is recovered from durable state, not a blind second approval. Signed
 pending operations resume their exact bytes; reverts never automatically
 sign a replacement. Existing wallets are preserved across updates.
 
+Successful native ETH deposits activate after the saved transaction's successful
+mined receipt, canonical block and deposit event are validated, matching the web
+wallet. Success does not wait for Ethereum finality. Failed receipts retain the
+finality gate before explicit retry; missing or ambiguous receipts preserve the
+exact signed transaction without authorizing a replacement. Withdrawals and
+public ETH returns retain their existing finality checks.
+
+Pre-finality activation exposes the same reorganization risk as the web wallet:
+a block can be replaced after a private note or inference credit becomes usable.
+Current wallet/indexer state does not provide complete rollback and reconciliation
+for that event. Local reset cannot undo credit already issued, and later inference
+or withdrawal may require recovery. Canonical receipt validation establishes the
+observed chain state, not a guarantee against a later reorganization.
+
 The daemon creates no request-history log files. Foreground output includes
 HTTP route/method/status/timing, local sequential `request=` numbers and local
 key serials (`key_ref=`). Selection reports `source=fresh` or `source=reused`;

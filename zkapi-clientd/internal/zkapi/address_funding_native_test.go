@@ -14,7 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func TestNativeFundingExactPayableDepositAndFinalizedRecovery(t *testing.T) {
+func TestNativeFundingExactPayableDepositAndMinedRecovery(t *testing.T) {
 	f := newAddressFixture(t, true)
 	initial, err := f.h.Address(context.Background())
 	if err != nil || initial.BillingAsset != "native_eth" || initial.BillingUnit != "gwei" || initial.TokenDecimals != 9 || initial.TokenAddress != "" || initial.TokenBalance != "1000000000" || initial.WeiPerUnit != "1000000000" {
@@ -43,11 +43,6 @@ func TestNativeFundingExactPayableDepositAndFinalizedRecovery(t *testing.T) {
 	}
 	f.mine(t, deposit.TransactionHash, false)
 	f.finalized = "0x1"
-	pending, err := f.fundNative(t, amount)
-	if err != nil || pending.Phase != "deposit_pending" || f.activated != 0 {
-		t.Fatal("native deposit activated before finality")
-	}
-	f.finalized = "0x20"
 	active, err := f.fundNative(t, amount)
 	if err != nil || active.Phase != "active" || f.activated != 1 {
 		t.Fatalf("native activation failed: %+v %v", active, err)
@@ -190,7 +185,7 @@ func TestNativeFundingConfigurationMustMatchPackagedDeploymentAndGwei(t *testing
 	}
 }
 
-func TestNativeManualConfirmationRequiresFinalityWithoutSignerJournal(t *testing.T) {
+func TestNativeManualConfirmationAcceptsMinedReceiptWithoutSignerJournal(t *testing.T) {
 	f := newAddressFixture(t, true)
 	if _, err := f.h.prepare(context.Background(), 100000); err != nil {
 		t.Fatal(err)
@@ -201,11 +196,7 @@ func TestNativeManualConfirmationRequiresFinalityWithoutSignerJournal(t *testing
 		"to": addressTestVault, "logs": sampleReceipt(depositRecord{Contract: addressTestVault, Commitment: "0x1234", Amount: 100000}).Logs,
 	}
 	f.finalized = "0x1"
-	if _, err := f.h.confirm(context.Background(), hash); err == nil || f.activated != 0 {
-		t.Fatal("manual native receipt bypassed finality")
-	}
-	f.finalized = "0x20"
 	if _, err := f.h.confirm(context.Background(), hash); err != nil || f.activated != 1 {
-		t.Fatalf("final native receipt rejected: %v", err)
+		t.Fatalf("canonical mined native receipt rejected: %v", err)
 	}
 }

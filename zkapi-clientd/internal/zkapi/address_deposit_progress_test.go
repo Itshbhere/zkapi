@@ -120,10 +120,10 @@ func TestDepositReceiptFailureLeavesDurableInclusionUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mine(t, first.TransactionHash, false)
+	f.mine(t, first.TransactionHash, true)
 	f.finalized = "0x1"
 	progress, err := f.h.FundAddress(context.Background(), 100000)
-	if err != nil || progress.DepositStage != "finalizing" {
+	if err != nil || progress.DepositStage != "failed_finalizing" {
 		t.Fatalf("initial inclusion check: %+v %v", progress, err)
 	}
 	before, err := os.ReadFile(f.h.addressStatePath())
@@ -165,7 +165,7 @@ func TestDepositReceiptFailureLeavesDurableInclusionUnknown(t *testing.T) {
 	}
 }
 
-func TestDepositIncludedStageWaitsForFinalityWithoutFeeProbeOrBroadcast(t *testing.T) {
+func TestDepositIncludedStageActivatesBeforeFinalityWithoutRebroadcast(t *testing.T) {
 	f := newAddressFixture(t, true)
 	first, err := f.fundNative(t, 100000)
 	if err != nil {
@@ -184,14 +184,14 @@ func TestDepositIncludedStageWaitsForFinalityWithoutFeeProbeOrBroadcast(t *testi
 			Params []json.RawMessage `json:"params"`
 		}
 		_ = json.Unmarshal(raw, &request)
-		if request.Method == "eth_getBlockByNumber" && string(request.Params[0]) == `"latest"` {
-			t.Error("mined deposit queried inclusion fee instead of finality")
+		if request.Method == "eth_getBlockByNumber" && string(request.Params[0]) == `"finalized"` {
+			t.Error("successful mined deposit requested finality")
 		}
 		return upstream.RoundTrip(r)
 	})
 	progress, err := f.h.FundAddress(context.Background(), 100000)
-	if err != nil || progress.Phase != "deposit_pending" || progress.DepositStage != "finalizing" || progress.TransactionHash != first.TransactionHash || f.activated != 0 || len(f.submitted) != 1 {
-		t.Fatalf("mined deposit bypassed finality or repeated broadcast: %+v %v", progress, err)
+	if err != nil || progress.Phase != "active" || progress.DepositStage != "active" || progress.TransactionHash != first.TransactionHash || f.activated != 1 || len(f.submitted) != 1 {
+		t.Fatalf("mined deposit did not activate or repeated broadcast: %+v %v", progress, err)
 	}
 
 	f.finalized = "0x20"
@@ -208,6 +208,7 @@ func TestDepositActivationFailureHasSeparateStageAndSafeRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.mine(t, first.TransactionHash, false)
+	f.finalized = "0x1"
 	upstream := f.h.client.local.Transport
 	f.h.client.local.Transport = withdrawalRoundTripper(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/funding/api/deposit/confirm" {
@@ -217,7 +218,7 @@ func TestDepositActivationFailureHasSeparateStageAndSafeRecovery(t *testing.T) {
 	})
 	progress, err := f.h.FundAddress(context.Background(), 100000)
 	if err == nil || progress.Phase != "confirming" || progress.DepositStage != "activating" || f.activated != 0 {
-		t.Fatalf("activation failure lost finalized stage: %+v %v", progress, err)
+		t.Fatalf("activation failure lost confirmed stage: %+v %v", progress, err)
 	}
 	f.h = &FundingHandler{client: f.h.client, statePath: f.h.statePath}
 	saved, err := f.h.Address(context.Background())
