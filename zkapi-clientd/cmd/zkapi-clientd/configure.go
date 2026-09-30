@@ -81,6 +81,10 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 
 func runConfigure(ctx context.Context, dir string, args []string, ui setupPrompter, out io.Writer) error {
 	err := configure(ctx, dir, args, ui, out, nil)
+	if errors.Is(err, errSetupSelectionCanceled) {
+		ui.Printf("Configuration canceled. Your saved settings are unchanged.\n")
+		return nil
+	}
 	if ctx.Err() != nil {
 		ui.Printf("\nStopped. Your saved configuration and wallet state are preserved; run zkapi-clientd config to continue.\n")
 		return nil
@@ -183,11 +187,22 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 	}
 	for {
 		choices := "check setup, edit settings, withdraw, return public ETH, api-key, or quit"
+		menu := []setupChoice{
+			{value: "check", label: "Check setup / fund wallet"},
+			{value: "edit", label: "Edit settings"},
+		}
 		sepolia := c.ZKAPI.Network == "sepolia"
 		if sepolia {
 			choices = "check setup, edit settings, password, withdraw, return public ETH, api-key, or quit"
+			menu = append(menu, setupChoice{value: "password", label: "Set Sepolia password"})
 		}
-		choice, err := ui.Ask(ctx, "Choose: "+choices, "check")
+		menu = append(menu,
+			setupChoice{value: "withdraw", label: "Withdraw private balance"},
+			setupChoice{value: "return", label: "Return public ETH"},
+			setupChoice{value: "api-key", label: "Show local API key"},
+			setupChoice{value: "quit", label: "Quit"},
+		)
+		choice, err := selectSetupChoice(ctx, ui, "Choose: "+choices, "check", menu)
 		if err != nil {
 			return err
 		}
@@ -333,8 +348,19 @@ func promptConfigure(ctx context.Context, c config.Config, ui setupPrompter, edi
 }
 
 func configureChoice(ctx context.Context, ui setupPrompter, question, fallback string, choices ...string) (string, error) {
+	options := make([]setupChoice, 0, len(choices))
+	for _, choice := range choices {
+		label := choice
+		switch choice {
+		case "mainnet":
+			label = "Mainnet (real ETH)"
+		case "sepolia":
+			label = "Sepolia (test ETH)"
+		}
+		options = append(options, setupChoice{value: choice, label: label})
+	}
 	for {
-		answer, err := ui.Ask(ctx, question, fallback)
+		answer, err := selectSetupChoice(ctx, ui, question, fallback, options)
 		if err != nil {
 			return "", err
 		}

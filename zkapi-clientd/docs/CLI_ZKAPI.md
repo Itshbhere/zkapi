@@ -23,7 +23,11 @@ The recommended fee buffer remains optional.
 
 After signing, progress distinguishes waiting to be mined, waiting for network
 fees to fall below the signed cap, Ethereum finality, and local balance
-activation. A brief status repeats once a minute while waiting. The same signed
+activation. In an interactive terminal, payment details and progress update in
+place, with a spinner and elapsed time while waiting. Enlarge a short terminal
+to show the payment QR; the receiving address and amounts remain available as
+text. Prompts pause the display while you answer. Redirected output and
+`TERM=dumb` use plain status messages without animation. The same signed
 transaction is retried; the client never silently raises its fee cap or sends a
 second deposit. Finality typically takes about 15 minutes **after mining**, so
 time spent waiting for inclusion is additional. The web wallet currently
@@ -37,6 +41,11 @@ zkapi-clientd config --menu             # withdrawal and wallet actions
 zkapi-clientd config --require-api-key  # require a local inference key
 zkapi-clientd config --api-key          # show that key when requested
 ```
+
+Use the arrow keys (or `j`/`k`) and Enter to select wallet actions and networks.
+Esc or `q` cancels a selection. Text prompts remain available when output is
+redirected. Ctrl+C stops safely and preserves saved progress; run
+`zkapi-clientd config` again to continue.
 
 `serve` does not prompt or authorize funding. Missing prerequisites point back
 to `config`. Configuration stops temporary services it starts; an existing

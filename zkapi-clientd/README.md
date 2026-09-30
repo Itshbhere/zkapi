@@ -16,6 +16,9 @@ Configure your wallet:
 zkapi-clientd config
 ```
 
+Setup updates payment details and progress in place while you wait. Menus use
+the arrow keys and Enter; Ctrl+C stops safely and preserves your progress.
+
 Then start the API:
 
 ```sh

@@ -49,6 +49,8 @@ func runGuidedWithdrawal(ctx context.Context, c config.Config, ui setupPrompter)
 }
 
 func guidedWithdrawal(ctx context.Context, service guidedWithdrawalService, ui setupPrompter, wait func(context.Context) error) error {
+	defer clearSetupProgress(ui)
+	setupProgress(ui, "Checking withdrawal status...")
 	initial, err := service.Status(ctx)
 	if err != nil {
 		return err
@@ -68,6 +70,7 @@ func guidedWithdrawal(ctx context.Context, service guidedWithdrawalService, ui s
 	}
 	destination := initial.Destination
 	if destination == "" {
+		clearSetupProgress(ui)
 		for {
 			answer, err := ui.Ask(ctx, "Withdraw the full private balance to Ethereum address", "")
 			if err != nil {
@@ -88,6 +91,7 @@ func guidedWithdrawal(ctx context.Context, service guidedWithdrawalService, ui s
 		if !validWithdrawalTransactionHash(initial.TransactionHash) {
 			return errors.New("the reverted withdrawal has no valid saved transaction; preserve recovery files")
 		}
+		clearSetupProgress(ui)
 		choice, err := ui.Ask(ctx, "The previous withdrawal reverted. Choose retry, or confirm a payout submitted separately", "retry")
 		if err != nil {
 			return err
@@ -117,7 +121,7 @@ func guidedWithdrawal(ctx context.Context, service guidedWithdrawalService, ui s
 	} else if initial.TransactionHash != "" {
 		return errors.New("saved withdrawal transaction needs recovery before preparing another quote")
 	}
-	ui.Printf("Preparing withdrawal; this can take a few minutes.\n")
+	setupProgress(ui, "Preparing withdrawal; this can take a few minutes.")
 	return waitAndWithdraw(ctx, service, initial, destination, retryHash, ui, wait)
 }
 
@@ -134,6 +138,7 @@ func withdrawalStateMatchesQuote(state zkapi.AddressWithdrawalStatus, quote zkap
 }
 
 func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initial zkapi.AddressWithdrawalStatus, destination, retryHash string, ui setupPrompter, wait func(context.Context) error) error {
+	defer clearSetupProgress(ui)
 	var frozen *zkapi.AddressPaymentQuote
 	var displayedPayment *zkapi.AddressPaymentQuote
 	approved, retrying, settling := false, false, false
@@ -154,9 +159,10 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 					return finishGuidedWithdrawal(ctx, service, state, ui, wait)
 				case "waiting_settlement":
 					if !settling {
-						ui.Printf("Waiting for your previous inference to settle; checking automatically.\n")
+						setupProgress(ui, "Waiting for your previous inference to settle; checking automatically.")
 						settling = true
 					}
+					retrying = false
 				case "ready", "quoted", "waiting_funds":
 					if state.TransactionHash != "" {
 						return errors.New("saved withdrawal transaction needs recovery; no replacement was authorized")
@@ -170,15 +176,17 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 				}
 			}
 			if !retrying && (statusErr != nil || state.Phase != "waiting_settlement") {
-				ui.Printf("Could not refresh withdrawal fees; checking again.\n")
+				setupProgress(ui, "Could not refresh withdrawal fees; checking again.")
 				retrying = true
+				settling = false
 			}
+			lastProgress = ""
 			if err := wait(ctx); err != nil {
 				return err
 			}
 			continue
 		}
-		retrying = false
+		retrying, settling = false, false
 		if quote.ChainID != initial.ChainID || quote.DeploymentID != initial.DeploymentID || !strings.EqualFold(quote.Address, initial.Address) || quote.NoteID != initial.NoteID || !strings.EqualFold(quote.Destination, destination) || quote.RetryHash != retryHash || !sameGuidedWithdrawalQuote(quote, quote) || (frozen != nil && !sameGuidedWithdrawalQuote(*frozen, quote)) || (initial.Phase == "reverted" && quote.Amount != initial.Amount) {
 			return errors.New("withdrawal quote changed the selected wallet, note, destination, amount, or transaction; stopped without approving")
 		}
@@ -196,14 +204,16 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 				approved, ceiling = false, ""
 			}
 			if displayedPayment == nil || withdrawalPaymentNeedsRefresh(quote, *displayedPayment) {
-				ui.Printf("Add ETH for network fees to the receiving account below.\n")
-				if err := printSetupPaymentQR(setupUIWriter{ui}, quote); err != nil {
+				var payment strings.Builder
+				payment.WriteString("Add ETH for network fees to the receiving account below.\n")
+				if err := printSetupPaymentQR(&payment, quote); err != nil {
 					return err
 				}
+				setupPayment(ui, payment.String())
 				copy := quote
 				displayedPayment = &copy
 			}
-			progress := quote.BalanceWei + ":" + quote.ShortfallWei
+			progress := setupFundingProgressKey(quote)
 			if progress != lastProgress {
 				showSetupFundingProgress(ui, quote)
 				lastProgress = progress
@@ -215,6 +225,7 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 		}
 		displayedPayment = nil
 		if !approved || !setupFeeWithin(quote, ceiling) {
+			clearSetupProgress(ui)
 			if approved {
 				ui.Printf("Network fees increased; review the updated maximum.\n")
 			}
@@ -229,12 +240,12 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 			approved, ceiling = true, quote.FeeReserveWei
 			continue // The terminal pause must not authorize stale fees or balance.
 		}
-		ui.Printf("Submitting withdrawal...\n")
+		setupProgress(ui, "Submitting withdrawal...")
 		state, err := service.Approve(ctx, quote.ID)
 		if err != nil {
 			// A lost response may follow a durable signature. Do not approve a
 			// different quote: only inspect and resume that saved transaction.
-			ui.Printf("Checking saved withdrawal progress after an interrupted response.\n")
+			setupProgress(ui, "Checking saved withdrawal progress after an interrupted response.")
 			state, err = readGuidedWithdrawal(ctx, service, ui, wait)
 			if err != nil {
 				return err
@@ -250,6 +261,7 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 		// Return to funding and require a new Enter; never call Resume on it.
 		if state.Phase == "waiting_funds" && state.TransactionHash == "" {
 			approved, ceiling = false, ""
+			lastProgress = ""
 			continue
 		}
 		return finishGuidedWithdrawal(ctx, service, state, ui, wait)
@@ -266,6 +278,7 @@ func withdrawalPaymentNeedsRefresh(current, displayed zkapi.AddressPaymentQuote)
 }
 
 func readGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService, ui setupPrompter, wait func(context.Context) error) (zkapi.AddressWithdrawalStatus, error) {
+	defer clearSetupProgress(ui)
 	warned := false
 	for {
 		state, err := service.Status(ctx)
@@ -273,7 +286,7 @@ func readGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService, 
 			return state, nil
 		}
 		if !warned {
-			ui.Printf("Withdrawal status is temporarily unavailable; checking saved progress again.\n")
+			setupProgress(ui, "Withdrawal status is temporarily unavailable; checking saved progress again.")
 			warned = true
 		}
 		if err := wait(ctx); err != nil {
@@ -283,6 +296,7 @@ func readGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService, 
 }
 
 func finishGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService, initial zkapi.AddressWithdrawalStatus, ui setupPrompter, wait func(context.Context) error) error {
+	defer clearSetupProgress(ui)
 	if !validWithdrawalTransactionHash(initial.TransactionHash) || initial.Destination == "" {
 		return errors.New("saved withdrawal transaction is missing; preserve recovery files")
 	}
@@ -293,6 +307,7 @@ func finishGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService
 		}
 		switch state.Phase {
 		case "complete":
+			clearSetupProgress(ui)
 			ui.Printf("Withdrawal complete: %s ETH sent to %s.\n", fundingUnits(strconv.FormatUint(state.Amount, 10), 9), state.Destination)
 			if state.ActualFeeWei != "" {
 				ui.Printf("Network fee: %s ETH.\n", fundingUnits(state.ActualFeeWei, 18))
@@ -300,7 +315,7 @@ func finishGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService
 			return nil
 		case "withdrawal_pending", "confirming":
 			if !announced {
-				ui.Printf("Withdrawal submitted; waiting for Ethereum finality (usually about 15 minutes). Ctrl+C preserves progress.\n")
+				setupProgress(ui, "Withdrawal submitted; waiting for Ethereum finality (usually about 15 minutes). Ctrl+C preserves progress.")
 				announced = true
 			}
 		default:
@@ -315,6 +330,7 @@ func finishGuidedWithdrawal(ctx context.Context, service guidedWithdrawalService
 			if err != nil {
 				return err
 			}
+			announced = false // Restore the stage after a temporary status message.
 		}
 		state = next
 	}

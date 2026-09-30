@@ -31,9 +31,11 @@ type setupPrompter interface {
 // Open the controlling terminal only when a question is necessary. In
 // particular, never interpret a piped installation script as spending consent.
 type terminalSetupPrompter struct {
-	out    io.Writer
-	input  *bufio.Reader
-	device *setupTerminal
+	out       io.Writer
+	input     *bufio.Reader
+	device    *setupTerminal
+	displayMu sync.Mutex
+	display   setupDisplay
 }
 
 // Read directly from a nonblocking descriptor. Darwin can report POLLNVAL for
@@ -53,6 +55,7 @@ func (d *setupTerminal) Read(buffer []byte) (int, error) {
 }
 
 func (p *terminalSetupPrompter) Close() {
+	p.ClearProgress()
 	if p.device != nil {
 		_ = unix.Close(p.device.fd)
 		p.device = nil
@@ -60,6 +63,9 @@ func (p *terminalSetupPrompter) Close() {
 }
 
 func (p *terminalSetupPrompter) Printf(format string, args ...any) {
+	p.displayMu.Lock()
+	defer p.displayMu.Unlock()
+	p.finishDisplayLocked()
 	_, _ = fmt.Fprintf(p.out, format, args...)
 }
 
@@ -76,6 +82,7 @@ func (p *terminalSetupPrompter) openTerminal() error {
 }
 
 func (p *terminalSetupPrompter) Secret(ctx context.Context, question string) (string, error) {
+	p.ClearProgress()
 	if err := p.openTerminal(); err != nil {
 		return "", err
 	}
@@ -92,6 +99,7 @@ func (p *terminalSetupPrompter) Secret(ctx context.Context, question string) (st
 }
 
 func (p *terminalSetupPrompter) Ask(ctx context.Context, question, fallback string) (string, error) {
+	p.ClearProgress()
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -367,6 +375,7 @@ func runGuidedStart(ctx context.Context, dir string, args []string, ui setupProm
 }
 
 func guidedStart(ctx context.Context, dir string, options startOptions, ui setupPrompter, out io.Writer, runtime startRuntime) (result error) {
+	defer clearSetupProgress(ui)
 	var c config.Config
 	var err error
 	if options.prepared != nil {
@@ -415,7 +424,7 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 			}
 		}
 		if !options.quietStartup {
-			ui.Printf("Starting the local API...\n")
+			setupProgress(ui, "Starting the local API...")
 		}
 		done = make(chan error, 1)
 		go func() {
@@ -433,6 +442,7 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	}
 	readyCtx, readyCancel := context.WithTimeout(life, runtime.timeout)
 	defer readyCancel()
+	previousStartup := ""
 	for {
 		running, err := runtime.probe(readyCtx, c)
 		if err != nil && attached {
@@ -444,6 +454,16 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 		// service found by the initial probe or an attached daemon changing.
 		if err == nil && running && runtime.companion(readyCtx, c) == nil {
 			break
+		}
+		if !options.quietStartup {
+			status := "Waiting for the local API to start..."
+			if err == nil && running {
+				status = "Preparing the wallet companion and proving assets..."
+			}
+			if status != previousStartup {
+				setupProgress(ui, "%s", status)
+				previousStartup = status
+			}
 		}
 		timer := time.NewTimer(runtime.interval)
 		select {
@@ -457,6 +477,7 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 		}
 	}
 	readyCancel()
+	clearSetupProgress(ui)
 	err = runtime.fund(life, c, options.usd, options.model, ui)
 	if err != nil {
 		return err
