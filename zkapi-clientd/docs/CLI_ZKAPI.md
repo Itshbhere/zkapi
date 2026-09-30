@@ -40,6 +40,7 @@ zkapi-clientd config --usd 50           # amount for a new deposit
 zkapi-clientd config --menu             # withdrawal and wallet actions
 zkapi-clientd config --require-api-key  # require a local inference key
 zkapi-clientd config --api-key          # show that key when requested
+zkapi-clientd config --key-reuse-window-seconds 0  # fresh key per inference request
 ```
 
 Use the arrow keys (or `j`/`k`) and Enter to select wallet actions and networks.
@@ -121,20 +122,44 @@ or run the client in the same network namespace. `host.docker.internal` alone
 does not make a loopback-only listener reachable. Remote/container access is not
 a reason to expose an unauthenticated listener on all interfaces.
 
-Requests are serialized, including concurrent chat/title requests. Nearby
-requests can share an OpenRouter key for a fixed 60 seconds by default; the
-aggregate key spending cap is shared. Each request checks current model policy.
-The provider can link calls sharing that key. Set `key_reuse_window_seconds`
-in `config.json` to an integer from 0 to 300, or use
-`config --key-reuse-window-seconds N`; 0 requests a fresh key for every call.
-A new key can still wait for earlier lease settlement. Inference is never
-retried automatically after a provider/transport error.
+Requests are serialized, including concurrent chat/title requests. By default,
+compatible requests reuse an OpenRouter key for a fixed window of up to 60
+seconds from acquisition. Reuse does not extend the window. Requests from
+**different chats and local clients**, including Open WebUI's automatic title
+and follow-up requests, can share a key and its aggregate spending cap; the
+provider can link all those requests. Each request checks current model policy.
+When an earlier lease blocks a fresh key, the daemon requests settlement
+immediately instead of waiting for the key's full expiry. This also applies
+when a configured reuse window expires or the required spending cap changes.
+The settlement-result log measures this operation separately from queueing,
+issuing the next key and inference. Signed settlement can still take several
+minutes. Inference is never retried
+automatically after a provider/transport error.
 
-Normal output shows HTTP inference requests, key-session starts and settled
-ends, actual session cost and remaining private balance in ETH. Routine helper
-readiness/retry messages are hidden. Session cost appears after signed
-settlement, which can take several minutes. The foreground daemon stops if its
-helper exits; only an external service manager can restart it.
+New profiles and profiles without `key_reuse_window_seconds` use 60 seconds.
+Existing profiles retain an explicitly saved window. Stop `serve`, run
+`zkapi-clientd config --key-reuse-window-seconds 0`, then restart `serve` to
+require a fresh key per inference request. Use the same `--config-dir` if set.
+A value from 1 to 300 sets the fixed reuse window in seconds. Use 60 to restore
+the default. Setting 0 gives every inference request a fresh key without
+depending on a chat ID supplied by the UI.
+
+Normal output assigns each HTTP request a local sequential `request=` number.
+Key selection includes `key_ref=`, a local key serial, and `source=fresh` or
+`source=reused`. Different `key_ref` values show that requests used different
+OpenRouter keys; no key material is printed. The release line reports
+`response_complete=true` or `false` and whether the key is retired locally or
+available for reuse within the configured window. Local retirement means the
+daemon will not reuse the key; it is not proof of provider revocation or signed
+wallet settlement. A waiting line identifies earlier-key settlement as the
+reason an inference request is waiting.
+
+Wallet key-session starts and ends use independent session numbers. These are
+not the `key_ref` numbers, especially after a daemon restart. Session ends,
+actual cost and remaining private balance in ETH appear only after signed
+settlement, which can arrive after the response ends. Routine helper
+readiness/retry messages are hidden. The foreground daemon stops if its helper
+exits; only an external service manager can restart it.
 
 ## Private files and existing wallets
 

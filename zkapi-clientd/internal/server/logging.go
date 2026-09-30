@@ -3,7 +3,10 @@ package server
 import (
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
+
+	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/activity"
 )
 
 // LogRequests reports only inference API activity using fixed route/method
@@ -15,6 +18,7 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 	if logger == nil {
 		return next
 	}
+	var sequence atomic.Uint64
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route := logRoute(r.URL.Path)
 		if route == "" {
@@ -22,10 +26,31 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 			return
 		}
 		method := logMethod(r.Method)
+		request := sequence.Add(1)
+		r = r.WithContext(activity.WithReporter(r.Context(), func(event activity.Event) {
+			switch event.Kind {
+			case activity.KeyFresh:
+				logger.Printf("request key selected request=%d key_ref=%d source=fresh", request, event.Key)
+			case activity.KeyReused:
+				logger.Printf("request key selected request=%d key_ref=%d source=reused", request, event.Key)
+			case activity.KeyReleased:
+				state := "retired locally; wallet settlement may still be pending"
+				if event.Reusable {
+					state = "available for reuse within configured window"
+				}
+				logger.Printf("request key released request=%d key_ref=%d response_complete=%t; %s", request, event.Key, event.Complete, state)
+			case activity.SettlementWaiting:
+				logger.Printf("request waiting request=%d reason=previous_key_settlement", request)
+			case activity.SettlementStarted:
+				logger.Printf("request settling request=%d action=retire_previous_key", request)
+			case activity.SettlementFinished:
+				logger.Printf("request settlement result request=%d ready=%t duration=%s", request, event.Complete, event.Duration.Round(time.Millisecond))
+			}
+		}))
 		started := time.Now()
 		response := &logResponseWriter{ResponseWriter: w}
 		returned := false
-		logger.Printf("request started method=%s route=%s", method, route)
+		logger.Printf("request started method=%s route=%s request=%d", method, route, request)
 		defer func() {
 			if response.Header().Get("X-OA-Verification-Status") == "verifier-unavailable" {
 				logger.Print("Verification unavailable: inference used an outage-eligible key; this key is not verified")
@@ -36,7 +61,7 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 			} else if response.status == 0 {
 				response.status = http.StatusOK
 			}
-			logger.Printf("request %s method=%s route=%s status=%d duration=%s", result, method, route, response.status, time.Since(started).Round(time.Millisecond))
+			logger.Printf("request %s method=%s route=%s status=%d duration=%s request=%d", result, method, route, response.status, time.Since(started).Round(time.Millisecond), request)
 		}()
 		// A panic propagates normally; the deferred log never formats its value
 		// and never mistakes a partially written response for successful work.

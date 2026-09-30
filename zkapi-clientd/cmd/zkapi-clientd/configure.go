@@ -35,7 +35,7 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	f.StringVar(&o.usd, "usd", "", "skip the new-deposit USD amount prompt (prompt default: 20; network fees are extra)")
 	f.BoolVar(&o.status, "status", false, "show saved configuration status without setup")
 	f.BoolVar(&o.apiKey, "api-key", false, "print the local inference API key explicitly")
-	f.IntVar(&o.keyReuseWindowSeconds, "key-reuse-window-seconds", config.DefaultKeyReuseWindowSeconds, "reuse compatible ephemeral keys for this many seconds (0 disables, maximum 300)")
+	f.IntVar(&o.keyReuseWindowSeconds, "key-reuse-window-seconds", config.DefaultKeyReuseWindowSeconds, "fixed ephemeral key reuse window (default 60 seconds; 1-300 shares keys across chats and local clients; 0 uses a fresh key per inference request)")
 	f.BoolVar(&o.requireAPIKey, "require-api-key", false, "require a local API key for inference (default: no key required)")
 	f.BoolVar(&o.edit, "edit", false, "edit network, listener, and transport interactively")
 	f.BoolVar(&o.menu, "menu", false, "open configuration and wallet management actions")
@@ -266,9 +266,9 @@ func showConfigureSummary(c config.Config, ui setupPrompter) {
 	ui.Printf("Configuration: saved.\nzkAPI network: %s\nTransport: %s\n", c.ZKAPI.Network, transport)
 	showClientConnection(c, ui)
 	if c.KeyReuseWindowSeconds == 0 {
-		ui.Printf("Ephemeral key reuse: disabled.\n")
+		ui.Printf("Ephemeral key reuse: disabled; fresh key per inference request. New keys may wait for earlier settlement.\n")
 	} else {
-		ui.Printf("Ephemeral key reuse: up to %d seconds; requests share a key and its spending cap.\n", c.KeyReuseWindowSeconds)
+		ui.Printf("Ephemeral key reuse: fixed window up to %d seconds; different chats and local clients can share a key and its spending cap. The provider can link those requests.\n", c.KeyReuseWindowSeconds)
 	}
 	ui.Printf("Change settings: zkapi-clientd config --edit\nWallet actions: zkapi-clientd config --menu\nUse the same --config-dir for these commands if set.\n")
 }

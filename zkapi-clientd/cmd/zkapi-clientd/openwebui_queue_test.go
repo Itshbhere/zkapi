@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,8 @@ func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"api_key": fmt.Sprintf("fresh-key-%d", n), "base_url": zkapi.DefaultInferenceBaseURL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
+		case "/wallet/settle":
+			_, _ = io.WriteString(w, `{"pending_request":false}`)
 		default:
 			t.Error("unexpected companion route")
 			w.WriteHeader(404)
@@ -108,7 +111,8 @@ func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local := httptest.NewServer(api)
+	output := &serveOutput{changed: make(chan struct{}, 1)}
+	local := httptest.NewServer(server.LogRequests(api, log.New(output, "", 0)))
 	defer local.Close()
 	client := local.Client()
 	post := func(stream bool) (*http.Response, error) {
@@ -182,5 +186,34 @@ func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
 	}
 	if leaseCalls.Load() != wantLeases || providerCalls.Load() != 2 {
 		t.Fatal("wrong number of leases or provider requests")
+	}
+	logs := output.String()
+	for _, want := range []string{
+		"request key selected request=1 key_ref=1 source=fresh",
+		"request key released request=1 key_ref=1 response_complete=true",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("missing key lifecycle log %q: %s", want, logs)
+		}
+	}
+	wantSelection := "request key selected request=2 key_ref=1 source=reused"
+	if reuseWindow == 0 {
+		wantSelection = "request key selected request=2 key_ref=2 source=fresh"
+		if !strings.Contains(logs, "request waiting request=2 reason=previous_key_settlement") {
+			t.Fatal("settlement wait was not explained", logs)
+		}
+		for _, want := range []string{"request settling request=2 action=retire_previous_key", "request settlement result request=2 ready=true duration="} {
+			if !strings.Contains(logs, want) {
+				t.Fatal("active settlement timing was not reported", logs)
+			}
+		}
+	}
+	if !strings.Contains(logs, wantSelection) {
+		t.Fatal("logs misrepresented the actual provider credentials", logs)
+	}
+	for _, secret := range []string{"fresh-key-", "private request", "strip-me", strings.Repeat("b", 32)} {
+		if strings.Contains(logs, secret) {
+			t.Fatal("sensitive request or credential leaked into logs")
+		}
 	}
 }

@@ -104,6 +104,11 @@ func TestCompleteWaitsOnlyForExplicitSettlementAndAcquiresFreshKeys(t *testing.T
 			}))
 			defer upstream.Close()
 			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/wallet/settle" {
+					w.WriteHeader(http.StatusConflict)
+					_, _ = io.WriteString(w, `{"error":{"code":"pending_settlement"}}`)
+					return
+				}
 				n := leases.Add(1)
 				body, _ := io.ReadAll(r.Body)
 				if string(body) != `{"request_limit_micro_usd":1000000}` {
@@ -224,6 +229,11 @@ func TestSettlementWaitCancellationReleasesQueueWithoutAnotherAcquisition(t *tes
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); _, _ = io.WriteString(w, `{}`) }))
 	defer upstream.Close()
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wallet/settle" {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":{"code":"pending_settlement"}}`)
+			return
+		}
 		n := leases.Add(1)
 		if !settled.Load() {
 			w.WriteHeader(409)
@@ -319,6 +329,10 @@ func TestSettlementWaitRefreshesModelPolicyBeforeSpending(t *testing.T) {
 			upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{}`) }))
 			defer upstream.Close()
 			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/wallet/settle" {
+					_, _ = io.WriteString(w, `{"pending_request":false}`)
+					return
+				}
 				n := leases.Add(1)
 				if n == 1 {
 					w.WriteHeader(409)

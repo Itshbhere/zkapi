@@ -65,6 +65,7 @@ func TestConfigurePlainExistingChecksWithoutQuestionsOrChangingPreferences(t *te
 	dir, original := startTestConfig(t)
 	next := original
 	next.RelayURL = "wss://relay.example/"
+	next.KeyReuseWindowSeconds = 60
 	if err := config.Update(dir, original, next); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +82,9 @@ func TestConfigurePlainExistingChecksWithoutQuestionsOrChangingPreferences(t *te
 	after, _ := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil || !called || ui.asks != 0 || !bytes.Equal(before, after) {
 		t.Fatal("plain config did not check the saved profile directly", err)
+	}
+	if !strings.Contains(ui.String(), "fixed window up to 60 seconds") {
+		t.Fatal("configuration summary did not show the 60-second reuse window")
 	}
 }
 
@@ -99,7 +103,7 @@ func TestConfigureNewDefaultsAndExplicitChoicesDoNotAsk(t *testing.T) {
 			called := false
 			err := configure(context.Background(), dir, test.args, ui, &output, func(_ context.Context, gotDir string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
 				called = true
-				if gotDir != dir || action != "setup" || c.Backend != test.mode || c.ZKAPI.Network != test.network || c.ManagementToken == "" || c.RelayURL != "" {
+				if gotDir != dir || action != "setup" || c.Backend != test.mode || c.ZKAPI.Network != test.network || c.ManagementToken == "" || c.RelayURL != "" || c.KeyReuseWindowSeconds != 60 {
 					t.Fatal("wrong setup profile")
 				}
 				for _, secret := range []string{c.APIKey, c.ZKAPI.BridgeToken, c.ManagementToken} {
@@ -445,7 +449,7 @@ func TestConfigureOutputHidesProfilePaths(t *testing.T) {
 
 func TestConfigureKeyReuseWindowPersistsAndWiresZKAPI(t *testing.T) {
 	dir, original := startTestConfig(t)
-	for _, value := range []string{"15", "0", "300"} {
+	for _, value := range []string{"15", "0", "60", "300"} {
 		ui := &fundingWizardUI{}
 		var selected config.Config
 		err := configure(context.Background(), dir, []string{"--key-reuse-window-seconds", value}, ui, io.Discard, func(_ context.Context, _ string, c config.Config, _ string, _ setupPrompter, _ io.Writer) error {
@@ -461,6 +465,13 @@ func TestConfigureKeyReuseWindowPersistsAndWiresZKAPI(t *testing.T) {
 		}
 		if zkConfig(loaded, nil).KeyReuseWindow.Seconds() != float64(loaded.KeyReuseWindowSeconds) {
 			t.Fatal("zkAPI did not receive reuse setting")
+		}
+		if value == "0" {
+			if !strings.Contains(ui.String(), "fresh key per inference request") || !strings.Contains(ui.String(), "wait for earlier settlement") {
+				t.Fatal("disabled reuse did not explain request isolation and settlement")
+			}
+		} else if !strings.Contains(ui.String(), "different chats and local clients can share a key") || !strings.Contains(ui.String(), "provider can link those requests") {
+			t.Fatal("enabled reuse did not explain cross-chat provider linkability")
 		}
 	}
 	for _, value := range []string{"-1", "301", "invalid"} {

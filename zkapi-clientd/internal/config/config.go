@@ -17,6 +17,8 @@ import (
 	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/relay"
 )
 
+// Compatible requests share a provider credential within this fixed window,
+// including requests from different chats and local clients. Zero disables reuse.
 const DefaultKeyReuseWindowSeconds = 60
 const MaxKeyReuseWindowSeconds = 300
 
@@ -237,8 +239,8 @@ func readConfig(dir string) (Config, error) {
 		return Config{}, err
 	}
 	defer f.Close()
-	// Missing fields in older profiles adopt the default; explicit zero keeps
-	// strict per-request keys. Decoding must not conflate zero with omission.
+	// Missing fields in older profiles adopt the default window. Preserve
+	// explicitly saved reuse windows, including zero for strict per-request keys.
 	c := Config{KeyReuseWindowSeconds: DefaultKeyReuseWindowSeconds}
 	decoded := struct {
 		*Config

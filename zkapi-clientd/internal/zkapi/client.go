@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/activity"
 )
 
 const (
@@ -45,6 +47,7 @@ type Client struct {
 	settlementPoll time.Duration
 	now            func() time.Time
 	cachedLease    *reusableLease // accessed only while owning requestSlot
+	keySerial      uint64         // process-local display number; contains no key material
 	config         Config
 	local          *http.Client
 	inference      *http.Client
@@ -192,7 +195,7 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 			_ = json.Unmarshal(failure.Error, &flat)
 			for _, code := range []string{nested.Code, flat, failure.Code} {
 				switch code {
-				case "lease_pending", "pending_settlement", "withdrawal_pending", "withdrawal_conflict", "testnet_password_required":
+				case "lease_pending", "pending_settlement", "pending_request", "withdrawal_pending", "withdrawal_conflict", "testnet_password_required":
 					return nil, &Error{response.StatusCode, code}
 				}
 			}
@@ -251,8 +254,12 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 	}
 	release := func() { <-c.requestSlot }
 	transferred := false
+	var selectedKey uint64
 	defer func() {
 		if !transferred {
+			if selectedKey != 0 {
+				activity.Report(ctx, activity.Event{Kind: activity.KeyReleased, Key: selectedKey})
+			}
 			release()
 		}
 	}()
@@ -263,6 +270,7 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 	if err != nil {
 		return nil, err
 	}
+	selectedKey = lease.serial
 	if err := ctx.Err(); err != nil {
 		c.cachedLease = nil
 		return nil, err
@@ -301,6 +309,10 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 		if !complete {
 			c.cachedLease = nil
 		}
+		reusable := c.cachedLease != nil && c.cachedLease.serial == lease.serial &&
+			c.config.KeyReuseWindow > 0 && c.now().Before(c.cachedLease.until)
+		activity.Report(ctx, activity.Event{Kind: activity.KeyReleased, Key: lease.serial,
+			Complete: complete && response.StatusCode >= 200 && response.StatusCode < 300, Reusable: reusable})
 		release()
 	})
 	transferred = true
@@ -314,6 +326,7 @@ type providerLease struct {
 	Verified           bool   `json:"verified"`
 	VerificationStatus string `json:"verification_status"`
 	VerificationDetail string `json:"verification_detail"`
+	serial             uint64 // local display reference, never decoded from the companion
 }
 
 type reusableLease struct {
@@ -323,6 +336,7 @@ type reusableLease struct {
 }
 
 func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (providerLease, error) {
+	waiting, retirementAttempted := false, false
 	for {
 		if err := ctx.Err(); err != nil {
 			return providerLease{}, err
@@ -340,17 +354,48 @@ func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (provid
 		// slides, and a different coarse cap cannot expand an existing key.
 		if cached := c.cachedLease; cached != nil && c.config.KeyReuseWindow > 0 &&
 			cached.budget == limit && c.now().Before(cached.until) {
+			activity.Report(ctx, activity.Event{Kind: activity.KeyReused, Key: cached.serial})
 			return cached.providerLease, nil
 		}
 		c.cachedLease = nil
 		leaseBody, _ := json.Marshal(map[string]uint64{"request_limit_micro_usd": limit})
 		lease, err := c.request(ctx, http.MethodPost, "/oa/v1/lease", leaseBody)
-		var pending *Error
-		if !errors.As(err, &pending) || pending.Status != http.StatusConflict || (pending.Code != "lease_pending" && pending.Code != "pending_settlement") {
+		if !isPendingSettlement(err) {
 			if err != nil {
 				return providerLease{}, err
 			}
-			return c.acceptLease(lease, limit)
+			accepted, err := c.acceptLease(lease, limit)
+			if err == nil {
+				activity.Report(ctx, activity.Event{Kind: activity.KeyFresh, Key: accepted.serial})
+			}
+			return accepted, err
+		}
+		if !waiting {
+			activity.Report(ctx, activity.Event{Kind: activity.SettlementWaiting})
+			waiting = true
+		}
+		if !retirementAttempted {
+			// The request slot is still held, so no provider response is using
+			// the previous key. A reusable cache hit already returned above;
+			// expiration or a changed budget requires retirement in every mode.
+			// Retire it with the companion's saved proof;
+			// this neither starts a withdrawal nor guesses the final charge.
+			// A lost reply is never retried here. Pending settlement keeps the
+			// ordinary polling path until signed wallet recovery completes.
+			if err := ctx.Err(); err != nil {
+				return providerLease{}, err
+			}
+			retirementAttempted = true
+			started := time.Now()
+			activity.Report(ctx, activity.Event{Kind: activity.SettlementStarted})
+			err = c.retireLease(ctx)
+			activity.Report(ctx, activity.Event{Kind: activity.SettlementFinished, Complete: err == nil, Duration: time.Since(started)})
+			if err == nil {
+				continue
+			}
+			if !isPendingSettlement(err) {
+				return providerLease{}, err
+			}
 		}
 		// These codes explicitly withhold a new key. Never retry a lost or
 		// malformed reply, another conflict, or provider inference: issuance
@@ -363,6 +408,36 @@ func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (provid
 		case <-timer.C:
 		}
 	}
+}
+
+func isPendingSettlement(err error) bool {
+	var pending *Error
+	return errors.As(err, &pending) && pending.Status == http.StatusConflict &&
+		(pending.Code == "lease_pending" || pending.Code == "pending_settlement")
+}
+
+func (c *Client) retireLease(ctx context.Context) error {
+	raw, err := c.request(ctx, http.MethodPost, "/wallet/settle", nil)
+	if err != nil {
+		// This endpoint's pending_request means retirement/recovery has not
+		// yet installed a final wallet state. It is safe to resume polling;
+		// the same code from lease issuance is deliberately not retryable.
+		var pending *Error
+		if errors.As(err, &pending) && pending.Status == http.StatusConflict && pending.Code == "pending_request" {
+			return &Error{http.StatusConflict, "pending_settlement"}
+		}
+		return err
+	}
+	var status struct {
+		Pending *bool `json:"pending_request"`
+	}
+	if json.Unmarshal(raw, &status) != nil || status.Pending == nil {
+		return &Error{http.StatusBadGateway, "invalid_companion_response"}
+	}
+	if *status.Pending {
+		return &Error{http.StatusConflict, "pending_settlement"}
+	}
+	return nil
 }
 
 // A newly handed-out lease is distinct from intentional in-memory reuse. Keep
@@ -385,6 +460,8 @@ func (c *Client) acceptLease(raw json.RawMessage, budget uint64) (providerLease,
 		return providerLease{}, &Error{http.StatusConflict, "lease_already_used"}
 	}
 	c.usedLeases[hash] = lease.ExpiresAt
+	c.keySerial++
+	lease.serial = c.keySerial
 	if c.config.KeyReuseWindow > 0 {
 		until := now.Add(c.config.KeyReuseWindow)
 		if expiry := time.Unix(int64(lease.ExpiresAt)-1, 0); expiry.Before(until) {

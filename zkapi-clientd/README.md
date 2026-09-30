@@ -27,6 +27,14 @@ zkapi-clientd serve
 
 Leave that terminal running. In Open WebUI or another OpenAI-compatible client, set the base URL to **`http://127.0.0.1:8787/v1`** and leave the API key empty (use `local` if the app requires a value). Select a model and chat. The endpoint accepts local connections only.
 
+The default reuses an OpenRouter key for a fixed window of up to 60 seconds.
+Compatible requests from different chats, local clients, and Open WebUI's title
+and follow-up requests can share a key and its spending cap; the provider can
+link those requests. Existing profiles retain their saved key-reuse setting.
+For a fresh key per inference request, stop `serve`, run
+`zkapi-clientd config --key-reuse-window-seconds 0`, then restart `serve`.
+Fresh keys may wait for the previous key's settlement.
+
 To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved.
 
 To withdraw, run `zkapi-clientd config --menu` and choose `withdraw`. It asks for the destination and waits for extra ETH for fees only if needed.

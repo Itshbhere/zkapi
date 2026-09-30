@@ -110,8 +110,12 @@
   separately from SDK/operator tags.
 - Default mainnet/direct transport, $20-default deposit prompt, terminal payment
   QR and automatic balance waiting, fee-bound Enter confirmation, guided
-  withdrawal, loopback key-free API, serial request queue, 60-second key reuse,
+  withdrawal, loopback key-free API, serial request queue, configurable key reuse,
   trusted-station verifier outage policy and settled session cost logs carry over.
+  New profiles and profiles without a saved reuse window use a fixed 60-second
+  window, allowing compatible requests across chats and local clients to share
+  a key and its spending cap. Set the window to 0 for a fresh key per inference
+  request; explicitly saved windows retain their existing behavior.
   The public model-policy endpoint still has `/chat/model-tickets` in its name;
   it supplies model tiers, not tickets or user identity.
 - Deployment JSON, live service URLs, proof assets, bridge header/environment ABI

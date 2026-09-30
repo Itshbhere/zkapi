@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-func TestKeyReuseDefaultMigrationAndExplicitDisable(t *testing.T) {
+func TestKeyReuseDefaultsToSixtySecondsAndPreservesSavedWindows(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		value string
 		want  int
-	}{{"missing", "", 60}, {"disabled", "0", 0}, {"custom", "25", 25}, {"maximum", "300", 300}} {
+	}{{"missing", "", 60}, {"disabled", "0", 0}, {"custom", "25", 25}, {"default", "60", 60}, {"maximum", "300", 300}} {
 		t.Run(test.name, func(t *testing.T) {
 			c, err := Default()
 			if err != nil || c.KeyReuseWindowSeconds != 60 {
@@ -35,7 +35,7 @@ func TestKeyReuseDefaultMigrationAndExplicitDisable(t *testing.T) {
 			}
 			loaded, err := Load(dir)
 			if err != nil || loaded.KeyReuseWindowSeconds != test.want || loaded.APIKey != c.APIKey {
-				t.Fatal("missing and disabled settings were conflated, or credentials changed", err)
+				t.Fatal("saved window was not preserved, missing window did not use the default, or credentials changed", err)
 			}
 			next := loaded
 			next.KeyReuseWindowSeconds = 0

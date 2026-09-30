@@ -21,11 +21,23 @@ is not an outage. A fixed warning and `verifier-unavailable` response metadata
 report that exception. One verification result remains with its acquired key;
 there is no background re-verification queue.
 
-The default fixed key-reuse window is 60 seconds, configurable from 0 to 300.
-The provider can link all requests using the same key, including different
-chats or local clients; its original aggregate spending cap is shared. Use 0
-to require fresh access on every call. Expiry, errors and cancellation discard
+The default key-reuse window is a fixed 60 seconds from acquisition; reusing a
+key does not extend it. Compatible requests can share access, including
+different chats, local clients, and automatic title and follow-up requests.
+The provider can link all requests using the same key, and its original
+aggregate spending cap is shared. Expiry, errors and cancellation discard
 cached access. The cache is memory-only and does not survive a restart.
+
+Existing profiles retain their explicitly saved window. Profiles without a
+saved window use the default. Stop `serve`, run
+`zkapi-clientd config --key-reuse-window-seconds 0`, then restart `serve` to
+disable reuse; keep the same `--config-dir` if set.
+
+With reuse disabled, every inference request gets fresh access without needing
+a conversation identifier from the UI. A value from 1 to 300 sets the fixed
+reuse window in seconds. When an earlier lease blocks the next fresh key, the
+daemon requests settlement instead of waiting for the key's full expiry.
+Signed settlement can still take several minutes.
 
 Inference is loopback-only and key-free by default. Other local processes can
 use it. Optional local API-key authentication affects only the UI-to-daemon hop.
@@ -50,11 +62,17 @@ pending operations resume their exact bytes; reverts never automatically
 sign a replacement. Existing wallets are preserved across updates.
 
 The daemon creates no request-history log files. Foreground output includes
-HTTP route/method/status/timing and locally numbered key-session starts/ends,
-with signed-settlement cost and remaining ETH balance. Terminal redirection
-or service managers can retain that activity and financial metadata. Prompts,
-responses, secrets, raw session identifiers, proofs and provider credentials
-are not printed. Session events are a bounded in-memory feed, not a ledger.
+HTTP route/method/status/timing, local sequential `request=` numbers and local
+key serials (`key_ref=`). Selection reports `source=fresh` or `source=reused`;
+release reports `response_complete=true` or `false` and whether the key is
+retired locally or available for reuse. Local retirement describes the daemon's
+reuse policy, not proof of provider revocation or wallet settlement. Wallet
+session numbers are independent of these key serials, especially after restart.
+Session ends, costs and remaining ETH balances are logged only after signed
+settlement. Terminal redirection or service managers can retain that activity
+and financial metadata. Prompts, responses, secrets, raw session identifiers,
+proofs and provider credentials are not printed. Session events are a bounded
+in-memory feed, not a ledger.
 
 Only coarse reviewed model spending buckets reach the helper. The client
 continues reading the existing public `/chat/model-tickets` pricing-policy

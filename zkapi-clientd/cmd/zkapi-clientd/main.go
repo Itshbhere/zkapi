@@ -311,8 +311,11 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 		logger.Print("Localhost inference needs no API key; Ctrl+C stops the service")
 	}
 	if c.KeyReuseWindowSeconds > 0 {
-		logger.Printf("Ephemeral keys may be reused for up to %d seconds; requests in that window share a key and spending cap", c.KeyReuseWindowSeconds)
+		logger.Printf("Ephemeral key reuse enabled for up to %d seconds: different chats and local clients can share a key and spending cap. Run zkapi-clientd config --key-reuse-window-seconds 0 to isolate every request", c.KeyReuseWindowSeconds)
+	} else {
+		logger.Print("Ephemeral key isolation: fresh OpenRouter key for every completion, including background UI requests")
 	}
+	logger.Print("Request key_ref numbers identify keys within this process. Wallet session numbers track settlement separately; settled cost can arrive after the response ends")
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
