@@ -35,6 +35,7 @@ type AddressFundingStatus struct {
 	ETHBalance      string `json:"eth_balance"`
 	Amount          uint64 `json:"amount,omitempty"`
 	Phase           string `json:"phase"`
+	DepositStage    string `json:"deposit_stage,omitempty"`
 	TransactionHash string `json:"transaction_hash,omitempty"`
 	Message         string `json:"message"`
 }
@@ -99,6 +100,7 @@ func (h *FundingHandler) addressSnapshot(ctx context.Context) (fundingConfig, *a
 		}
 		if !hasNote {
 			status.Phase = "recovery_required"
+			status.DepositStage = ""
 			status.Message = "The saved private note is missing from the companion. Restore its state before further funding; no new deposit will be sent."
 		}
 	}
@@ -137,10 +139,14 @@ func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 	case "approval_pending":
 		status.Message = "The token approval is pending Ethereum confirmation. Checking again reuses the same transaction."
 	case "deposit_pending":
-		status.Message = "The deposit is pending Ethereum finality. Checking again reuses the same transaction."
+		// The durable phase spans both unmined and included deposits. Only a
+		// current receipt check can distinguish their progress.
+		status.Message = "The deposit is awaiting confirmation. Checking again reuses the same transaction."
 	case "confirming":
+		status.DepositStage = "activating"
 		status.Message = "The deposit is confirmed. Retry to activate its saved private note."
 	case "active":
+		status.DepositStage = "active"
 		status.Message = "Your private balance is ready."
 	case "reverted":
 		status.Message = "The saved transaction reverted. Retry explicitly to reuse the private note with a fresh transaction after finality."
@@ -169,9 +175,15 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 	if err != nil {
 		return status, err
 	}
+	// Live progress is diagnostic only; never persist it or let it change
+	// transaction identity, signing, replay, or the finality requirement.
+	depositStage := ""
 	update := func() AddressFundingStatus {
 		next := addressPublicStatus(record)
 		next.TokenBalance, next.ETHBalance = status.TokenBalance, status.ETHBalance
+		if depositStage != "" {
+			next.DepositStage = depositStage
+		}
 		return next
 	}
 	if record.Pending != nil && record.Pending.Kind != "deposit" && record.Pending.Kind != "approval" && record.Pending.Kind != "approval_reset" {
@@ -284,6 +296,12 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 			return update(), receiptErr
 		}
 		if !final {
+			if record.Pending.Kind == "deposit" {
+				depositStage = "finalizing"
+				if receipt == nil {
+					depositStage = h.pendingDepositStage(ctx, config, record.Pending)
+				}
+			}
 			// A missing receipt is uncertainty, not permission to choose a new
 			// nonce. Replaying identical EIP-155 bytes is safe after any restart.
 			if receipt == nil {
@@ -413,7 +431,44 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 		}
 		return update(), err
 	}
+	if kind == "deposit" {
+		depositStage = "pending"
+	}
 	return update(), nil
+}
+
+// A signed deposit below the latest base fee cannot currently be included.
+// This optional read only refines progress; unavailable/malformed data leaves
+// the transaction pending, and never changes its approved fee or signed bytes.
+func (h *FundingHandler) pendingDepositStage(ctx context.Context, config fundingConfig, saved *addressTransaction) string {
+	if saved == nil || saved.Kind != "deposit" {
+		return "pending"
+	}
+	raw, err := hex.DecodeString(strings.TrimPrefix(saved.Raw, "0x"))
+	var tx types.Transaction
+	if err != nil || tx.UnmarshalBinary(raw) != nil || !strings.EqualFold(tx.Hash().Hex(), saved.Hash) {
+		return "pending"
+	}
+	var latest struct {
+		BaseFeePerGas string `json:"baseFeePerGas"`
+		Timestamp     string `json:"timestamp"`
+	}
+	if h.addressRPC(ctx, config, "eth_getBlockByNumber", []any{"latest", false}, &latest) != nil {
+		return "pending"
+	}
+	timestamp, err := feeQuantity(latest.Timestamp)
+	if err != nil || !timestamp.IsInt64() || timestamp.BitLen() > 53 {
+		return "pending"
+	}
+	now := time.Now().Unix()
+	if timestamp.Int64() < now-120 || timestamp.Int64() > now+30 {
+		return "pending"
+	}
+	baseFee, err := feeQuantity(latest.BaseFeePerGas)
+	if err == nil && baseFee.Cmp(tx.GasFeeCap()) > 0 {
+		return "fee_wait"
+	}
+	return "pending"
 }
 
 func (h *FundingHandler) readAddressDeposit(config fundingConfig) (*depositRecord, error) {

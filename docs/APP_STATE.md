@@ -1,5 +1,35 @@
 # Current implementation notes
 
+## 2026-09-30: Recoverable deposit approval and accurate progress
+
+- An approval may return unsigned `waiting_funds` with no error when the last
+  fee/balance check needs more ETH. Guided setup previously passed that state to
+  signed recovery, causing the misleading "saved deposit transaction is missing"
+  exit. It now refreshes the same bound deposit and waits in the same command.
+  Lost approval replies are inspected through the serialized durable-state
+  endpoint before deciding between unsigned retry and exact signed recovery.
+- Amount, address, chain, deployment, contract, commitment and nonce remain
+  bound across unsigned quote refreshes; prior approval only applies within its
+  fee ceiling. Renewed shortages or higher ceilings require Enter again. The
+  recommended fee reserve remains optional; reverts never retry automatically.
+- Deposit progress is transient observation, separate from the durable funding
+  phase. It distinguishes pending inclusion, a base fee above the signed cap,
+  mined but unfinalized, finalized but awaiting activation, and active. RPC
+  uncertainty does not invent successful mining or finality. Normal progress
+  refreshes once a minute, without remote error text or private recovery data.
+- CLI success still requires a canonical finalized receipt. The web SDK's
+  successful deposit path installs its note after a mined receipt; its finality
+  guards apply to failed/ambiguous retries. The indexer follows head and the
+  issuer uses its current root, so web inference can begin before finality.
+  The CLI's roughly 15-minute finality wait begins after mining, not signing;
+  a transaction whose fee cap falls below the base fee can wait longer first.
+  This change does not alter the web, indexer, issuer, contracts or helper.
+- Validation: full Go race suite, vet and Linux amd64 build pass. Native
+  install/upgrade/reinstall checks preserve private state and prior bundles.
+  Independent review approved after correcting journal-only status to report
+  unknown inclusion, with regressions for receipt failures after mining.
+  Testing uses fixtures; live investigation only reads public transaction status.
+
 ## 2026-09-30: One-command binary installation
 
 - The short README now leads with the pinned `clientd-v0.1.0` binary installer

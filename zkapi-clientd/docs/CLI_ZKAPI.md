@@ -15,6 +15,20 @@ shown principal and maximum network fee. It checks the quote again before
 signing, deposits and waits for finalized activation. No model is selected
 or priced during funding.
 
+If the last fee or balance check leaves the deposit unsigned, configuration
+refreshes the same fixed deposit and continues watching instead of exiting.
+Interrupted approval responses are checked against saved progress before any
+retry. A higher fee ceiling or renewed funding shortage requires Enter again.
+The recommended fee buffer remains optional.
+
+After signing, progress distinguishes waiting to be mined, waiting for network
+fees to fall below the signed cap, Ethereum finality, and local balance
+activation. A brief status repeats once a minute while waiting. The same signed
+transaction is retried; the client never silently raises its fee cap or sends a
+second deposit. Finality typically takes about 15 minutes **after mining**, so
+time spent waiting for inclusion is additional. The web wallet currently
+activates at a mined receipt; the CLI keeps its stricter finalized-receipt check.
+
 ```sh
 zkapi-clientd config --status           # show saved settings
 zkapi-clientd config --edit             # change settings

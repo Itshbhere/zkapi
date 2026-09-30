@@ -404,6 +404,9 @@ func TestGuidedFundingAmbiguousApprovalInspectsDurableState(t *testing.T) {
 			f := newWizardFixture()
 			u := &fundingWizardUI{confirmations: []bool{true}}
 			f.approve = func(string) (zkapi.AddressFundingStatus, error) {
+				if f.approveCalls > 1 {
+					return wizardState("active"), nil
+				}
 				return zkapi.AddressFundingStatus{}, errors.New("lost reply")
 			}
 			f.address = func() zkapi.AddressFundingStatus {
@@ -418,7 +421,11 @@ func TestGuidedFundingAmbiguousApprovalInspectsDurableState(t *testing.T) {
 				return s
 			}
 			err := guidedFunding(context.Background(), f, "2", u, immediateWizardPoll)
-			if (err == nil) != signed || f.approveCalls != 1 {
+			wantApprovals := 2
+			if signed {
+				wantApprovals = 1
+			}
+			if err != nil || f.approveCalls != wantApprovals || u.continues != 1 {
 				t.Fatalf("ambiguous approval repeated or lost recovery: %v", err)
 			}
 			if signed && f.resumeCalls != 1 {
@@ -604,5 +611,223 @@ func TestGuidedFundingRefreshFailurePreservesVisibleBalanceWithoutApproval(t *te
 		!strings.Contains(u.String(), "receiving account balance 0.000100000000000000 ETH") ||
 		!strings.Contains(u.String(), "Could not refresh the funding quote") {
 		t.Fatal("refresh failure hid the last balance or authorized a transaction", err)
+	}
+}
+
+func TestGuidedFundingUnsignedApprovalWaitsAndRefreshesSameConsent(t *testing.T) {
+	for _, phase := range []string{"ready", "waiting_funds"} {
+		for _, lost := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/lost=%v", phase, lost), func(t *testing.T) {
+				f := newWizardFixture()
+				u := &fundingWizardUI{confirmations: []bool{true}}
+				polls, reads := 0, 0
+				f.address = func() zkapi.AddressFundingStatus {
+					reads++
+					s := wizardState(phase)
+					s.TransactionHash = ""
+					return s
+				}
+				f.approve = func(id string) (zkapi.AddressFundingStatus, error) {
+					if f.approveCalls > 1 {
+						if polls != f.approveCalls-1 || id != fmt.Sprintf("%064x", f.approveCalls+2) {
+							t.Fatal("retry did not wait and refresh quote")
+						}
+						if lost && reads != f.approveCalls {
+							t.Fatal("ambiguous approval retried before serialized status read")
+						}
+					}
+					if f.approveCalls == 3 {
+						return wizardState("active"), nil
+					}
+					if lost {
+						return zkapi.AddressFundingStatus{}, errors.New("reply lost before or after signing")
+					}
+					s := wizardState(phase)
+					s.TransactionHash = ""
+					return s, nil
+				}
+				if err := guidedFunding(context.Background(), f, "20", u, func(context.Context) error { polls++; return nil }); err != nil {
+					t.Fatal(err)
+				}
+				if f.approveCalls != 3 || f.resumeCalls != 0 || polls != 2 || u.continues != 1 || f.quoteCalls != 5 {
+					t.Fatalf("bad unsigned recovery: approvals=%d resumes=%d waits=%d enters=%d quotes=%d", f.approveCalls, f.resumeCalls, polls, u.continues, f.quoteCalls)
+				}
+				if strings.Count(u.String(), "No deposit transaction was sent.") != 1 {
+					t.Fatal("unsigned progress repeated or missing")
+				}
+			})
+		}
+	}
+}
+
+func TestGuidedFundingUnsignedApprovalRecoveryRejectsChangedState(t *testing.T) {
+	changes := map[string]func(*zkapi.AddressFundingStatus){
+		"hash in waiting state":           func(s *zkapi.AddressFundingStatus) { s.TransactionHash = "0x" + strings.Repeat("a", 64) },
+		"malformed hash in waiting state": func(s *zkapi.AddressFundingStatus) { s.TransactionHash = "invalid" },
+		"wrong asset":                     func(s *zkapi.AddressFundingStatus) { s.BillingAsset = "token" },
+		"wrong amount":                    func(s *zkapi.AddressFundingStatus) { s.Amount++ },
+		"wrong address":                   func(s *zkapi.AddressFundingStatus) { s.Address = wizardQuote().Contract },
+		"wrong chain":                     func(s *zkapi.AddressFundingStatus) { s.ChainID++ },
+		"wrong deployment":                func(s *zkapi.AddressFundingStatus) { s.DeploymentID = "other" },
+		"invalid balance":                 func(s *zkapi.AddressFundingStatus) { s.ETHBalance = "invalid" },
+		"negative balance":                func(s *zkapi.AddressFundingStatus) { s.ETHBalance = "-1" },
+		"overflow balance":                func(s *zkapi.AddressFundingStatus) { s.ETHBalance = new(big.Int).Lsh(big.NewInt(1), 256).String() },
+		"reverted": func(s *zkapi.AddressFundingStatus) {
+			s.Phase = "reverted"
+			s.TransactionHash = "0x" + strings.Repeat("a", 64)
+		},
+		"unknown phase":             func(s *zkapi.AddressFundingStatus) { s.Phase = "unknown" },
+		"pending without hash":      func(s *zkapi.AddressFundingStatus) { s.Phase = "deposit_pending" },
+		"confirming malformed hash": func(s *zkapi.AddressFundingStatus) { s.Phase = "confirming"; s.TransactionHash = "invalid" },
+		"active without hash":       func(s *zkapi.AddressFundingStatus) { s.Phase = "active" },
+	}
+	for name, change := range changes {
+		for _, lost := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/lost=%v", name, lost), func(t *testing.T) {
+				f := newWizardFixture()
+				u := &fundingWizardUI{confirmations: []bool{true}}
+				changed := wizardState("waiting_funds")
+				changed.TransactionHash = ""
+				change(&changed)
+				f.address = func() zkapi.AddressFundingStatus {
+					if f.approveCalls > 0 {
+						return changed
+					}
+					s := wizardState("ready")
+					s.TransactionHash = ""
+					return s
+				}
+				f.approve = func(string) (zkapi.AddressFundingStatus, error) {
+					if lost {
+						return zkapi.AddressFundingStatus{}, errors.New("lost reply")
+					}
+					return changed, nil
+				}
+				if err := guidedFunding(context.Background(), f, "20", u, immediateWizardPoll); err == nil {
+					t.Fatal("unsafe approval state accepted")
+				}
+				if f.approveCalls != 1 || f.resumeCalls != 0 {
+					t.Fatal("unsafe approval was retried")
+				}
+			})
+		}
+	}
+}
+
+func TestGuidedFundingUnsignedApprovalRechecksEntireQuoteBinding(t *testing.T) {
+	changes := map[string]func(*zkapi.AddressPaymentQuote){
+		"commitment": func(q *zkapi.AddressPaymentQuote) { q.Commitment = "0x5678" },
+		"nonce":      func(q *zkapi.AddressPaymentQuote) { q.Nonce++ },
+		"amount":     func(q *zkapi.AddressPaymentQuote) { q.Amount++ },
+		"principal":  func(q *zkapi.AddressPaymentQuote) { q.PrincipalWei = "1" },
+		"contract":   func(q *zkapi.AddressPaymentQuote) { q.Contract = q.Address },
+		"deployment": func(q *zkapi.AddressPaymentQuote) { q.DeploymentID = "other" },
+		"chain":      func(q *zkapi.AddressPaymentQuote) { q.ChainID++ },
+		"address":    func(q *zkapi.AddressPaymentQuote) { q.Address = q.Contract },
+		"retry hash": func(q *zkapi.AddressPaymentQuote) { q.RetryHash = "0x" + strings.Repeat("b", 64) },
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			f := newWizardFixture()
+			u := &fundingWizardUI{confirmations: []bool{true}}
+			f.approve = func(string) (zkapi.AddressFundingStatus, error) {
+				s := wizardState("waiting_funds")
+				s.TransactionHash = ""
+				return s, nil
+			}
+			f.quote = func(n int, _, usd uint64) (zkapi.AddressPaymentQuote, error) {
+				q := wizardQuote()
+				q.InputMicroUSD = usd
+				if n > 3 {
+					change(&q)
+				}
+				return q, nil
+			}
+			if err := guidedFunding(context.Background(), f, "20", u, immediateWizardPoll); err == nil {
+				t.Fatal("changed intent was approved")
+			}
+			if f.approveCalls != 1 || f.resumeCalls != 0 {
+				t.Fatal("changed intent was retried")
+			}
+		})
+	}
+}
+
+func TestGuidedFundingUnsignedApprovalRetainsCeilingAndRenewsAfterShortage(t *testing.T) {
+	for _, reason := range []string{"expired quote", "fee increase", "returned balance drop", "fresh balance drop"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newWizardFixture()
+			u := &fundingWizardUI{confirmations: []bool{true, true}}
+			f.address = func() zkapi.AddressFundingStatus { s := wizardState("ready"); s.TransactionHash = ""; return s }
+			f.approve = func(string) (zkapi.AddressFundingStatus, error) {
+				if f.approveCalls > 1 {
+					return wizardState("active"), nil
+				}
+				if reason == "expired quote" {
+					return zkapi.AddressFundingStatus{}, errors.New("quote expired before signing")
+				}
+				s := wizardState("waiting_funds")
+				s.TransactionHash = ""
+				if reason == "returned balance drop" {
+					s.ETHBalance = "0"
+				}
+				return s, nil
+			}
+			f.quote = func(n int, _, usd uint64) (zkapi.AddressPaymentQuote, error) {
+				q := wizardQuote()
+				q.ID = fmt.Sprintf("%064x", n)
+				q.InputMicroUSD = usd
+				if n > 3 && reason == "fee increase" {
+					q.FeeReserveWei = "31000"
+					q.FeeBufferWei = "6000"
+					q.RecommendedTotalWei = "750001000031000"
+				}
+				if n == 4 && reason == "fresh balance drop" {
+					q = wizardBalance(q, "0")
+				}
+				return q, nil
+			}
+			polls := 0
+			if err := guidedFunding(context.Background(), f, "20", u, func(context.Context) error { polls++; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			wantEnter := 2
+			if reason == "expired quote" {
+				wantEnter = 1
+			}
+			if u.continues != wantEnter || f.approveCalls != 2 || polls < 1 || f.resumeCalls != 0 {
+				t.Fatalf("lost fee/funding consent: enters=%d approvals=%d polls=%d", u.continues, f.approveCalls, polls)
+			}
+		})
+	}
+}
+
+func TestGuidedFundingAmbiguousUnsignedApprovalWaitsForReadableJournal(t *testing.T) {
+	f := newWizardFixture()
+	u := &fundingWizardUI{confirmations: []bool{true}}
+	reads, polls := 0, 0
+	f.addressResult = func() (zkapi.AddressFundingStatus, error) {
+		reads++
+		if reads == 2 || reads == 3 {
+			return zkapi.AddressFundingStatus{}, errors.New("temporarily unreadable")
+		}
+		s := wizardState("waiting_funds")
+		s.TransactionHash = ""
+		return s, nil
+	}
+	f.approve = func(string) (zkapi.AddressFundingStatus, error) {
+		if f.approveCalls == 1 {
+			return zkapi.AddressFundingStatus{}, errors.New("lost reply")
+		}
+		if reads != 4 || polls != 3 {
+			t.Fatal("approval retried before a successful durable read and delayed re-quote")
+		}
+		return wizardState("active"), nil
+	}
+	if err := guidedFunding(context.Background(), f, "20", u, func(context.Context) error { polls++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if f.approveCalls != 2 || f.resumeCalls != 0 || u.continues != 1 {
+		t.Fatal("wrong unsigned recovery")
 	}
 }

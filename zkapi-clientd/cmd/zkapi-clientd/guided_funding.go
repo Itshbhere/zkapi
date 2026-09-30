@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
 	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/relay"
@@ -226,7 +227,7 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 	showSetupFundingProgress(ui, initial)
 	lastProgress := initial.BalanceWei + ":" + initial.ShortfallWei
 	displayed := initial
-	approved, retrying := false, false
+	approved, retrying, approvalWaiting := false, false, false
 	ceiling := ""
 	for {
 		if err := ctx.Err(); err != nil {
@@ -245,8 +246,14 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 				}
 				switch state.Phase {
 				case "deposit_pending", "confirming", "active":
+					if !validWithdrawalTransactionHash(state.TransactionHash) {
+						return errors.New("saved deposit transaction is missing; preserve recovery files")
+					}
 					return finishGuidedDeposit(ctx, service, state, ui, wait)
 				case "ready", "waiting_funds":
+					if state.TransactionHash != "" {
+						return errors.New("saved funding has inconsistent transaction state; preserve recovery files")
+					}
 				default:
 					return errors.New("saved funding needs attention; run zkapi-clientd config before continuing")
 				}
@@ -297,24 +304,56 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 				approved, ceiling = true, quote.FeeReserveWei
 				continue // Recheck identity, balance, and fees after terminal input.
 			}
-			ui.Printf("Depositing %s ETH; waiting for Ethereum finality (usually about 15 minutes).\n", fundingUnits(quote.PrincipalWei, 18))
+			ui.Printf("Preparing deposit of %s ETH...\n", fundingUnits(quote.PrincipalWei, 18))
 			state, approveErr := service.Approve(ctx, quote.ID)
 			if approveErr != nil {
 				// An HTTP error does not tell us whether signing committed.
-				// Recover only the durable journal; never approve another ID.
+				// The serialized address read waits for any in-flight signing
+				// operation before exposing its durable journal. Never retry an
+				// approval until that read establishes a safely unsigned intent.
 				ui.Printf("Checking saved deposit progress after an interrupted response.\n")
 				state, err = readGuidedDeposit(ctx, service, ui, wait)
 				if err != nil {
 					return err
 				}
-				if state.Phase != "deposit_pending" && state.Phase != "confirming" && state.Phase != "active" {
-					return errors.New("the deposit was not confirmed; run zkapi-clientd config to inspect saved progress before approving again")
-				}
 			}
 			if !sameSetupFunding(state, initial) {
 				return errors.New("saved deposit no longer matches the approved amount or wallet; preserve its recovery files")
 			}
-			return finishGuidedDeposit(ctx, service, state, ui, wait)
+			switch state.Phase {
+			case "deposit_pending", "confirming", "active":
+				if !validWithdrawalTransactionHash(state.TransactionHash) {
+					return errors.New("saved deposit transaction is missing; preserve recovery files")
+				}
+				return finishGuidedDeposit(ctx, service, state, ui, wait)
+			case "ready", "waiting_funds":
+				if state.TransactionHash != "" {
+					return errors.New("saved funding has inconsistent transaction state; preserve recovery files")
+				}
+				currentBalance, valid := new(big.Int).SetString(state.ETHBalance, 10)
+				if !valid || currentBalance.Sign() < 0 || currentBalance.BitLen() > 256 {
+					return errors.New("saved funding returned an invalid receiving balance; preserve recovery files")
+				}
+				if currentBalance.Cmp(required) < 0 {
+					ui.Printf("The receiving balance no longer covers the deposit and fees. Waiting for ETH again; press Enter again once funded.\n")
+					approved, ceiling = false, ""
+				}
+				if !approvalWaiting {
+					ui.Printf("No deposit transaction was sent. Refreshing the receiving balance and network fees automatically.\n")
+					approvalWaiting = true
+				}
+				// Approval can lose its fee quote or funding before signing. Keep
+				// the same principal, commitment and nonce: the next fresh quote
+				// must pass sameSetupDeposit and the existing fee ceiling again.
+				// Yield even when funding still looks sufficient so a repeated
+				// unsigned response cannot create a tight approval retry loop.
+				if err := wait(ctx); err != nil {
+					return err
+				}
+				continue
+			default:
+				return errors.New("saved funding needs attention; run zkapi-clientd config before continuing (a reverted transaction is never retried automatically)")
+			}
 		}
 		if approved {
 			ui.Printf("The receiving balance no longer covers the deposit and fees. Waiting for ETH again; press Enter again once funded.\n")
@@ -363,21 +402,37 @@ func finishGuidedDeposit(ctx context.Context, service guidedFundingService, init
 		return errors.New("saved deposit transaction is missing; preserve recovery files")
 	}
 	state, previous, retrying := initial, "", false
+	started, lastUpdate := time.Now(), time.Time{}
 	for {
 		if state.BillingAsset != "native_eth" || state.Amount != initial.Amount || state.Address != initial.Address || state.ChainID != initial.ChainID || state.DeploymentID != initial.DeploymentID || (initial.TransactionHash != "" && state.TransactionHash != initial.TransactionHash) {
 			return errors.New("saved deposit changed during recovery; preserve its recovery files")
 		}
-		progress := state.Phase + state.TransactionHash
-		if progress != previous {
+		progress := state.Phase + state.TransactionHash + state.DepositStage
+		if progress != previous || time.Since(lastUpdate) >= time.Minute {
 			// Fixed labels only; remote messages and recovery internals do not
 			// enter the guided session's output.
+			if progress == previous {
+				ui.Printf("Still checking (%s elapsed). ", time.Since(started).Truncate(time.Second))
+			}
 			switch state.Phase {
 			case "active":
 				ui.Printf("Deposit finalized. Private inference balance activated.\n")
-			case "deposit_pending", "confirming":
-				ui.Printf("Deposit submitted; waiting for finalized activation.\n")
+			case "confirming":
+				ui.Printf("Deposit finalized; activating your private balance.\n")
+			case "deposit_pending":
+				switch state.DepositStage {
+				case "fee_wait":
+					ui.Printf("Current Ethereum fees exceed this transaction's signed fee cap. Waiting for fees to fall; retrying the same saved transaction.\n")
+				case "finalizing":
+					ui.Printf("Deposit mined; waiting for Ethereum finality (usually about 15 minutes after mining).\n")
+				case "pending":
+					ui.Printf("Deposit transaction saved; waiting to be mined. Retrying the same transaction as needed.\n")
+				default:
+					ui.Printf("Waiting for deposit confirmation; checking the saved transaction.\n")
+				}
 			}
 			previous = progress
+			lastUpdate = time.Now()
 		}
 		if state.Phase == "active" {
 			return nil
