@@ -1,5 +1,26 @@
 # Current implementation notes
 
+## 2026-09-30: Mined-receipt activation tradeoff
+
+- Read-only review of successful deposit activation found a concrete reorg
+  downside to removing the CLI's finalized-receipt gate. In the web SDK,
+  `confirmBrowserDepositReceipt` validates the deposit event and calls
+  `browserWalletRuntime.confirmDeposit`, which installs the active note and
+  clears `pendingDeposit`. This is not a complete post-activation reorg recovery
+  mechanism. The CLI likewise treats active notes as committed and refuses to
+  reinitialize an already used balance.
+- The indexer poller reads chain head, advances a block-number cursor and
+  persists a tree snapshot. Its current checkpoint/log representations do not
+  track canonical block hashes or provide a rollback journal. Root divergence
+  is logged, not automatically reconciled. A deposit reorganization can leave
+  local/indexed state inconsistent with the vault; earlier activation may also
+  allow off-chain inference credit to be issued before the backing deposit is
+  stable. Reinitializing the client alone cannot undo issued credit.
+- Faster activation would require an explicit acceptance of this tradeoff and
+  coordinated reorg handling, not simply changing a receipt's block tag.
+  CLI finality remains unchanged. This review did not submit transactions,
+  alter wallet state, rebuild/install a client, or change live deployments.
+
 ## 2026-09-30: Fresh Sepolia client deployment pins
 
 - Update only the client embedded Sepolia manifest, manifest URL, canonical

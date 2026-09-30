@@ -33,6 +33,15 @@ second deposit. Finality typically takes about 15 minutes **after mining**, so
 time spent waiting for inclusion is additional. The web wallet currently
 activates at a mined receipt; the CLI keeps its stricter finalized-receipt check.
 
+Mined-receipt activation has a tradeoff: an unfinalized block can be replaced
+in a chain reorganization. The deposit can disappear or be included later with
+different registration data, while the local wallet has already activated its
+private note. The current wallet and indexer do not provide complete rollback
+and reconciliation for this case. Inference or withdrawal may then fail or need
+recovery, and already issued inference credit cannot be undone by a local reset.
+The web wallet's faster activation accepts this exposure; it does not establish
+that removing the CLI's finality check is risk-free.
+
 ```sh
 zkapi-clientd config --status           # show saved settings
 zkapi-clientd config --edit             # change settings
