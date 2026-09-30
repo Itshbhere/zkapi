@@ -39,7 +39,10 @@ constructor/runtime bytecode must be reviewed and pinned for any future deploy.
 
 The current operator CLI retains `setup`, `signing-keys`, `serverd` and `indexer`.
 Server startup requires native RPC/feed configuration and a lease issuer;
-`zkapi-clientd`, token funding commands and `POST /v2/requests` are removed.
+The old Rust `zkapi-clientd` binary, token funding commands and `POST /v2/requests`
+are removed from the operator workspace. The later [zkapi-clientd/](../zkapi-clientd/README.md)
+Go frontend is a separate native ETH client moved from OA Chat; it builds its
+wallet helper from explicitly pinned historical source and patches.
 Settlement recovery GET routes remain. Existing SQLite rows/checkpoints are not
 reset; compatibility storage columns may remain so native recovery can read
 existing databases without destructive migration.

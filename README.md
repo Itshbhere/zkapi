@@ -10,6 +10,11 @@ commitments and Schnorr signatures, and a 32-level Merkle tree. The ledger uses
 integer gwei. This is an experimental, unaudited protocol with a single-party
 setup; see [the note-binding review](docs/note-binding-review.md).
 
+## Local OpenAI-compatible API
+
+Use [zkapi-clientd](zkapi-clientd/README.md) to configure an ETH wallet and serve
+inference to Open WebUI or another local OpenAI-compatible client.
+
 ## Build and test
 
 ```sh
@@ -63,6 +68,7 @@ verifier/vault and explicit client/fund migration.
 
 | Directory | Purpose |
 | --- | --- |
+| `zkapi-clientd/` | Local ETH-funded OpenAI-compatible client and installer |
 | `sdk/` | Browser native ETH wallet, public artifacts and SDK tests |
 | `protocol/rust/` | Shared v2 types, BN254 helpers, circuits and Rust/WASM wallets |
 | `protocol/contracts/` | Native ETH vault, Groth16 verifier and contract tests |

@@ -27,5 +27,7 @@ and retries through durable deployment-bound checkpoints. See
 
 Only the v2 Groth16/Baby-JubJub proof path and native ETH payment path are active.
 The operator CLI supplies server/indexer/setup/signing-key commands; the host
-application integrates the browser SDK directly. There is no local token wallet
-daemon or inference-proxy mode in the current tree.
+application integrates the browser SDK directly. The separate [zkapi-clientd](../zkapi-clientd/README.md) frontend provides a local
+OpenAI-compatible API backed by private native ETH balances. It packages a
+pinned historical Rust wallet/prover with reviewed patches, separately from
+this operator workspace. It has no ticket mode or token wallet.
