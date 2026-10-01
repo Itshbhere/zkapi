@@ -23,15 +23,21 @@ import (
 // chat and background-title request pattern, without any real wallet or funds.
 func TestOpenWebUIConcurrentRequestsWaitForStreamAndSettlement(t *testing.T) {
 	for _, window := range []time.Duration{0, time.Minute} {
-		t.Run(window.String(), func(t *testing.T) { testOpenWebUIBurst(t, window) })
+		t.Run(window.String(), func(t *testing.T) { testOpenWebUIBurst(t, window, false) })
 	}
 }
 
-func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
+func TestOpenWebUIRequestGroupSettlesWithoutAnotherRequest(t *testing.T) {
+	testOpenWebUIBurst(t, time.Second, true)
+}
+
+func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration, automatic bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	var leaseCalls, providerCalls atomic.Int32
+	var settlements atomic.Int32
+	settled := make(chan struct{}, 1)
 	pending := make(chan struct{})
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("b", 32) {
@@ -54,6 +60,11 @@ func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"api_key": fmt.Sprintf("fresh-key-%d", n), "base_url": zkapi.DefaultInferenceBaseURL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 		case "/wallet/settle":
+			settlements.Add(1)
+			select {
+			case settled <- struct{}{}:
+			default:
+			}
 			_, _ = io.WriteString(w, `{"pending_request":false}`)
 		default:
 			t.Error("unexpected companion route")
@@ -112,8 +123,17 @@ func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
 		t.Fatal(err)
 	}
 	output := &serveOutput{changed: make(chan struct{}, 1)}
-	local := httptest.NewServer(server.LogRequests(api, log.New(output, "", 0)))
+	logger := log.New(output, "", 0)
+	local := httptest.NewServer(server.LogRequests(api, logger))
 	defer local.Close()
+	if automatic {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			runAutomaticSettlement(ctx, logger, wallet)
+		}()
+		defer func() { cancel(); <-done }()
+	}
 	client := local.Client()
 	post := func(stream bool) (*http.Response, error) {
 		payload := fmt.Sprintf(`{"model":"test/model","messages":[{"role":"user","content":"private request"}],"stream":%t,"user":"strip-me"}`, stream)
@@ -186,6 +206,26 @@ func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
 	}
 	if leaseCalls.Load() != wantLeases || providerCalls.Load() != 2 {
 		t.Fatal("wrong number of leases or provider requests")
+	}
+	if automatic {
+		select {
+		case <-settled:
+		case <-ctx.Done():
+			t.Fatal("idle request group never started settlement")
+		}
+		for !strings.Contains(output.String(), "automatic settlement result key_ref=1 ready=true") {
+			select {
+			case <-output.changed:
+			case <-ctx.Done():
+				t.Fatal("automatic settlement result was not logged")
+			}
+		}
+		if settlements.Load() != 1 || leaseCalls.Load() != 1 || providerCalls.Load() != 2 {
+			t.Fatal("idle settlement acquired a new key, sent inference, or retired twice")
+		}
+		if !strings.Contains(output.String(), "key window ended key_ref=1; starting automatic settlement") {
+			t.Fatal("automatic settlement start was not logged")
+		}
 	}
 	logs := output.String()
 	for _, want := range []string{

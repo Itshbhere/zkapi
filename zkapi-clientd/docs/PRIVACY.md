@@ -21,9 +21,10 @@ is not an outage. A fixed warning and `verifier-unavailable` response metadata
 report that exception. One verification result remains with its acquired key;
 there is no background re-verification queue.
 
-The default key-reuse window is a fixed 60 seconds from acquisition; reusing a
-key does not extend it. Compatible requests can share access, including
-different chats, local clients, and automatic title and follow-up requests.
+The default key-reuse window is a fixed 60 seconds from acquisition, capped by
+the provider's expiry; reusing a key does not extend it. Compatible requests can
+share access, including different chats, local clients, and automatic title and
+follow-up requests.
 The provider can link all requests using the same key, and its original
 aggregate spending cap is shared. Expiry, errors and cancellation discard
 cached access. The cache is memory-only and does not survive a restart.
@@ -35,9 +36,13 @@ disable reuse; keep the same `--config-dir` if set.
 
 With reuse disabled, every inference request gets fresh access without needing
 a conversation identifier from the UI. A value from 1 to 300 sets the fixed
-reuse window in seconds. When an earlier lease blocks the next fresh key, the
-daemon requests settlement instead of waiting for the key's full expiry.
-Signed settlement can still take several minutes.
+reuse window in seconds. The daemon starts settlement when the window ends,
+without waiting for another request. Any active provider response finishes
+first. With reuse disabled, settlement starts after each response. When an
+earlier lease blocks the next fresh key, the daemon also requests settlement
+instead of waiting for the key's full expiry. The helper recovers pending or
+ambiguous outcomes without repeated retirement requests. Signed settlement
+can still take several minutes.
 
 Inference is loopback-only and key-free by default. Other local processes can
 use it. Optional local API-key authentication affects only the UI-to-daemon hop.
@@ -85,6 +90,8 @@ release reports `response_complete=true` or `false` and whether the key is
 retired locally or available for reuse. Local retirement describes the daemon's
 reuse policy, not proof of provider revocation or wallet settlement. Wallet
 session numbers are independent of these key serials, especially after restart.
+Background settlement logs include the local key serial, start, result and
+duration.
 Session ends, costs and remaining ETH balances are logged only after signed
 settlement. Terminal redirection or service managers can retain that activity
 and financial metadata. Prompts, responses, secrets, raw session identifiers,

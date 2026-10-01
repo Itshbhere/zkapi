@@ -321,6 +321,11 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 		defer close(statusDone)
 		monitorSessions(life, logger, sessions, 5*time.Second)
 	}()
+	settlementDone := make(chan struct{})
+	go func() {
+		defer close(settlementDone)
+		runAutomaticSettlement(life, logger, wallet)
+	}()
 	var result error
 	select {
 	case <-ctx.Done():
@@ -343,6 +348,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 		_ = httpServer.Close()
 	}
 	<-statusDone
+	<-settlementDone
 	logger.Print("Local API service stopped")
 	return result
 }
