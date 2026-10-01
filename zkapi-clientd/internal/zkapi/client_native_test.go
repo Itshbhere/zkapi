@@ -61,9 +61,9 @@ func TestCheckRequiresExactV3NativeDeploymentIdentity(t *testing.T) {
 func TestUsableVerificationAcceptsOnlyExactTrustedStates(t *testing.T) {
 	for _, verified := range []bool{false, true} {
 		for _, status := range []string{"", "verified", "verifier-unavailable", "pending", "unverified", "Verified", "verified ", "bypassed"} {
-			for _, detail := range []string{"", "recently_attested_outage", "rate_limited", "ownership_check_error", "recently_attested", "recently_attested_outage ", "server_error", "verified"} {
+			for _, detail := range []string{"", "trusted_station_fallback", "trusted_station_fallback ", "recently_attested_outage", "rate_limited", "ownership_check_error", "recently_attested", "server_error", "verified"} {
 				want := verified && status == "verified" && detail == ""
-				if !verified && status == "verifier-unavailable" && (detail == "recently_attested_outage" || detail == "rate_limited" || detail == "ownership_check_error") {
+				if !verified && status == "verifier-unavailable" && detail == "trusted_station_fallback" {
 					want = true
 				}
 				if got := usableVerification(verified, status, detail); got != want {
@@ -75,7 +75,7 @@ func TestUsableVerificationAcceptsOnlyExactTrustedStates(t *testing.T) {
 }
 
 func TestCompleteOverridesProviderVerificationHeadersWithTrustedBridgeState(t *testing.T) {
-	for _, detail := range []string{"", "recently_attested_outage", "rate_limited", "ownership_check_error"} {
+	for _, detail := range []string{"", "trusted_station_fallback"} {
 		t.Run(detail, func(t *testing.T) {
 			status, verified := "verified", true
 			if detail != "" {
@@ -112,6 +112,35 @@ func TestCompleteOverridesProviderVerificationHeadersWithTrustedBridgeState(t *t
 			}
 			if detail == "" && len(response.Header.Values("X-OA-Verification-Detail")) != 0 {
 				t.Fatal("verified response retained provider detail")
+			}
+		})
+	}
+}
+
+func TestCompleteRejectsLegacyCompanionFallbackBeforeInference(t *testing.T) {
+	for _, detail := range []string{"recently_attested_outage", "rate_limited", "ownership_check_error", "unverified_advisory"} {
+		t.Run(detail, func(t *testing.T) {
+			upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("an unpinned legacy fallback reached inference")
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer upstream.Close()
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"api_key": "bounded-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60,
+					"verified": false, "verification_status": "verifier-unavailable", "verification_detail": detail,
+				})
+			}, upstream)
+			response, err := client.Complete(context.Background(), json.RawMessage(`{"model":"example/model","messages":[{"role":"user","content":"private"}]}`))
+			if response != nil {
+				response.Body.Close()
+				t.Fatal("legacy fallback produced a provider response")
+			}
+			if failure, ok := err.(*Error); !ok || failure.Code != "invalid_verified_lease" {
+				t.Fatalf("legacy fallback was not rejected at lease admission: %v", err)
+			}
+			if client.cachedLease != nil || len(client.usedLeases) != 0 {
+				t.Fatal("rejected fallback entered the reuse cache")
 			}
 		})
 	}

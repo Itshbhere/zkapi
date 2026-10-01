@@ -201,6 +201,23 @@ settlement, which can arrive after the response ends. Routine helper
 readiness/retry messages are hidden. The foreground daemon stops if its helper
 exits; only an external service manager can restart it.
 
+### Trusted-station verification fallback
+
+Version `0.1.3` adds the same pinned-station exception as the web app.
+A new provider key normally needs matching OA verifier approval. If verification
+is unavailable or refused, the client can continue only for the compiled
+`oa-station` signing-key pin, after checking the station signature locally.
+This permits a valid trusted-station key when the verifier reports
+`Invalid org signature`; unknown stations cannot use the exception. Bans,
+expired keys, invalid station signatures and mismatched approvals still block.
+
+Fallback responses include `X-OA-Verification-Status: verifier-unavailable` and
+`X-OA-Verification-Detail: trusted_station_fallback`. The terminal warns that
+provider ownership and privacy settings were not confirmed. The key is never
+reported as verified. See [privacy boundaries](PRIVACY.md) for the trust pin's
+provenance and limits. Install the matching client/helper bundle together;
+legacy helper fallback results are rejected by the updated gateway.
+
 ## Private files and existing wallets
 
 New profiles use the OS user configuration directory plus `zkapi-clientd`:

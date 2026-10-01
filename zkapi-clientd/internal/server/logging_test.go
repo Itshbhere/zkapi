@@ -209,7 +209,7 @@ func TestRequestLogsKeepImmediateSSEFlushing(t *testing.T) {
 }
 
 func TestVerifierOutageLogsOnlyFixedWarning(t *testing.T) {
-	const warning = "Verification unavailable: inference used an outage-eligible key; this key is not verified"
+	const warning = "Station not verified: inference used a trusted station key; provider ownership and privacy settings were not confirmed"
 	for _, test := range []struct {
 		name, status string
 		wantWarning  bool

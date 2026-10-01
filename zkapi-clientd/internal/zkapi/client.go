@@ -535,11 +535,9 @@ func usableVerification(verified bool, status, detail string) bool {
 	if verified || status != "verifier-unavailable" {
 		return false
 	}
-	switch detail {
-	case "recently_attested_outage", "rate_limited", "ownership_check_error":
-		return true
-	}
-	return false
+	// Older companions admitted outages without the pinned station signature
+	// check. Their legacy detail values must never authorize fallback here.
+	return detail == "trusted_station_fallback"
 }
 
 func (c *Client) WalletStatus(ctx context.Context) (json.RawMessage, error) {

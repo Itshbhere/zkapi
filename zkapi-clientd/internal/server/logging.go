@@ -53,7 +53,7 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 		logger.Printf("request started method=%s route=%s request=%d", method, route, request)
 		defer func() {
 			if response.Header().Get("X-OA-Verification-Status") == "verifier-unavailable" {
-				logger.Print("Verification unavailable: inference used an outage-eligible key; this key is not verified")
+				logger.Print("Station not verified: inference used a trusted station key; provider ownership and privacy settings were not confirmed")
 			}
 			result := "finished"
 			if !returned || response.failed || r.Context().Err() != nil {

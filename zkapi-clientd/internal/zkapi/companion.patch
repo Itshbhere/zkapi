@@ -1,16 +1,19 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 7b7750c..dff648a 100644
+index 7b7750c..45aa47c 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -3246,6 +3246,7 @@ dependencies = [
+@@ -3244,8 +3244,10 @@ dependencies = [
+  "futures-util",
+  "http-body-util",
   "reqwest",
++ "ring",
   "serde",
   "serde_json",
 + "sha2",
   "sha3",
   "tempfile",
   "thiserror",
-@@ -3254,9 +3255,11 @@ dependencies = [
+@@ -3254,9 +3256,11 @@ dependencies = [
   "tower-http",
   "tracing",
   "tracing-subscriber 0.3.23",
@@ -148,7 +151,7 @@ index 594cbe6..eefe04e 100644
              chain_id: 11155111,
              rpc_url: "https://rpc.example".to_string(),
 diff --git a/crates/zkapi-clientd/Cargo.toml b/crates/zkapi-clientd/Cargo.toml
-index c52ce9f..745061c 100644
+index c52ce9f..dc2ed84 100644
 --- a/crates/zkapi-clientd/Cargo.toml
 +++ b/crates/zkapi-clientd/Cargo.toml
 @@ -11,6 +11,7 @@ path = "src/main.rs"
@@ -159,11 +162,12 @@ index c52ce9f..745061c 100644
  zkapi-core = { path = "../../protocol/rust/crates/zkapi-core" }
  zkapi-types = { path = "../../protocol/rust/crates/zkapi-types" }
  zkapi-auth = { path = "../zkapi-auth" }
-@@ -24,6 +25,8 @@ reqwest = { workspace = true }
+@@ -24,6 +25,9 @@ reqwest = { workspace = true }
  serde = { workspace = true }
  serde_json = { workspace = true }
  sha3 = { workspace = true }
 +sha2 = "0.10"
++ring = "0.17.14"
 +uuid = { workspace = true }
  thiserror = { workspace = true }
  tokio = { workspace = true }
@@ -201,7 +205,7 @@ index ebde330..bcfc691 100644
              chain_id: 1,
              contract_address: Felt252::ZERO,
 diff --git a/crates/zkapi-clientd/src/error.rs b/crates/zkapi-clientd/src/error.rs
-index 6f82083..d60669d 100644
+index 6f82083..3e4fa50 100644
 --- a/crates/zkapi-clientd/src/error.rs
 +++ b/crates/zkapi-clientd/src/error.rs
 @@ -4,6 +4,14 @@ use zkapi_client::error::ClientError;
@@ -313,7 +317,7 @@ index 6952f58..cb8c9ab 100644
              .send()
              .await
 diff --git a/crates/zkapi-clientd/src/lib.rs b/crates/zkapi-clientd/src/lib.rs
-index 2cbde2c..9c3f9ac 100644
+index 2cbde2c..05ce3d3 100644
 --- a/crates/zkapi-clientd/src/lib.rs
 +++ b/crates/zkapi-clientd/src/lib.rs
 @@ -4,6 +4,7 @@ pub mod error;
@@ -324,7 +328,7 @@ index 2cbde2c..9c3f9ac 100644
 
  pub use config::{AuthConfig, ModelDescriptor, RequestMode};
  pub use routes::{build_router, run};
-@@ -14,3 +15,7 @@ pub use service::{
+@@ -14,3 +15,9 @@ pub use service::{
      ServerAttestationSnapshot, ServerHealthSnapshot, ServerSnapshot, WalletStatus,
      WithdrawalChainStatus, WithdrawalMode, WithdrawalPlan, ZkapiConfig, CREDITS_PER_USD,
  };
@@ -332,6 +336,8 @@ index 2cbde2c..9c3f9ac 100644
 +mod oa_native;
 +
 +mod oa_events;
++
++mod oa_station_trust;
 diff --git a/crates/zkapi-clientd/src/main.rs b/crates/zkapi-clientd/src/main.rs
 index 3b94253..2709888 100644
 --- a/crates/zkapi-clientd/src/main.rs
@@ -956,6 +962,72 @@ index 0000000..52b5adf
 +            assert!(verified_quote(&config).await.is_err(), "mode {value}");
 +        }
 +        server.abort();
++    }
++}
+diff --git a/crates/zkapi-clientd/src/oa_station_trust.rs b/crates/zkapi-clientd/src/oa_station_trust.rs
+new file mode 100644
+index 0000000..1756288
+--- /dev/null
++++ b/crates/zkapi-clientd/src/oa_station_trust.rs
+@@ -0,0 +1,60 @@
++//! Operator-pinned exception for using an explicitly unverified provider key.
++//! Registry flags and names alone never authenticate a station-issued key.
++
++#[derive(Clone, Copy)]
++pub(crate) struct StationTrust<'a> {
++    pub station_id: &'a str,
++    pub public_key_hex: &'a str,
++    pub verifier_url: &'a str,
++}
++
++pub(crate) const TRUSTED_STATION: StationTrust<'static> = StationTrust {
++    station_id: "oa-station",
++    public_key_hex: "20019ebb3cfa61a34ac75879bca8ccf9168ce435c6007d5279b84ebeb83fd097",
++    verifier_url: "https://verifier2.openanonymity.ai",
++};
++
++fn hex_bytes(text: &str, size: usize) -> Option<Vec<u8>> {
++    if text.len() != size * 2 || !text.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
++    text.as_bytes().chunks_exact(2).map(|pair| {
++        let pair = std::str::from_utf8(pair).ok()?;
++        u8::from_str_radix(pair, 16).ok()
++    }).collect()
++}
++
++impl StationTrust<'_> {
++    pub fn authenticates(&self, configured_verifier: &str, evidence_verifier: &str,
++        station_id: &str, api_key: &str, key_valid_till: u64, station_signature: &str) -> bool {
++        if configured_verifier.trim_end_matches('/') != self.verifier_url
++            || evidence_verifier.trim_end_matches('/') != self.verifier_url
++            || station_id != self.station_id || api_key.is_empty() || key_valid_till == 0 { return false; }
++        let (Some(public_key), Some(signature)) = (hex_bytes(self.public_key_hex, 32), hex_bytes(station_signature, 64)) else { return false; };
++        let message = format!("{station_id}|{api_key}|{key_valid_till}");
++        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key)
++            .verify(message.as_bytes(), &signature).is_ok()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use ring::signature::{Ed25519KeyPair, KeyPair};
++    #[test]
++    fn signature_authenticates_only_pinned_station_key_expiry_and_origin() {
++        let pair = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
++        let public = pair.public_key().as_ref().iter().map(|b| format!("{b:02x}")).collect::<String>();
++        let signature = pair.sign(b"oa-station|test-child-key|2000000000").as_ref().iter().map(|b| format!("{b:02x}")).collect::<String>();
++        let trust = StationTrust { public_key_hex: &public, ..TRUSTED_STATION };
++        let url = TRUSTED_STATION.verifier_url;
++        assert!(trust.authenticates(url, url, "oa-station", "test-child-key", 2_000_000_000, &signature));
++        for (configured,evidence,station,key,expiry,sig) in [
++            (url,url,"unknown","test-child-key",2_000_000_000,signature.as_str()),
++            (url,url,"oa-station","swapped-key",2_000_000_000,signature.as_str()),
++            (url,url,"oa-station","test-child-key",2_000_000_001,signature.as_str()),
++            ("https://other.example",url,"oa-station","test-child-key",2_000_000_000,signature.as_str()),
++            (url,"https://other.example","oa-station","test-child-key",2_000_000_000,signature.as_str()),
++            (url,url,"oa-station","test-child-key",2_000_000_000,"not-hex")
++        ] { assert!(!trust.authenticates(configured,evidence,station,key,expiry,sig)); }
++        assert!(!TRUSTED_STATION.authenticates(url,url,"oa-station","test-child-key",2_000_000_000,&signature));
 +    }
 +}
 diff --git a/crates/zkapi-clientd/src/oa_withdrawal.rs b/crates/zkapi-clientd/src/oa_withdrawal.rs
@@ -1699,7 +1771,7 @@ index 0000000..a1c8287
 +    }
 +}
 diff --git a/crates/zkapi-clientd/src/routes.rs b/crates/zkapi-clientd/src/routes.rs
-index bebd5c4..009e9fc 100644
+index bebd5c4..5c69960 100644
 --- a/crates/zkapi-clientd/src/routes.rs
 +++ b/crates/zkapi-clientd/src/routes.rs
 @@ -18,7 +18,8 @@ use std::io;
@@ -1712,7 +1784,7 @@ index bebd5c4..009e9fc 100644
  use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
  use axum::response::{Html, IntoResponse, Response};
  use axum::routing::{get, post};
-@@ -50,11 +51,31 @@ struct WithdrawBody {
+@@ -50,11 +51,32 @@ struct WithdrawBody {
      destination: String,
  }
 
@@ -1728,7 +1800,8 @@ index bebd5c4..009e9fc 100644
 +    build_router_with_token(service, std::env::var("OA_ZKAPI_BRIDGE_TOKEN").ok())
 +}
 +
-+fn build_router_with_token(service: Arc<AuthService>, token: Option<String>) -> Router {
++/// Build the mandatory-authentication router with an explicitly supplied local token.
++pub fn build_router_with_token(service: Arc<AuthService>, token: Option<String>) -> Router {
      Router::new()
          .route("/", get(funding_index))
          .route("/favicon.ico", get(funding_favicon))
@@ -1744,7 +1817,7 @@ index bebd5c4..009e9fc 100644
          .route("/healthz", get(healthz))
          .route("/request", post(core_request))
          .route("/status", get(wallet_status))
-@@ -92,9 +113,89 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
+@@ -92,9 +114,89 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
          .route("/zkapi/v1/inference", post(zkapi_inference))
          .route("/funding/{*path}", get(funding_asset))
          .layer(local_cors_layer())
@@ -1834,7 +1907,7 @@ index bebd5c4..009e9fc 100644
  /// A deliberately narrow CORS policy.
  ///
  /// The funding UI is served by this same daemon, so it is same-origin and does
-@@ -703,6 +804,71 @@ fn openai_error(err: AuthError) -> Response {
+@@ -703,6 +805,71 @@ fn openai_error(err: AuthError) -> Response {
 
  #[cfg(test)]
  mod tests {
@@ -1906,7 +1979,7 @@ index bebd5c4..009e9fc 100644
      use axum::body::Body;
      use axum::http::StatusCode;
      use http_body_util::BodyExt;
-@@ -738,12 +904,12 @@ mod tests {
+@@ -738,12 +905,12 @@ mod tests {
              ..Default::default()
          })
          .unwrap();
@@ -1921,7 +1994,7 @@ index bebd5c4..009e9fc 100644
                      .uri("/funding")
                      .body(Body::empty())
                      .unwrap(),
-@@ -770,7 +936,7 @@ mod tests {
+@@ -770,7 +937,7 @@ mod tests {
              let stylesheet = router
                  .clone()
                  .oneshot(
@@ -1930,7 +2003,7 @@ index bebd5c4..009e9fc 100644
                          .uri("/funding/styles.css")
                          .body(Body::empty())
                          .unwrap(),
-@@ -797,7 +963,7 @@ mod tests {
+@@ -797,7 +964,7 @@ mod tests {
                  let response = router
                      .clone()
                      .oneshot(
@@ -1939,7 +2012,7 @@ index bebd5c4..009e9fc 100644
                              .uri(path)
                              .body(Body::empty())
                              .unwrap(),
-@@ -811,7 +977,7 @@ mod tests {
+@@ -811,7 +978,7 @@ mod tests {
              let response = router
                  .clone()
                  .oneshot(
@@ -1948,7 +2021,7 @@ index bebd5c4..009e9fc 100644
                          .uri(path)
                          .body(Body::empty())
                          .unwrap(),
-@@ -831,7 +997,7 @@ mod tests {
+@@ -831,7 +998,7 @@ mod tests {
          let models = router
              .clone()
              .oneshot(
@@ -1957,7 +2030,7 @@ index bebd5c4..009e9fc 100644
                      .uri("/v1/models")
                      .body(Body::empty())
                      .unwrap(),
-@@ -845,7 +1011,7 @@ mod tests {
+@@ -845,7 +1012,7 @@ mod tests {
          let health = router
              .clone()
              .oneshot(
@@ -1966,7 +2039,7 @@ index bebd5c4..009e9fc 100644
                      .uri("/health")
                      .body(Body::empty())
                      .unwrap(),
-@@ -857,7 +1023,7 @@ mod tests {
+@@ -857,7 +1024,7 @@ mod tests {
          let settled = router
              .clone()
              .oneshot(
@@ -1975,7 +2048,7 @@ index bebd5c4..009e9fc 100644
                      .method("POST")
                      .uri("/wallet/settle")
                      .body(Body::empty())
-@@ -870,7 +1036,7 @@ mod tests {
+@@ -870,7 +1037,7 @@ mod tests {
          let config = router
              .clone()
              .oneshot(
@@ -1984,7 +2057,7 @@ index bebd5c4..009e9fc 100644
                      .uri("/funding/config")
                      .body(Body::empty())
                      .unwrap(),
-@@ -883,7 +1049,7 @@ mod tests {
+@@ -883,7 +1050,7 @@ mod tests {
          assert_eq!(value["chain_id"], 1);
          assert_eq!(value["demo_rpc_url"], "http://127.0.0.1:48654");
          assert_eq!(value["demo_billing_token_address"], "0xabc");
@@ -1993,7 +2066,7 @@ index bebd5c4..009e9fc 100644
          assert_eq!(value["suggested_deposit_amount"], 2468);
          assert!(value.get("demo_private_key").is_none());
          assert_eq!(value["demo_note_ttl_seconds"], 1234);
-@@ -892,7 +1058,7 @@ mod tests {
+@@ -892,7 +1059,7 @@ mod tests {
              let removed = router
                  .clone()
                  .oneshot(
@@ -2002,7 +2075,7 @@ index bebd5c4..009e9fc 100644
                          .method("POST")
                          .uri(path)
                          .body(Body::empty())
-@@ -906,7 +1072,7 @@ mod tests {
+@@ -906,7 +1073,7 @@ mod tests {
          let withdrawal_confirm = router
              .clone()
              .oneshot(
@@ -2011,7 +2084,7 @@ index bebd5c4..009e9fc 100644
                      .method("POST")
                      .uri("/wallet/withdraw/confirm")
                      .body(Body::empty())
-@@ -918,7 +1084,7 @@ mod tests {
+@@ -918,7 +1085,7 @@ mod tests {
 
          let demo = router
              .oneshot(
@@ -2021,10 +2094,18 @@ index bebd5c4..009e9fc 100644
                      .body(Body::empty())
                      .unwrap(),
 diff --git a/crates/zkapi-clientd/src/service.rs b/crates/zkapi-clientd/src/service.rs
-index 6b0305d..b33bdbf 100644
+index 6b0305d..2334584 100644
 --- a/crates/zkapi-clientd/src/service.rs
 +++ b/crates/zkapi-clientd/src/service.rs
-@@ -35,6 +35,71 @@ use zkapi_types::wire::{
+@@ -12,6 +12,7 @@
+ //! the persisted note state. Blocking wallet/proof work runs on a blocking
+ //! task so the async runtime stays responsive.
+
++use crate::oa_station_trust::{StationTrust, TRUSTED_STATION};
+ use std::collections::BTreeMap;
+ use std::fs::OpenOptions;
+ use std::io;
+@@ -35,6 +36,71 @@ use zkapi_types::wire::{
  };
  use zkapi_types::{EpochRoots, Felt252, WithdrawalPublicInputsV2};
 
@@ -2096,7 +2177,7 @@ index 6b0305d..b33bdbf 100644
  fn compute_payload_hash(payload: impl AsRef<[u8]>) -> Felt252 {
      // Must match the protocol's canonical request-payload binding; the wallet
      // re-derives and rejects on mismatch (`request_flow`), and the value feeds
-@@ -117,6 +182,15 @@ pub struct RetiredNote {
+@@ -117,6 +183,15 @@ pub struct RetiredNote {
 
  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
  pub struct FundingConfig {
@@ -2112,7 +2193,7 @@ index 6b0305d..b33bdbf 100644
      pub contract_address: Felt252,
      pub chain_id: u64,
      pub indexer_url: String,
-@@ -320,6 +394,7 @@ struct ActiveOpenRouterLease {
+@@ -320,6 +395,7 @@ struct ActiveOpenRouterLease {
      settle_after: u64,
      verification: Option<OaKeyVerificationEvidence>,
      verified: bool,
@@ -2120,7 +2201,7 @@ index 6b0305d..b33bdbf 100644
      requests_served: u32,
  }
 
-@@ -371,6 +446,8 @@ struct OpenRouterLeaseExtensions {
+@@ -371,12 +447,16 @@ struct OpenRouterLeaseExtensions {
      key_source: String,
      #[serde(default)]
      verification: Option<OaKeyVerificationEvidence>,
@@ -2129,7 +2210,15 @@ index 6b0305d..b33bdbf 100644
  }
 
  #[derive(Debug, Clone, Deserialize)]
-@@ -396,8 +473,7 @@ fn validate_oa_key_evidence(
+ struct OaKeyVerificationEvidence {
+     verifier_url: String,
+     station_id: String,
++    // Retained for wire compatibility; this untrusted hint never grants fallback.
++    #[allow(dead_code)]
+     #[serde(default)]
+     station_recently_attested: bool,
+     key_valid_till: u64,
+@@ -396,8 +476,7 @@ fn validate_oa_key_evidence(
              "OA key evidence omitted the station ID".to_string(),
          ));
      }
@@ -2139,7 +2228,7 @@ index 6b0305d..b33bdbf 100644
          return Err(AuthError::KeyVerification(format!(
              "OA key evidence expiry {} does not safely cover lease expiry {expires_at}",
              evidence.key_valid_till
-@@ -421,6 +497,58 @@ fn validate_oa_key_evidence(
+@@ -421,6 +500,76 @@ fn validate_oa_key_evidence(
      Ok(())
  }
 
@@ -2148,13 +2237,21 @@ index 6b0305d..b33bdbf 100644
 +
 +fn oa_transport_unavailable(error: &reqwest::Error) -> bool {
 +    use std::error::Error;
++    let mut network_outage = false;
 +    let mut source: Option<&(dyn Error + 'static)> = Some(error);
 +    while let Some(cause) = source {
 +        let text = cause.to_string().to_ascii_lowercase();
 +        if ["certificate", "cert ", "tls", "ssl", "invalid peer", "unknown issuer", "proxy authentication", "canceled", "cancelled"].iter().any(|term| text.contains(term)) { return false; }
++        if let Some(io) = cause.downcast_ref::<io::Error>() {
++            network_outage |= matches!(io.kind(), io::ErrorKind::ConnectionRefused
++                | io::ErrorKind::NetworkUnreachable | io::ErrorKind::HostUnreachable
++                | io::ErrorKind::TimedOut);
++        }
 +        source = cause.source();
 +    }
-+    error.is_connect() || error.is_timeout()
++    // is_connect also includes failed TLS handshakes. Unknown connection errors
++    // must fail closed rather than silently admitting a verifier transport failure.
++    network_outage || error.is_timeout()
 +}
 +
 +fn oa_verifier_hard_failure(result: &Value, temporary_ownership: bool) -> bool {
@@ -2177,28 +2274,38 @@ index 6b0305d..b33bdbf 100644
 +    false
 +}
 +
-+fn oa_verifier_outage(status: Option<u16>, result: &Value, expires_at: u64, evidence: &OaKeyVerificationEvidence) -> Result<OaVerificationOutcome, AuthError> {
-+    let fail = || AuthError::KeyVerification("verifier refused key or outage policy does not permit this key".into());
-+    if expires_at <= now_seconds() { return Err(fail()); }
-+    let temporary_ownership = status == Some(503) && result["status"] == "unverified" && result["detail"] == "ownership_check_error";
-+    if oa_verifier_hard_failure(result, temporary_ownership) { return Err(fail()); }
-+    let detail = if temporary_ownership { "ownership_check_error" }
-+        else if status == Some(429) { "rate_limited" }
-+        else {
-+            if !evidence.station_recently_attested
-+                || !matches!(status, None | Some(408 | 500 | 502 | 503 | 504))
-+                || !matches!(result.get("status").and_then(Value::as_str), None | Some("error" | "unavailable")) {
-+                return Err(fail());
-+            }
-+            "recently_attested_outage"
-+        };
-+    Ok(OaVerificationOutcome { verified: false, detail: Some(detail) })
++fn oa_verifier_banned(result: &Value) -> bool {
++    result["status"] == "banned"
++        || result.get("banned_station").is_some_and(|v| !v.is_null() && *v != Value::Bool(false))
++        || ["error", "detail", "message"].iter().any(|field| {
++            result.get(field).is_some_and(|v| v.to_string().to_ascii_lowercase().contains("banned"))
++        })
++}
++
++fn oa_verifier_outage(status: Option<u16>, result: &Value, expires_at: u64,
++    evidence: &OaKeyVerificationEvidence, api_key: &str, configured_verifier: &str,
++    trust: StationTrust<'_>) -> Result<OaVerificationOutcome, AuthError> {
++    let fail = || AuthError::KeyVerification("verifier did not approve a trusted station key".into());
++    if expires_at <= now_seconds() || evidence.key_valid_till <= now_seconds()
++        || !oa_key_expiry_covers_lease(evidence.key_valid_till, expires_at)
++        || status.is_some_and(|s| !(200..300).contains(&s) && !(400..600).contains(&s))
++        || result.get("status").is_some_and(|v| !v.is_string())
++        || oa_verifier_banned(result)
++        || ["status", "error", "detail", "message"].iter().any(|field| result.get(field)
++            .is_some_and(|v| v.to_string().to_ascii_lowercase().contains("expired")))
++        || !trust.authenticates(configured_verifier, &evidence.verifier_url,
++            &evidence.station_id, api_key, evidence.key_valid_till, &evidence.station_signature) {
++        return Err(fail());
++    }
++    // The locally pinned station authenticated this key. Its provider ownership
++    // and privacy settings remain unconfirmed, even for an explicit refusal.
++    Ok(OaVerificationOutcome { verified: false, detail: Some("trusted_station_fallback") })
 +}
 +
  fn default_openrouter_key_source() -> String {
      "openrouter".to_string()
  }
-@@ -476,10 +604,11 @@ pub struct AuthService {
+@@ -476,10 +625,11 @@ pub struct AuthService {
      config: AuthConfig,
      wallet_mutex: Arc<Mutex<()>>,
      indexer: IndexerClient,
@@ -2211,7 +2318,7 @@ index 6b0305d..b33bdbf 100644
  }
 
  impl AuthService {
-@@ -491,17 +620,201 @@ impl AuthService {
+@@ -491,17 +641,202 @@ impl AuthService {
              indexer: IndexerClient::new(config.indexer_url.clone()),
              config,
              wallet_mutex: Arc::new(Mutex::new(())),
@@ -2228,7 +2335,7 @@ index 6b0305d..b33bdbf 100644
          }))
      }
 
-+    // The Go gateway receives only a verified provider lease. Prompt content
++    // The Go gateway receives only an admitted provider lease with explicit verification status. Prompt content
 +    // never enters the wallet/prover bridge or the zkAPI payment server.
 +    pub fn oa_bridge_status(&self) -> serde_json::Value {
 +        serde_json::json!({
@@ -2372,6 +2479,7 @@ index 6b0305d..b33bdbf 100644
 +        }
 +        let guard = self.ready_direct_lease(request_limit_micro_usd).await?;
 +        let lease = guard.as_ref().ok_or_else(|| AuthError::Wallet("lease disappeared".into()))?;
++        self.check_cached_lease_station(lease)?;
 +        reserve_oa_bridge_lease(&self.config.state_dir, &lease.client_request_id)?;
 +        self.oa_session_events.started(&lease.client_request_id);
 +        Ok(serde_json::json!({
@@ -2418,7 +2526,7 @@ index 6b0305d..b33bdbf 100644
      pub fn default_model(&self) -> &str {
          self.config
              .models
-@@ -551,7 +864,7 @@ impl AuthService {
+@@ -551,7 +886,7 @@ impl AuthService {
              } else {
                  config.request_charge_cap
              };
@@ -2427,7 +2535,7 @@ index 6b0305d..b33bdbf 100644
                  return Ok(None);
              }
              // The wallet normally removes this file after settlement. Treat
-@@ -596,6 +909,7 @@ impl AuthService {
+@@ -596,6 +931,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -2435,7 +2543,7 @@ index 6b0305d..b33bdbf 100644
              if wallet.state().is_some() {
                  return Err(AuthError::InvalidInput(
                      "wallet already has an active note".to_string(),
-@@ -634,6 +948,8 @@ impl AuthService {
+@@ -634,6 +970,8 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -2444,7 +2552,7 @@ index 6b0305d..b33bdbf 100644
              wallet.confirm_deposit(
                  request.secret,
                  request.note_id,
-@@ -648,6 +964,7 @@ impl AuthService {
+@@ -648,6 +986,7 @@ impl AuthService {
      pub async fn recover(&self) -> Result<RecoverResult, AuthError> {
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
@@ -2452,7 +2560,7 @@ index 6b0305d..b33bdbf 100644
          let trusted_roots = self.trusted_roots();
          spawn_blocking(move || {
              let _guard = wallet_mutex
-@@ -655,8 +972,12 @@ impl AuthService {
+@@ -655,8 +994,12 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
@@ -2465,7 +2573,7 @@ index 6b0305d..b33bdbf 100644
              let request = recovered.as_ref().map(|response| {
                  core_response(response, wallet.state().map(|state| state.current_balance))
              });
-@@ -780,6 +1101,8 @@ impl AuthService {
+@@ -780,6 +1123,8 @@ impl AuthService {
                  .lock()
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
@@ -2474,7 +2582,7 @@ index 6b0305d..b33bdbf 100644
              let state_path = config.state_dir.join("note_state.json");
              let journal_path = config.state_dir.join("pending_journal.json");
              let prepared_path = prepared_withdrawal_path(&config.state_dir);
-@@ -806,6 +1129,13 @@ impl AuthService {
+@@ -806,6 +1151,13 @@ impl AuthService {
 
      pub fn funding_config(&self) -> FundingConfig {
          FundingConfig {
@@ -2488,7 +2596,7 @@ index 6b0305d..b33bdbf 100644
              contract_address: self.config.contract_address,
              chain_id: self.config.chain_id,
              indexer_url: self.config.indexer_url.clone(),
-@@ -814,7 +1144,7 @@ impl AuthService {
+@@ -814,7 +1166,7 @@ impl AuthService {
              suggested_deposit_amount: self.config.suggested_deposit_amount,
              demo_rpc_url: self.config.demo_rpc_url.clone(),
              demo_billing_token_address: self.config.demo_billing_token_address.clone(),
@@ -2497,7 +2605,7 @@ index 6b0305d..b33bdbf 100644
              demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
          }
      }
-@@ -835,6 +1165,7 @@ impl AuthService {
+@@ -835,6 +1187,7 @@ impl AuthService {
          request: CoreRequest,
          session_id: Option<&str>,
      ) -> Result<CoreResponse, AuthError> {
@@ -2505,7 +2613,7 @@ index 6b0305d..b33bdbf 100644
          if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
              return Err(AuthError::WithdrawalPending(format!(
                  "{} withdrawal for note {} is prepared; finish it before sending more requests",
-@@ -868,6 +1199,7 @@ impl AuthService {
+@@ -868,6 +1221,7 @@ impl AuthService {
          request: CoreRequest,
          session_id: Option<&str>,
      ) -> Result<StreamingCoreResponse, AuthError> {
@@ -2513,7 +2621,7 @@ index 6b0305d..b33bdbf 100644
          if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
              return Err(AuthError::WithdrawalPending(format!(
                  "{} withdrawal for note {} is prepared; finish it before sending more requests",
-@@ -937,7 +1269,7 @@ impl AuthService {
+@@ -937,7 +1291,7 @@ impl AuthService {
                  // the retryable prompt-free proof remains in the wallet
                  // journal. Use it to retire or recover the authoritative
                  // server-side lease.
@@ -2522,7 +2630,7 @@ index 6b0305d..b33bdbf 100644
                  let Some(lease) = self.find_direct_lease_for_withdrawal(&request).await? else {
                      tracing::warn!(
                          client_request_id = %request.client_request_id,
-@@ -1091,6 +1423,7 @@ impl AuthService {
+@@ -1091,6 +1445,7 @@ impl AuthService {
          &self,
          lease_slot: &mut Option<ActiveOpenRouterLease>,
          session_id: &str,
@@ -2530,7 +2638,7 @@ index 6b0305d..b33bdbf 100644
      ) -> Result<(), AuthError> {
          if lease_slot
              .as_ref()
-@@ -1123,7 +1456,7 @@ impl AuthService {
+@@ -1123,7 +1478,7 @@ impl AuthService {
          // explicit settlement, credit exhaustion, or a key rejection.
          let _ = self.recover().await?;
          *lease_slot = Some(
@@ -2539,7 +2647,7 @@ index 6b0305d..b33bdbf 100644
                  .await?,
          );
          Ok(())
-@@ -1197,7 +1530,7 @@ impl AuthService {
+@@ -1197,7 +1552,7 @@ impl AuthService {
          loop {
              let request_guard = self.direct_request_mutex.clone().read_owned().await;
              let mut lease_slot = self.direct_lease.lock().await;
@@ -2548,7 +2656,7 @@ index 6b0305d..b33bdbf 100644
                  .await?;
              let lease = lease_slot
                  .as_mut()
-@@ -1208,14 +1541,15 @@ impl AuthService {
+@@ -1208,15 +1563,17 @@ impl AuthService {
                          "OA lease lost its verification evidence".to_string(),
                      )
                  })?;
@@ -2564,9 +2672,35 @@ index 6b0305d..b33bdbf 100644
 +                lease.verified = outcome.verified;
 +                lease.verification_detail = outcome.detail.map(str::to_string);
              }
++            self.check_cached_lease_station(lease)?;
              let client_request_id = lease.client_request_id.clone();
              let mut reserved_lease = lease.clone();
-@@ -1300,14 +1634,15 @@ impl AuthService {
+             lease.requests_served = lease.requests_served.saturating_add(1);
+@@ -1290,24 +1647,39 @@ impl AuthService {
+         }
+     }
+
++    fn check_cached_lease_station(&self, lease: &ActiveOpenRouterLease) -> Result<(), AuthError> {
++        if lease.expires_at <= now_seconds() {
++            return Err(AuthError::KeyVerification("key is expired".into()));
++        }
++        if let Some(evidence) = &lease.verification {
++            if self.oa_banned_stations.lock().map_err(|_| AuthError::KeyVerification("station policy unavailable".into()))?
++                .contains(&evidence.station_id) {
++                return Err(AuthError::KeyVerification("station is banned".into()));
++            }
++        }
++        Ok(())
++    }
++
+     async fn send_verified_openrouter_request(
+         &self,
+         lease: &mut ActiveOpenRouterLease,
+         upstream_path: &str,
+         upstream_body: &Value,
+     ) -> Result<reqwest::Response, AuthError> {
++        self.check_cached_lease_station(lease)?;
+         if !lease.verified {
              let evidence = lease.verification.clone().ok_or_else(|| {
                  AuthError::KeyVerification("OA lease lost its verification evidence".to_string())
              })?;
@@ -2584,7 +2718,7 @@ index 6b0305d..b33bdbf 100644
          }
          let url = format!(
              "{}{}",
-@@ -1326,8 +1661,7 @@ impl AuthService {
+@@ -1326,8 +1698,7 @@ impl AuthService {
          expires_at: u64,
      ) -> Result<reqwest::Response, AuthError> {
          for attempt in 1..=DIRECT_REMOTE_MAX_ATTEMPTS {
@@ -2594,7 +2728,7 @@ index 6b0305d..b33bdbf 100644
                  .post(url)
                  .bearer_auth(api_key)
                  .header("content-type", "application/json")
-@@ -1387,21 +1721,25 @@ impl AuthService {
+@@ -1387,21 +1758,25 @@ impl AuthService {
      async fn issue_direct_openrouter_lease(
          &self,
          session_id: String,
@@ -2625,7 +2759,7 @@ index 6b0305d..b33bdbf 100644
              let status = response.status();
              let body = response
                  .text()
-@@ -1412,6 +1750,13 @@ impl AuthService {
+@@ -1412,6 +1787,13 @@ impl AuthService {
                      .map_err(|error| AuthError::Serialization(error.to_string()))?;
                  let extensions: OpenRouterLeaseExtensions = serde_json::from_str(&body)
                      .map_err(|error| AuthError::Serialization(error.to_string()))?;
@@ -2639,7 +2773,7 @@ index 6b0305d..b33bdbf 100644
                  if lease.api_key.is_empty() || lease.expires_at <= now_seconds() {
                      return Err(AuthError::Wallet(
                          "server returned an unusable OpenRouter lease".to_string(),
-@@ -1466,10 +1811,17 @@ impl AuthService {
+@@ -1466,10 +1848,17 @@ impl AuthService {
                      settle_after: lease.settle_after,
                      verification,
                      verified,
@@ -2657,12 +2791,20 @@ index 6b0305d..b33bdbf 100644
                  if error.error_code == "stale_root" && !retried_stale_root {
                      self.clear_pending_request().await?;
                      retried_stale_root = true;
-@@ -1535,117 +1887,77 @@ impl AuthService {
+@@ -1535,117 +1924,86 @@ impl AuthService {
          api_key: &str,
          expires_at: u64,
          evidence: &OaKeyVerificationEvidence,
 -    ) -> Result<(), AuthError> {
 +    ) -> Result<OaVerificationOutcome, AuthError> {
++        self.verify_oa_key_with_trust(api_key, expires_at, evidence, TRUSTED_STATION).await
++    }
++
++    // Production always passes TRUSTED_STATION. The private argument lets tests
++    // sign synthetic keys and run local HTTP cases without any operator secrets.
++    async fn verify_oa_key_with_trust(&self, api_key: &str, expires_at: u64,
++        evidence: &OaKeyVerificationEvidence, trust: StationTrust<'_>)
++        -> Result<OaVerificationOutcome, AuthError> {
          let expected_verifier = self.config.oa_verifier_url.trim_end_matches('/');
          if !matches_trusted_url(&evidence.verifier_url, expected_verifier) {
 -            return Err(AuthError::KeyVerification(
@@ -2760,7 +2902,7 @@ index 6b0305d..b33bdbf 100644
 +        let mut response = match response {
 +            Ok(response) => response,
 +            Err(error) if oa_transport_unavailable(&error) => {
-+                return oa_verifier_outage(None, &Value::Null, expires_at, evidence);
++                return oa_verifier_outage(None, &Value::Null, expires_at, evidence, api_key, expected_verifier, trust);
              }
 -            let retryable = result
 -                .get("retryable")
@@ -2801,11 +2943,12 @@ index 6b0305d..b33bdbf 100644
 -        ))
 +        let result: Value = serde_json::from_slice(&bytes).map_err(|_| AuthError::KeyVerification("invalid verifier response".into()))?;
 +        if !result.is_object() { return Err(AuthError::KeyVerification("invalid verifier response".into())); }
-+        if result["status"] == "banned" || result.get("banned_station").is_some_and(|value| !value.is_null() && *value != Value::Bool(false)) {
++        if oa_verifier_banned(&result) {
 +            self.oa_banned_stations.lock().map_err(|_| AuthError::KeyVerification("station policy unavailable".into()))?.insert(evidence.station_id.clone());
++            return Err(AuthError::KeyVerification("station is banned".into()));
 +        }
-+        if (200..300).contains(&status) {
-+            if !oa_verifier_hard_failure(&result, false) && oa_verifier_binds_key(&result, &evidence.station_id, api_key) {
++        if result["status"] == "verified" {
++            if (200..300).contains(&status) && expires_at > now_seconds() && evidence.key_valid_till > now_seconds() && !oa_verifier_hard_failure(&result, false) && oa_verifier_binds_key(&result, &evidence.station_id, api_key) {
 +                return Ok(OaVerificationOutcome { verified: true, detail: None });
 +            }
 +            return Err(AuthError::KeyVerification("verifier did not approve this station and key".into()));
@@ -2819,10 +2962,9 @@ index 6b0305d..b33bdbf 100644
 +            }) {
 +            return Err(AuthError::KeyVerification("verifier response binding mismatch".into()));
 +        }
-+        oa_verifier_outage(Some(status), &result, expires_at, evidence)
-     }
-
--    async fn prepare_direct_lease_request(&self) -> Result<ApiRequestV2, AuthError> {
++        oa_verifier_outage(Some(status), &result, expires_at, evidence, api_key, expected_verifier, trust)
++    }
++
 +    fn check_request_budget(&self, request: &ApiRequestV2, limit: u128) -> Result<(), AuthError> {
 +        if let Some(quote) = crate::oa_native::saved_quote(&self.config, &request.payload)? {
 +            let expected = quote.budget_units(limit)?.max(self.config.request_charge_cap);
@@ -2831,13 +2973,14 @@ index 6b0305d..b33bdbf 100644
 +            }
 +        }
 +        Ok(())
-+    }
-+
+     }
+
+-    async fn prepare_direct_lease_request(&self) -> Result<ApiRequestV2, AuthError> {
 +    async fn prepare_direct_lease_request(&self, request_limit_micro_usd: Option<u128>) -> Result<ApiRequestV2, AuthError> {
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
          let indexer = self.indexer.clone();
-@@ -1655,6 +1967,7 @@ impl AuthService {
+@@ -1655,6 +2013,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -2845,7 +2988,7 @@ index 6b0305d..b33bdbf 100644
              let authorization = serde_json::to_string(&OpenRouterLeaseAuthorization::default())
                  .map_err(|error| AuthError::Serialization(error.to_string()))?;
              if wallet.has_pending_request() {
-@@ -1663,7 +1976,7 @@ impl AuthService {
+@@ -1663,7 +2022,7 @@ impl AuthService {
                          "an older pending request has no retryable request body".to_string(),
                      )
                  })?;
@@ -2854,7 +2997,7 @@ index 6b0305d..b33bdbf 100644
                      return Err(AuthError::LeasePending(
                          "a non-lease zkAPI request is still pending".to_string(),
                      ));
-@@ -1676,6 +1989,13 @@ impl AuthService {
+@@ -1676,6 +2035,13 @@ impl AuthService {
              let (active_root, siblings) = runtime.block_on(async move {
                  Ok::<_, AuthError>((indexer.root().await?, indexer.note_path(note_id).await?))
              })?;
@@ -2868,7 +3011,7 @@ index 6b0305d..b33bdbf 100644
              let payload_hash = compute_payload_hash(authorization.as_bytes());
              wallet
                  .prepare_request(&authorization, payload_hash, active_root, siblings)
-@@ -1684,6 +2004,42 @@ impl AuthService {
+@@ -1684,6 +2050,42 @@ impl AuthService {
          .await
      }
 
@@ -2911,7 +3054,7 @@ index 6b0305d..b33bdbf 100644
      async fn clear_pending_request(&self) -> Result<(), AuthError> {
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
-@@ -1693,6 +2049,7 @@ impl AuthService {
+@@ -1693,6 +2095,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -2919,7 +3062,7 @@ index 6b0305d..b33bdbf 100644
              wallet.clear_pending_request()?;
              Ok(())
          })
-@@ -1703,16 +2060,15 @@ impl AuthService {
+@@ -1703,16 +2106,15 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<OpenRouterLeaseStatusResponse, AuthError> {
@@ -2939,7 +3082,7 @@ index 6b0305d..b33bdbf 100644
              .json()
              .await
              .map_err(|error| AuthError::Serialization(error.to_string()))
-@@ -1722,12 +2078,10 @@ impl AuthService {
+@@ -1722,12 +2124,10 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<Option<OpenRouterLeaseStatusResponse>, AuthError> {
@@ -2954,7 +3097,7 @@ index 6b0305d..b33bdbf 100644
              .send()
              .await
              .map_err(|error| AuthError::Wallet(error.to_string()))?;
-@@ -1736,7 +2090,7 @@ impl AuthService {
+@@ -1736,7 +2136,7 @@ impl AuthService {
          }
          let response = response
              .error_for_status()
@@ -2963,7 +3106,7 @@ index 6b0305d..b33bdbf 100644
          response
              .json()
              .await
-@@ -1748,16 +2102,15 @@ impl AuthService {
+@@ -1748,16 +2148,15 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<RecoveryResponseV2, AuthError> {
@@ -2983,7 +3126,7 @@ index 6b0305d..b33bdbf 100644
              .json()
              .await
              .map_err(|error| AuthError::Serialization(error.to_string()))
-@@ -1767,17 +2120,16 @@ impl AuthService {
+@@ -1767,17 +2166,16 @@ impl AuthService {
          &self,
          nullifier: &Felt252,
      ) -> Result<RecoveryResponseV2, AuthError> {
@@ -3004,7 +3147,7 @@ index 6b0305d..b33bdbf 100644
              .json()
              .await
              .map_err(|error| AuthError::Serialization(error.to_string()))
-@@ -1787,7 +2139,7 @@ impl AuthService {
+@@ -1787,7 +2185,7 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<(), AuthError> {
@@ -3013,7 +3156,7 @@ index 6b0305d..b33bdbf 100644
          if request.client_request_id != client_request_id {
              return Err(AuthError::LeasePending(
                  "pending proof does not match the rejected OpenRouter lease".to_string(),
-@@ -1795,16 +2147,15 @@ impl AuthService {
+@@ -1795,16 +2193,15 @@ impl AuthService {
          }
          let deadline = Instant::now() + DIRECT_LEASE_RETIRE_MAX_WAIT;
          let status = loop {
@@ -3033,7 +3176,7 @@ index 6b0305d..b33bdbf 100644
              let http_status = response.status();
              let body = response
                  .text()
-@@ -1903,6 +2254,7 @@ impl AuthService {
+@@ -1903,6 +2300,7 @@ impl AuthService {
          self.ensure_scheme_agreement().await?;
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
@@ -3041,7 +3184,7 @@ index 6b0305d..b33bdbf 100644
          let indexer = self.indexer.clone();
          let trusted_roots = self.trusted_roots();
          spawn_blocking(move || {
-@@ -1911,6 +2263,7 @@ impl AuthService {
+@@ -1911,6 +2309,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
@@ -3049,7 +3192,7 @@ index 6b0305d..b33bdbf 100644
              let payload = serde_json::to_string(&request)
                  .map_err(|err| AuthError::Serialization(err.to_string()))?;
              let payload_hash = hash_payload(&payload);
-@@ -1918,7 +2271,9 @@ impl AuthService {
+@@ -1918,7 +2317,9 @@ impl AuthService {
 
              runtime.block_on(async move {
                  if wallet.has_pending_request() {
@@ -3060,7 +3203,7 @@ index 6b0305d..b33bdbf 100644
                  }
 
                  let note_id = wallet.state().ok_or(AuthError::NoActiveNote)?.note_id;
-@@ -2033,6 +2388,7 @@ impl AuthService {
+@@ -2033,6 +2434,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, trusted_roots)?;
@@ -3068,7 +3211,7 @@ index 6b0305d..b33bdbf 100644
              let runtime = current_thread_runtime()?;
 
              runtime.block_on(async move {
-@@ -2164,8 +2520,7 @@ impl AuthService {
+@@ -2164,8 +2566,7 @@ impl AuthService {
                  "deployment does not advertise an RPC URL for withdrawal confirmation".to_string(),
              )
          })?;
@@ -3078,7 +3221,7 @@ index 6b0305d..b33bdbf 100644
              .post(rpc_url)
              .json(&serde_json::json!({
                  "jsonrpc": "2.0",
-@@ -2397,7 +2752,7 @@ fn hash_payload(payload: &str) -> Felt252 {
+@@ -2397,7 +2798,7 @@ fn hash_payload(payload: &str) -> Felt252 {
      compute_payload_hash(payload.as_bytes())
  }
 
@@ -3087,7 +3230,7 @@ index 6b0305d..b33bdbf 100644
      SystemTime::now()
          .duration_since(UNIX_EPOCH)
          .unwrap_or_default()
-@@ -2674,7 +3029,18 @@ fn load_wallet(
+@@ -2674,7 +3075,18 @@ fn load_wallet(
      config: &AuthConfig,
      trusted_epoch_roots: Vec<EpochRoots>,
  ) -> Result<Wallet, AuthError> {
@@ -3107,7 +3250,7 @@ index 6b0305d..b33bdbf 100644
  }
 
  fn acquire_wallet_lock(state_dir: &Path) -> Result<std::fs::File, AuthError> {
-@@ -2917,7 +3283,7 @@ mod wallet_lifecycle_tests {
+@@ -2917,7 +3329,7 @@ mod wallet_lifecycle_tests {
 
      #[tokio::test]
      async fn low_balance_note_is_preserved_and_active_slot_is_cleared() {
@@ -3116,7 +3259,7 @@ index 6b0305d..b33bdbf 100644
 
          let retired = service
              .retire_low_balance_note()
-@@ -2926,22 +3292,22 @@ mod wallet_lifecycle_tests {
+@@ -2926,22 +3338,22 @@ mod wallet_lifecycle_tests {
              .expect("low-balance note should be retired");
 
          assert_eq!(retired.note_id, 18);
@@ -3143,7 +3286,7 @@ index 6b0305d..b33bdbf 100644
          PendingRequestJournal::write(
              &pending_directory.path().join("pending_journal.json"),
              &PendingRequestJournal {
-@@ -3346,3 +3712,359 @@ mod tests {
+@@ -3346,3 +3758,516 @@ mod tests {
          assert!(!commitment.is_zero());
      }
  }
@@ -3279,63 +3422,220 @@ index 6b0305d..b33bdbf 100644
 +#[cfg(test)]
 +mod oa_outage_tests {
 +    use super::*;
++    use ring::signature::{Ed25519KeyPair, KeyPair};
 +    use serde_json::json;
-+    fn evidence(attested: bool) -> OaKeyVerificationEvidence {
-+        OaKeyVerificationEvidence { verifier_url: "https://verifier2.openanonymity.ai".into(), station_id: "station".into(), station_recently_attested: attested,
-+            key_valid_till: now_seconds()+330, station_signature: "ab".repeat(64), org_signature: "cd".repeat(64) }
++    use sha2::{Digest, Sha256};
++
++    struct SignedEvidence {
++        public: String,
++        evidence: OaKeyVerificationEvidence,
 +    }
++
++    impl SignedEvidence {
++        fn new(url: &str) -> Self {
++            let pair = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
++            let key_valid_till = now_seconds() + 330;
++            let signature = pair.sign(format!("oa-station|test-key|{key_valid_till}").as_bytes());
++            Self {
++                public: pair.public_key().as_ref().iter().map(|b| format!("{b:02x}")).collect(),
++                evidence: OaKeyVerificationEvidence {
++                    verifier_url: url.into(), station_id: "oa-station".into(), station_recently_attested: false,
++                    key_valid_till, station_signature: signature.as_ref().iter().map(|b| format!("{b:02x}")).collect(),
++                    org_signature: "cd".repeat(64),
++                },
++            }
++        }
++        fn trust<'a>(&'a self, url: &'a str) -> StationTrust<'a> {
++            StationTrust { station_id: "oa-station", public_key_hex: &self.public, verifier_url: url }
++        }
++        fn expiry(&self) -> u64 { self.evidence.key_valid_till - 30 }
++    }
++
++    fn service(url: &str, directory: &std::path::Path) -> Arc<AuthService> {
++        AuthService::new(AuthConfig { state_dir: directory.into(), oa_verifier_url: url.into(), ..Default::default() }).unwrap()
++    }
++
 +    #[test]
-+    fn outage_is_explicit_and_only_allowlisted_failures_can_continue() {
-+        for status in [408,500,502,503,504] {
-+            assert!(oa_verifier_outage(Some(status), &json!({"status":"error"}),now_seconds()+300,&evidence(false)).is_err());
-+            let result=oa_verifier_outage(Some(status),&json!({"status":"error"}),now_seconds()+300,&evidence(true)).unwrap();
-+            assert!(!result.verified); assert_eq!(result.detail,Some("recently_attested_outage"));
++    fn every_advisory_fallback_requires_a_pinned_signed_key() {
++        let url = TRUSTED_STATION.verifier_url;
++        let signed = SignedEvidence::new(url);
++        let trust = signed.trust(url);
++        let mut unknown = signed.evidence.clone();
++        unknown.station_id = "unknown".into();
++        unknown.station_recently_attested = true;
++        for (status, body) in [
++            (None, Value::Null),
++            (Some(200), json!({"status":"unverified","ownership_passed":false})),
++            (Some(200), json!({"status":"pending"})),
++            (Some(401), json!({"detail":"Invalid org signature"})),
++            (Some(403), json!({"status":"rejected","detail":"ownership check failed"})),
++            (Some(408), json!({"status":"error"})),
++            (Some(429), json!({"status":"error"})),
++            (Some(500), json!({"status":"error"})),
++            (Some(502), json!({"status":"error"})),
++            (Some(503), json!({"status":"unverified","detail":"ownership_check_error"})),
++            (Some(504), json!({"status":"error"})),
++        ] {
++            let result = oa_verifier_outage(status, &body, signed.expiry(), &signed.evidence, "test-key", url, trust).unwrap();
++            assert!(!result.verified);
++            assert_eq!(result.detail, Some("trusted_station_fallback"));
++            assert!(oa_verifier_outage(status, &body, signed.expiry(), &unknown, "test-key", url, trust).is_err(), "{status:?} {body}");
 +        }
-+        for (status,body) in [(401,json!({})),(403,json!({})),(425,json!({})),(524,json!({})),(529,json!({})),
-+            (503,json!({"status":"pending"})),(503,json!({"status":"unverified"})),(429,json!({"status":"banned"})),
-+            (503,json!({"status":"unverified","detail":"ownership_check_error","ownership_passed":false})),
-+            (503,json!({"status":"error","ownership":{"ownership_passed":false}})),(503,json!({"error":"invalid signature"})),
-+            (503,json!({"status":123})),(503,json!({"status":null})),
-+            (503,json!({"status":"error","error":{"detail":"invalid signature"}})),
-+            (429,json!({"status":"error","banned_station":{"station_id":"station","reason":"blocked"}})),
-+            (503,json!({"message":"privacy violation"})),(503,json!({"detail":"ownership check failed"}))] {
-+            assert!(oa_verifier_outage(Some(status),&body,now_seconds()+300,&evidence(true)).is_err(),"{status} {body}");
++        for (status, body) in [
++            (307, json!({})), (308, json!({})), (200, json!({"status":123})),
++            (401, json!({"detail":"Station is banned"})),
++            (503, json!({"status":"banned"})),
++            (503, json!({"banned_station":{"station_id":"oa-station"}})),
++            (503, json!({"error":{"detail":"key expired"}})),
++            (200, json!({"status":"expired"})),
++        ] {
++            assert!(oa_verifier_outage(Some(status), &body, signed.expiry(), &signed.evidence, "test-key", url, trust).is_err());
 +        }
-+        for (status,body,detail) in [(429,json!({"status":"error"}),"rate_limited"),
-+            (503,json!({"status":"unverified","detail":"ownership_check_error"}),"ownership_check_error")] {
-+            let result=oa_verifier_outage(Some(status),&body,now_seconds()+300,&evidence(false)).unwrap();
-+            assert!(!result.verified);assert_eq!(result.detail,Some(detail));
-+        }
-+        assert!(oa_verifier_outage(None,&Value::Null,now_seconds()-1,&evidence(true)).is_err());
-+        assert!(oa_verifier_outage(None,&Value::Null,now_seconds()+300,&evidence(false)).is_err());
++        assert!(oa_verifier_outage(None, &Value::Null, now_seconds()-1, &signed.evidence, "test-key", url, trust).is_err());
++        assert!(oa_verifier_outage(None, &Value::Null, signed.expiry(), &signed.evidence, "swapped-key", url, trust).is_err());
++        assert!(oa_verifier_outage(None, &Value::Null, signed.expiry(), &signed.evidence, "test-key", "https://other.example", trust).is_err());
++        let mut swapped = signed.evidence.clone(); swapped.key_valid_till += 1;
++        assert!(oa_verifier_outage(None, &Value::Null, signed.expiry(), &swapped, "test-key", url, trust).is_err());
++        swapped = signed.evidence.clone(); swapped.station_signature = "ab".repeat(64);
++        assert!(oa_verifier_outage(None, &Value::Null, signed.expiry(), &swapped, "test-key", url, trust).is_err());
++        swapped = signed.evidence.clone(); swapped.verifier_url = "https://other.example".into();
++        assert!(oa_verifier_outage(None, &Value::Null, signed.expiry(), &swapped, "test-key", url, trust).is_err());
++        // Tests cannot accidentally depend on possession of the real operator signing key.
++        assert!(oa_verifier_outage(None, &Value::Null, signed.expiry(), &signed.evidence, "test-key", url, TRUSTED_STATION).is_err());
 +    }
++
 +    #[tokio::test]
-+    async fn verifier_http_rejects_malformed_binding_mismatches_and_remembers_bans() {
-+        use axum::{extract::State,routing::post,Json,Router};
-+        use sha2::{Digest,Sha256};
-+        let reply=Arc::new(Mutex::new((200u16,json!({}))));let capture=Arc::new(Mutex::new(Vec::<Value>::new()));
-+        let state=(reply.clone(),capture.clone());
-+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());
-+        let router=Router::new().route("/submit_key",post(|State((reply,capture)):State<(Arc<Mutex<(u16,Value)>>,Arc<Mutex<Vec<Value>>>)>,Json(request):Json<Value>|async move {
-+            capture.lock().unwrap().push(request);let (status,body)=reply.lock().unwrap().clone();
-+            (axum::http::StatusCode::from_u16(status).unwrap(),Json(body))
++    async fn http_policy_binds_verified_replies_and_remembers_textual_bans_before_checkout() {
++        use axum::{extract::State, routing::post, Json, Router};
++        let reply = Arc::new(Mutex::new((200u16, "{}".to_string())));
++        let capture = Arc::new(Mutex::new(Vec::<Value>::new()));
++        let state = (reply.clone(), capture.clone());
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}", listener.local_addr().unwrap());
++        let router = Router::new().route("/submit_key", post(|State((reply, capture)): State<(Arc<Mutex<(u16,String)>>,Arc<Mutex<Vec<Value>>>)>, Json(request): Json<Value>| async move {
++            capture.lock().unwrap().push(request);
++            let (status, body) = reply.lock().unwrap().clone();
++            (axum::http::StatusCode::from_u16(status).unwrap(), [("location", "/redirect-target")], body)
 +        })).with_state(state);
-+        let server=tokio::spawn(async move {axum::serve(listener,router).await.unwrap()});
-+        let directory=tempfile::tempdir().unwrap();let service=AuthService::new(AuthConfig{state_dir:directory.path().into(),oa_verifier_url:url.clone(),..Default::default()}).unwrap();
-+        let mut ev=evidence(true);ev.verifier_url=url;let expiry=ev.key_valid_till-30;
-+        let hash=format!("{:x}",Sha256::digest(b"test-key"));
-+        *reply.lock().unwrap()=(200,json!({"status":"verified","station_id":"station","key_hash":&hash[..16]}));
-+        assert!(service.verify_oa_key("test-key",expiry,&ev).await.unwrap().verified);
-+        assert_eq!(capture.lock().unwrap()[0]["key_valid_till"],ev.key_valid_till);
-+        for (status,body) in [(200,json!({"status":"verified"})),(503,json!([])),(503,json!({"status":"error","station_id":"other"})),
-+            (429,json!({"status":"error","key_hash":"0000000000000000"})),(200,json!({"status":"pending"}))] {
-+            *reply.lock().unwrap()=(status,body);assert!(service.verify_oa_key("test-key",expiry,&ev).await.is_err());
++        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++        let directory = tempfile::tempdir().unwrap();
++        let service = service(&url, directory.path());
++        let signed = SignedEvidence::new(&url);
++        let ev = &signed.evidence;
++        let trust = signed.trust(&url);
++        let hash = format!("{:x}", Sha256::digest(b"test-key"));
++        let mut unknown = ev.clone(); unknown.station_id = "unknown".into(); unknown.station_recently_attested = true;
++        *reply.lock().unwrap() = (200, json!({"status":"verified","station_id":"unknown","key_hash":&hash[..16]}).to_string());
++        // Normal verifier approval does not require a locally pinned station.
++        assert!(service.verify_oa_key("test-key", signed.expiry(), &unknown).await.unwrap().verified);
++        assert_eq!(capture.lock().unwrap()[0]["key_valid_till"], ev.key_valid_till);
++        assert_eq!(capture.lock().unwrap()[0]["station_signature"], ev.station_signature);
++        for (status, body) in [
++            (401, json!({"detail":"Invalid org signature"})),
++            (200, json!({"status":"unverified","ownership_passed":false})),
++            (403, json!({"status":"rejected"})),
++            (429, json!({"status":"error"})),
++            (503, json!({"status":"unverified","detail":"ownership_check_error"})),
++        ] {
++            *reply.lock().unwrap() = (status, body.to_string());
++            let outcome = service.verify_oa_key_with_trust("test-key", signed.expiry(), ev, trust).await.unwrap();
++            assert!(!outcome.verified); assert_eq!(outcome.detail, Some("trusted_station_fallback"));
++            assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), &unknown, trust).await.is_err());
++            assert!(service.verify_oa_key_with_trust("swapped-key", signed.expiry(), ev, trust).await.is_err());
++            // A production call never trusts this test pin or loopback verifier.
++            assert!(service.verify_oa_key("test-key", signed.expiry(), ev).await.is_err());
 +        }
-+        *reply.lock().unwrap()=(503,json!({"status":"error"}));
-+        assert!(!service.verify_oa_key("test-key",expiry,&ev).await.unwrap().verified);
-+        *reply.lock().unwrap()=(503,json!({"status":"error","banned_station":{"station_id":"station","reason":"refused"}}));assert!(service.verify_oa_key("test-key",expiry,&ev).await.is_err());
-+        let count=capture.lock().unwrap().len();*reply.lock().unwrap()=(503,json!({"status":"error"}));
-+        assert!(service.verify_oa_key("test-key",expiry,&ev).await.is_err());assert_eq!(capture.lock().unwrap().len(),count);
++        for (status, body) in [
++            (200, json!({"status":"verified"}).to_string()),
++            (200, json!({"status":"verified","station_id":"other","key_hash":&hash[..16]}).to_string()),
++            (200, json!({"status":"verified","station_id":"oa-station","key_hash":"0".repeat(16)}).to_string()),
++            (503, json!({"status":"verified","station_id":"oa-station","key_hash":&hash[..16]}).to_string()),
++            (503, json!({"status":"error","station_id":"other"}).to_string()),
++            (429, json!({"key_hash":"0".repeat(16)}).to_string()),
++            (503, "[]".into()), (503, "<html>unavailable</html>".into()),
++            (307, "{}".into()), (308, "{}".into()),
++            (503, "x".repeat((1 << 20) + 1)),
++        ] {
++            *reply.lock().unwrap() = (status, body);
++            let before = capture.lock().unwrap().len();
++            assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), ev, trust).await.is_err());
++            assert_eq!(capture.lock().unwrap().len(), before + 1);
++        }
++        let mut changed = ev.clone(); changed.key_valid_till += 1;
++        *reply.lock().unwrap() = (401, json!({"detail":"Invalid org signature"}).to_string());
++        assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), &changed, trust).await.is_err());
++        changed = ev.clone(); changed.station_signature = "00".repeat(64);
++        assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), &changed, trust).await.is_err());
++        changed = ev.clone(); changed.verifier_url = "https://other.example".into();
++        let before = capture.lock().unwrap().len();
++        assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), &changed, trust).await.is_err());
++        assert_eq!(capture.lock().unwrap().len(), before);
++        assert!(service.verify_oa_key_with_trust("test-key", now_seconds()-1, ev, trust).await.is_err());
++        *reply.lock().unwrap() = (401, json!({"detail":"Station is banned"}).to_string());
++        assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), ev, trust).await.is_err());
++        let count = capture.lock().unwrap().len();
++        *reply.lock().unwrap() = (200, json!({"status":"verified","station_id":"oa-station","key_hash":&hash[..16]}).to_string());
++        assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), ev, trust).await.is_err());
++        assert_eq!(capture.lock().unwrap().len(), count);
++        let mut cached = ActiveOpenRouterLease {
++            session_id: "test-session".into(), client_request_id: "test-lease".into(), api_key: "test-key".into(),
++            openrouter_api_base: url.clone(), expires_at: signed.expiry(), settle_after: signed.expiry()+30,
++            verification: Some(ev.clone()), verified: true, verification_detail: None, requests_served: 0,
++        };
++        assert!(service.check_cached_lease_station(&cached).is_err());
++        assert!(service.send_verified_openrouter_request(&mut cached, "/submit_key", &json!({})).await.is_err());
++        assert_eq!(capture.lock().unwrap().len(), count);
++        assert!(!directory.path().join("oa-issued-leases").exists());
++        server.abort();
++    }
++
++    #[tokio::test]
++    async fn transport_outage_still_requires_exact_trust_and_tls_errors_fail_closed() {
++        use tokio::io::AsyncWriteExt;
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}", listener.local_addr().unwrap()); drop(listener);
++        let directory = tempfile::tempdir().unwrap();
++        let service = service(&url, directory.path());
++        let signed = SignedEvidence::new(&url);
++        let outcome = service.verify_oa_key_with_trust("test-key", signed.expiry(), &signed.evidence, signed.trust(&url)).await.unwrap();
++        assert!(!outcome.verified); assert_eq!(outcome.detail, Some("trusted_station_fallback"));
++        let mut unknown = signed.evidence.clone(); unknown.station_id = "unknown".into(); unknown.station_recently_attested = true;
++        assert!(service.verify_oa_key_with_trust("test-key", signed.expiry(), &unknown, signed.trust(&url)).await.is_err());
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let tls_url = format!("https://{}", listener.local_addr().unwrap());
++        let server = tokio::spawn(async move {
++            let (mut socket, _) = listener.accept().await.unwrap();
++            socket.write_all(b"HTTP/1.1 200 OK\r\n\r\nnot a TLS server").await.unwrap();
++        });
++        let tls_service = self::service(&tls_url, directory.path());
++        let tls_signed = SignedEvidence::new(&tls_url);
++        let result = tls_service.verify_oa_key_with_trust("test-key", tls_signed.expiry(), &tls_signed.evidence, tls_signed.trust(&tls_url)).await;
++        assert!(result.is_err(), "TLS failure must not become trusted fallback");
++        server.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn canceled_verification_does_not_activate_or_reserve_a_lease() {
++        use axum::{extract::State, routing::post, Router};
++        let entered = Arc::new(tokio::sync::Notify::new());
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}", listener.local_addr().unwrap());
++        let router = Router::new().route("/submit_key", post(|State(entered): State<Arc<tokio::sync::Notify>>| async move {
++            entered.notify_one(); std::future::pending::<()>().await; "unreachable"
++        })).with_state(entered.clone());
++        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++        let directory = tempfile::tempdir().unwrap();
++        let service = service(&url, directory.path());
++        let task_service = service.clone();
++        let task = tokio::spawn(async move {
++            let signed = SignedEvidence::new(&url);
++            task_service.verify_oa_key_with_trust("test-key", signed.expiry(), &signed.evidence, signed.trust(&url)).await
++        });
++        tokio::time::timeout(Duration::from_secs(5), entered.notified()).await.unwrap();
++        task.abort(); assert!(task.await.unwrap_err().is_cancelled());
++        assert!(service.direct_lease.lock().await.is_none());
++        assert!(!directory.path().join("oa-issued-leases").exists());
++        assert!(service.oa_banned_stations.lock().unwrap().is_empty());
 +        server.abort();
 +    }
 +}
@@ -3503,3 +3803,83 @@ index 6b0305d..b33bdbf 100644
 +        }
 +    }
 +}
+diff --git a/crates/zkapi-clientd/tests/direct_openrouter.rs b/crates/zkapi-clientd/tests/direct_openrouter.rs
+index 87d6577..32f113e 100644
+--- a/crates/zkapi-clientd/tests/direct_openrouter.rs
++++ b/crates/zkapi-clientd/tests/direct_openrouter.rs
+@@ -13,6 +13,7 @@ use axum::routing::{get, post};
+ use axum::{Json, Router};
+ use futures_util::{stream, StreamExt};
+ use serde_json::{json, Value};
++use sha2::{Digest, Sha256};
+ use tokio::net::TcpListener;
+ use tokio::sync::Barrier;
+ use zkapi_client::config::{ClientConfig, ClientProofMode};
+@@ -328,8 +329,9 @@ fn oa_verifier_router(state: OaFlowState) -> Router {
+         }
+         drop(failures);
+         state.events.lock().unwrap().push("verified".to_string());
++        let hash = format!("{:x}", Sha256::digest(body["api_key"].as_str().unwrap().as_bytes()));
+         state.verifier_requests.lock().unwrap().push(body);
+-        Ok(Json(json!({ "status": "verified" })))
++        Ok(Json(json!({ "status": "verified", "station_id": "station-test", "key_hash": &hash[..16] })))
+     }
+     Router::new()
+         .route("/submit_key", post(submit_key))
+@@ -742,9 +744,11 @@ async fn one_lease_is_reused_for_the_chat_until_explicit_settlement() {
+     };
+
+     if !live_openrouter {
+-        let local_client_url = spawn(zkapi_clientd::build_router(service.clone())).await;
++        let token = "synthetic-integration-bridge-token-12345678";
++        let local_client_url = spawn(zkapi_clientd::routes::build_router_with_token(service.clone(), Some(token.into()))).await;
+         let response = reqwest::Client::new()
+             .post(format!("{local_client_url}/v1/chat/completions"))
++            .bearer_auth(token)
+             .header("x-zkapi-session-id", "chat-one")
+             .json(&json!({
+                 "model": "openai/gpt-4o-mini",
+@@ -787,6 +791,7 @@ async fn one_lease_is_reused_for_the_chat_until_explicit_settlement() {
+         // not SSE, and must also reach the caller one chunk at a time.
+         let response = reqwest::Client::new()
+             .post(format!("{local_client_url}/api/chat"))
++            .bearer_auth(token)
+             .header("x-zkapi-session-id", "chat-one")
+             .json(&json!({
+                 "model": "openai/gpt-4o-mini",
+@@ -1129,17 +1134,24 @@ async fn oa_org_lease_is_verified_before_prompt_goes_to_openrouter() {
+     };
+     let service = AuthService::new(auth_config.clone()).unwrap();
+
+-    let response = service
+-        .execute_request(CoreRequest::post_json(
+-            "/v1/chat/completions",
+-            json!({
+-                "model": "openai/gpt-4o-mini",
+-                "max_tokens": 16,
+-                "messages": [{"role": "user", "content": "verifier protected prompt"}]
+-            }),
+-        ))
+-        .await
+-        .unwrap();
++    let request = || CoreRequest::post_json(
++        "/v1/chat/completions",
++        json!({
++            "model": "openai/gpt-4o-mini",
++            "max_tokens": 16,
++            "messages": [{"role": "user", "content": "verifier protected prompt"}]
++        }),
++    );
++    if !live_org {
++        // An unknown station cannot bypass an ownership-check outage. The
++        // issued lease and pending wallet journal survive for an explicit retry.
++        assert!(service.execute_request(request()).await.is_err());
++        assert!(flow.prompts.lock().unwrap().is_empty());
++        assert_eq!(flow.events.lock().unwrap().as_slice(), ["issued"]);
++        assert_eq!(*flow.verifier_attempts.lock().unwrap(), 1);
++        assert!(service.status().await.unwrap().pending_request);
++    }
++    let response = service.execute_request(request()).await.unwrap();
+     let payload = response.payload.unwrap();
+     assert!(payload["choices"]
+         .as_array()
