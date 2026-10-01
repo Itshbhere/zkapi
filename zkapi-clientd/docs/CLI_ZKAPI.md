@@ -80,21 +80,37 @@ with input hidden. Fund with Sepolia ETH, never mainnet ETH. Mainnet and
 Sepolia have separate signing keys and wallet state. Switching networks keeps
 the other network's recovery data.
 
-Sepolia is pinned to the September 30 fresh deployment used by
-<https://oa-wallet-eth-sepolia.vercel.app/>:
-`https://sepolia.100.21.48.23.sslip.io/config.json`, chain `11155111`, vault
-`0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F`. The embedded manifest also pins
-its new state/clearance signing keys and the unchanged proof setup. The OA
-issuer, verifier and provider routing remain unchanged. The mainnet client pin
-remains `https://54.67.93.98.sslip.io/config.json`; this change updates only
-Sepolia. Installing the client does not deploy a server or contract.
+## Deployment origins and existing wallets
 
-Preserve old Sepolia profiles and the matching earlier client for recovery.
-A fresh deployment needs a separate `--config-dir`; saved manifests and funding
-records are never silently rebound. Do not delete an existing profile to get
-past a deployment mismatch. The September 30 deployment is included in
-`clientd-v0.1.1`; installing an older release retains its older embedded
-deployment.
+The source defaults use the deployed September 30 vaults:
+
+| Network | Manifest | Vault |
+| --- | --- | --- |
+| Mainnet | `https://zkapi-mainnet.openanonymity.ai/config.json` | `0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe` |
+| Sepolia | `https://zkapi-sepolia.openanonymity.ai/config.json` | `0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F` |
+
+The embedded manifests pin the deployment IDs, contracts, signing keys, oracle
+and proof setup. Hostname updates do not rotate any deployed key or contract.
+The OA issuer, verifier and provider routing are unchanged.
+
+A saved September 30 Sepolia profile can continue on the new hostname. At
+startup the client atomically updates only an exact prior packaged manifest
+whose three origin fields used the old Sepolia hostname. Every other byte must
+match the current packaged manifest. Wallet keys, notes, signed transactions,
+recovery journals and permissions are preserved. Unknown origins or any other
+manifest differences fail closed; no remote manifest authorizes a migration.
+
+The mainnet default also advances from the September 28 vault to the already
+existing September 30 vault. Keep an older mainnet profile with its matching
+client for recovery, and use a separate `--config-dir` for the fresh deployment.
+The client refuses a profile containing the retired mainnet companion state,
+and existing funding records continue to reject a different deployment or
+contract. Do not delete recovery data to bypass a deployment mismatch.
+Older Sepolia deployments likewise require their matching earlier client.
+
+These defaults are source changes; the published `clientd-v0.1.1` binaries retain
+their earlier compiled origins and mainnet deployment. Updating the repository
+does not update an installed binary or publish a new release.
 
 ## Withdrawals
 

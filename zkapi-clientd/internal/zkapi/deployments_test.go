@@ -1,6 +1,7 @@
 package zkapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -157,6 +158,108 @@ func TestDeploymentManifestRejectsSymlinksAndUnsafeFiles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSepoliaOriginMigrationPreservesWalletAndRejectsOtherChanges(t *testing.T) {
+	_, packaged, err := pinnedDeployment("sepolia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := bytes.ReplaceAll(packaged, []byte("https://zkapi-sepolia.openanonymity.ai"), []byte("https://sepolia.100.21.48.23.sslip.io"))
+	for name, mutate := range map[string]func([]byte) []byte{
+		"origin only": func(raw []byte) []byte { return raw },
+		"vault": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F"), []byte("0x1111111111111111111111111111111111111111"), 1)
+		},
+		"deployment": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("fresh-20260930"), []byte("fresh-20260928"), 1)
+		},
+		"signer": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("0x25a4453190e930f9716eebcab165170706d31d1b3969d106a50d7ae374a23d61"), []byte("0x1"), 1)
+		},
+		"proof": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584"), []byte(strings.Repeat("a", 64)), 1)
+		},
+		"issuer": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("https://org-staging.openanonymity.ai"), []byte("https://untrusted.example"), 1)
+		},
+		"unknown origin": func(raw []byte) []byte {
+			return bytes.ReplaceAll(raw, []byte("https://sepolia.100.21.48.23.sslip.io"), []byte("https://untrusted.example"))
+		},
+		"partial migration": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("https://sepolia.100.21.48.23.sslip.io"), []byte("https://zkapi-sepolia.openanonymity.ai"), 1)
+		},
+		"additional field": func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte("{\n"), []byte("{\n  \"unreviewed\": true,\n"), 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "deployment-manifest.json")
+			before := mutate(append([]byte(nil), legacy...))
+			if err := os.WriteFile(path, before, 0600); err != nil {
+				t.Fatal(err)
+			}
+			wallet := filepath.Join(dir, "wallet.json")
+			const recovery = "synthetic private recovery sentinel"
+			if err := os.WriteFile(wallet, []byte(recovery), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := writeDeploymentManifest(dir, packaged)
+			after, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if name == "origin only" {
+				if err != nil || !bytes.Equal(after, packaged) {
+					t.Fatalf("origin migration failed: %v", err)
+				}
+				if _, err := writeDeploymentManifest(dir, packaged); err != nil {
+					t.Fatal("migrated wallet did not restart", err)
+				}
+			} else if err == nil || !bytes.Equal(after, before) {
+				t.Fatal("mismatched saved manifest accepted or changed")
+			}
+			info, _ := os.Stat(path)
+			state, stateErr := os.ReadFile(wallet)
+			if info.Mode().Perm() != 0600 || stateErr != nil || string(state) != recovery {
+				t.Fatal("migration changed wallet recovery or manifest permissions")
+			}
+		})
+	}
+	_, mainnet, _ := pinnedDeployment("mainnet")
+	oldMainnet := bytes.ReplaceAll(mainnet, []byte("https://zkapi-mainnet.openanonymity.ai"), []byte("https://mainnet.100.21.48.23.sslip.io"))
+	if isSepoliaOriginMigration(oldMainnet, mainnet) {
+		t.Fatal("Sepolia exception accepted mainnet")
+	}
+}
+
+func TestCompanionPreservesRetiredMainnetProfile(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir := t.TempDir()
+	legacy := filepath.Join(stateDir, "mainnet", "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928")
+	if err := os.MkdirAll(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	wallet := filepath.Join(legacy, "wallet.json")
+	const recovery = "synthetic legacy mainnet recovery"
+	if err := os.WriteFile(wallet, []byte(recovery), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := CompanionCommand(context.Background(), Config{Network: "mainnet", BridgeToken: testBridgeToken, HTTPClient: &http.Client{}}, CompanionConfig{Binary: binary, SetupDir: t.TempDir(), StateDir: stateDir, ProxyURL: "http://bridge:private-local-token@127.0.0.1:8791"})
+	if err == nil || cmd != nil || !strings.Contains(err.Error(), "September 28") {
+		t.Fatalf("retired profile accepted: %v", err)
+	}
+	state, _ := os.ReadFile(wallet)
+	if string(state) != recovery {
+		t.Fatal("retired wallet changed")
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "mainnet", "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930")); !os.IsNotExist(err) {
+		t.Fatal("created another mainnet wallet beside retired state")
 	}
 }
 

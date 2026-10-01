@@ -182,6 +182,43 @@ const DEPLOYMENT_ID = 'recovery-test';
 const VAULT_ADDRESS = `0x${'12'.repeat(20)}`;
 const DESTINATION = `0x${'34'.repeat(20)}`;
 
+test('fresh default deployments preserve and reject old durable wallets', async () => {
+    for (const network of ['mainnet', 'sepolia']) {
+        for (const pending of [
+            { state: { note_id: 7, current_balance: 1_000_000 } },
+            { state: null, pendingDeposit: { operationId: 'saved-deposit' } },
+            { state: null, journal: { signedTransaction: 'saved-bytes' } },
+            { state: null, lease: { session: 'saved-lease' } }
+        ]) {
+            indexedDB.clear();
+            const before = await writeBrowserWallet(baseRuntime({
+                ...pending,
+                deploymentId: `retired-${network}`,
+                billingAsset: 'native_eth'
+            }));
+            const runtime = new BrowserWalletRuntime();
+            runtime.manifest = { deployment_id: `zkapi-native-eth-${network}-note-bound-v1-fresh-20260930` };
+            await assert.rejects(runtime.reload(), /Switch back to that deployment/);
+            assert.deepEqual(await readBrowserWallet(), before);
+            assert.equal(runtime.worker, null);
+        }
+    }
+
+    indexedDB.clear();
+    const before = await writeBrowserWallet(baseRuntime({
+        deploymentId: 'zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930',
+        billingAsset: 'native_eth'
+    }));
+    const runtime = new BrowserWalletRuntime();
+    runtime.manifest = {
+        deployment_id: before.deploymentId,
+        protocol_server_url: 'https://zkapi-sepolia.openanonymity.ai'
+    };
+    await runtime.reload();
+    assert.deepEqual(await readBrowserWallet(), before);
+    assert.deepEqual(runtime.runtime, before);
+});
+
 function baseRuntime(overrides = {}) {
     const { state: stateOverride, ...runtimeOverrides } = overrides;
     return {

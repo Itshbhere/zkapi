@@ -119,13 +119,13 @@ test('static proving keys match the note-bound development setup hashes', () => 
 
 test('browser config pins the fresh native ETH note-bound Sepolia deployment', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/sepolia.json'), 'utf8'));
-    assert.equal(config.deployment_manifest_url, 'https://dptoa4nnlue6m.cloudfront.net/config.json');
+    assert.equal(config.deployment_manifest_url, 'https://zkapi-sepolia.openanonymity.ai/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);
     assert.equal(config.trusted_deployment.chain_id, 11155111);
-    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-native-eth-sepolia-note-bound-v1-20260927');
-    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0xced1620189261dbedf8fb0860e33179642d39076');
+    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930');
+    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x49fa19f9bdece7a48ebc7749fd69ad40f577590f');
     assert.equal(config.trusted_deployment.billing_token_address, null);
-    assert.equal(config.trusted_deployment.protocol_server_url, 'https://dptoa4nnlue6m.cloudfront.net');
+    assert.equal(config.trusted_deployment.protocol_server_url, 'https://zkapi-sepolia.openanonymity.ai');
     assert.equal(config.trusted_deployment.indexer_url, config.trusted_deployment.protocol_server_url);
     assert.equal(config.trusted_deployment.circuit_id, 'zkapi-v2-note-bound-v1');
     assert.equal(config.deployment_status, undefined);
@@ -150,22 +150,22 @@ test('browser config pins the fresh native ETH note-bound Sepolia deployment', (
 
 test('mainnet browser config pins the finalized native ETH note-bound deployment', () => {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/config/mainnet.json'), 'utf8'));
-    assert.equal(config.deployment_manifest_url, 'https://d3hmaz52qw22t.cloudfront.net/config.json');
+    assert.equal(config.deployment_manifest_url, 'https://zkapi-mainnet.openanonymity.ai/config.json');
     assert.deepEqual(config.allowed_deployment_manifest_urls, [config.deployment_manifest_url]);
-    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-native-eth-mainnet-note-bound-v1-20260928');
+    assert.equal(config.trusted_deployment.deployment_id, 'zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930');
     assert.equal(config.trusted_deployment.chain_id, 1);
     assert.equal(config.deployment_status, undefined);
     assert.equal(config.trusted_deployment.circuit_id, 'zkapi-v2-note-bound-v1');
-    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x9e5570ae0f1fcb087c2dd0eac521ac067a6b6f42');
-    assert.equal(config.trusted_deployment.protocol_server_url, 'https://d3hmaz52qw22t.cloudfront.net');
+    assert.equal(config.trusted_deployment.contract_address.toLowerCase(), '0x4386fdbda35d995beb3bf8625118ec5982ec81fe');
+    assert.equal(config.trusted_deployment.protocol_server_url, 'https://zkapi-mainnet.openanonymity.ai');
     assert.equal(config.trusted_deployment.indexer_url, config.trusted_deployment.protocol_server_url);
     assert.deepEqual(config.trusted_deployment.state_signing_key, {
-        x: '0xa27b9251afdb9a3e8518474f999863b65789d557732fef891652589c7dacd61',
-        y: '0x11386a1d93bcf3664d50e1f9a6303e0096353b89a26be46a6d846fabb6fda23b'
+        x: '0x2094c5f9e183a8aef5be682556a17aa4dbafdb03fd6e6a97d75a03efed2fe5a4',
+        y: '0x11c7bbbeb288a09378e6721bd06ed5cc95b87046ff8cf6733e46ced0af1300d7'
     });
     assert.deepEqual(config.trusted_deployment.clearance_signing_key, {
-        x: '0x1141c1750b410037229a4a0cbc17603826018416eb4ed39d8629f8eea6dd485',
-        y: '0x25417156c0a965c5d1af5db42e4b518b49b17a0e42dfaf43c6cb84da1eabf014'
+        x: '0x12d2b4547d9de0a359fc26abcf5e66cd359be83b53167850c9070540a8045cec',
+        y: '0x11cc3f621d6d39b557b4bb64826ebaaeda04f98910f116e307d6650177dead82'
     });
     assert.equal(config.trusted_deployment.request_proving_key_sha256, sha256(path.join(root, 'assets/proofs/request.pk')));
     assert.equal(config.trusted_deployment.withdrawal_proving_key_sha256, sha256(path.join(root, 'assets/proofs/withdrawal.pk')));
