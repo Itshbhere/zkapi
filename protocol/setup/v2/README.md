@@ -9,9 +9,9 @@ with the previous setup. Proving/verifying files have a circuit revision header.
 The matching generated Solidity verifier is committed alongside them.
 
 No multi-party setup ceremony has been conducted. Matching hashes establish
-artifact identity, not the absence of retained setup secrets. Independent review
-of the circuit, third Pedersen generator, setup provenance and trust assumptions
-remains open.
+artifact identity, not the absence of retained setup secrets. Independently
+review the circuit, third Pedersen generator, setup provenance and trust
+assumptions before deployment.
 Do not replace live deployment files with these keys: deploy a fresh verifier
 and vault and migrate clients/funds explicitly. Old signed states are not
 compatible; preserve their original wallet data for legacy recovery.

@@ -5,6 +5,8 @@ Usage: python3 zkapi-clientd/scripts/test-nix.py RELEASE_ARTIFACTS [--archive AR
 Needs Nix with flakes; only Nixpkgs/Home Manager and cached dependencies are
 downloaded. The daemon archive is supplied locally, never fetched from a draft.
 This checks packaging and executable startup, not funded inference or service boot.
+--service-output DIR also materializes the generated NixOS/Home Manager units;
+packaging/nix/test-docker.sh runs those units with a real isolated user manager.
 """
 
 import argparse
@@ -60,6 +62,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifacts", type=Path, help="Assembled release directory containing nix/ and native archives")
     parser.add_argument("--archive", type=Path, help="Override the host archive path; must match its generated checksum")
+    parser.add_argument("--service-output", type=Path,
+                        help="Materialize real NixOS/Home Manager units for the disposable Docker service test")
     args = parser.parse_args()
     require(shutil.which("nix"), "Nix is required for this packaging check.")
     artifacts = args.artifacts.resolve()
@@ -191,6 +195,51 @@ def main():
         require((package / "share/zkapi-clientd/proof-setup" / name).stat().st_size > 0, f"Missing bundled proof asset: {name}")
     require((flake / "flake.lock").read_bytes() == lock_before, "Validation unexpectedly changed the pinned flake lock.")
     print(f"Built and executed local {host_system} release with bundled proof assets: {package}", flush=True)
+
+    if args.service_output:
+        require(host_system.endswith("-linux"), "Service runtime validation requires Linux.")
+        service_expression = f"""
+          let
+            f = {root};
+            system = {nix_string(host_system)};
+            pkgs = import f.inputs.nixpkgs {{ inherit system; }};
+            package = {expression};
+            os = (f.inputs.nixpkgs.lib.nixosSystem {{
+              inherit system;
+              modules = [ f.nixosModules.default {{
+                system.stateVersion = "26.05";
+                services.zkapi-clientd = {{
+                  enable = true; users = [ "nix-test" ]; inherit package;
+                  configDir = "%h/private state/zkapi-clientd";
+                }};
+              }} ];
+            }}).config;
+            hm = (f.inputs.home-manager.lib.homeManagerConfiguration {{
+              inherit pkgs;
+              modules = [ f.homeManagerModules.default {{
+                home.username = "nix-test";
+                home.homeDirectory = "/home/nix-test";
+                home.stateVersion = "26.05";
+                services.zkapi-clientd = {{
+                  enable = true; inherit package;
+                  configDir = "/home/nix-test/private state/zkapi-clientd";
+                }};
+              }} ];
+            }}).config;
+          in pkgs.runCommand "zkapi-clientd-service-checks" {{}} ''
+            mkdir -p "$out/nixos" "$out/home-manager"
+            cp ${{os.systemd.user.units."zkapi-clientd.service".unit}}/zkapi-clientd.service "$out/nixos/"
+            cp ${{hm.xdg.configFile."systemd/user/zkapi-clientd.service".source}} "$out/home-manager/zkapi-clientd.service"
+          ''
+        """
+        service_outputs = json.loads(nix("build", "--impure", "--no-link", "--json", "--expr", service_expression))
+        service_path = Path(service_outputs[0]["outputs"]["out"])
+        args.service_output.mkdir(parents=True, exist_ok=True)
+        for module in ("nixos", "home-manager"):
+            target = args.service_output / module
+            target.mkdir(exist_ok=True)
+            shutil.copyfile(service_path / module / "zkapi-clientd.service", target / "zkapi-clientd.service")
+        print(f"Materialized the actual NixOS/Home Manager units: {args.service_output}", flush=True)
 
 
 if __name__ == "__main__":

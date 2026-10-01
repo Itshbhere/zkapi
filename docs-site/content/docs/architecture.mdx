@@ -31,8 +31,7 @@ sdk/                            # Browser wallet, proving worker, storage and pi
 
 The protocol Rust workspace is separate from the application workspace.
 `zkapi-serverd` exports `processor_v2.rs` and `signer_v2.rs`. The native wallet
-library remains available, but the local wallet daemon, inference proxy,
-Cairo/STARK and XMSS implementations have been removed.
+library is available in `protocol/rust/crates/zkapi-client`.
 
 ## Wallet and proof generation
 
@@ -130,7 +129,6 @@ A deployment fixes the chain, vault, proof adapter, state signing key and
 clearance signing key. Clients must pin the circuit revision, matching proof
 assets and deployment identity; fetching a manifest is not enough to establish
 trust in its contents. Mainnet and Sepolia have independent pins and wallet
-state. The native-only source cleanup leaves the circuit, setup keys, packaged
-WASM and existing native deployment pins unchanged. See
+state. See
 [setup and compatibility](/docs/cryptography#setup-and-compatibility) for the
-development-setup status and migration requirements for legacy unbound states.
+setup trust assumptions and migration requirements for legacy unbound states.

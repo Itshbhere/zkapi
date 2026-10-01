@@ -27,11 +27,8 @@ direct dependency versions.
 The files in `setup/v2/` are unchanged from the pinned protocol revision. In
 particular, this import does not regenerate the proving keys or verifiers.
 
-## Native-only source cleanup
+## Included dependency sources
 
-The later native-only cleanup removes the retired Cairo/XMSS implementation and
-token payment code. The import revisions above describe provenance, not the
-current set of files. OpenZeppelin is trimmed to Ownable, Context,
-ReentrancyGuard and StorageSlot, with its license; forge-std retains its source
-helpers and licenses. Unused upstream tests, tooling and nested libraries are
-removed. Required library source bytes and setup artifacts are unchanged.
+The import revisions above describe provenance. The included OpenZeppelin
+sources are Ownable, Context, ReentrancyGuard and StorageSlot, with their
+license. The included forge-std sources are its helpers and licenses.

@@ -30,10 +30,6 @@ See [Sepolia shared password](testnet-auth.md) for client behavior, proxy header
 forwarding, validation and rotation. Never put this value in the public SDK
 manifest or configure it on Mainnet.
 
-The [September 29 Sepolia rollout record](deployments/sepolia-auth-20260929.md)
-records the deployed authentication revision, preserved native deployment and
-read-only web/CLI acceptance results.
-
 ## Fresh contracts
 
 `demo/contracts/script/Deploy.s.sol` deploys the real Groth16 adapter and a
@@ -43,9 +39,9 @@ and `CHALLENGE_PERIOD_SECONDS`. The deployment output is constructor metadata;
 prepare the public SDK manifest with circuit/key hashes and oracle/deployment
 pins separately. The vault no longer accepts a token constructor argument.
 
-Use a fresh directory when intentionally generating a new Groth16 setup. Existing immutable
-contracts are not modified by this source cleanup. Keep challenger coverage and
-persistent server/indexer state for every funded deployment during a rollout.
+Use a fresh directory when intentionally generating a new Groth16 setup.
+Keep challenger coverage and persistent server/indexer state for every funded
+deployment during a rollout.
 
 ## Runtime
 
@@ -57,7 +53,3 @@ window; see [challenge operation](challenge-service.md).
 The host application packages the SDK assets for the selected network. Review
 its trusted config against finalized on-chain deployment state, the public
 manifest and the selected proof hashes before enabling funding.
-
-Historical deployment records in `docs/deployments/` describe their recorded
-revisions and observations. They are not instructions to restart retired token
-clients or assertions that a later source revision is already deployed.

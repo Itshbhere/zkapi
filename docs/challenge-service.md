@@ -40,7 +40,7 @@ nonce. Its dedicated private key belongs only in the signer's environment.
 Keep its port unpublished; the public API reverse proxy must never route to it.
 
 The server, browser/client proving keys, verifier, and daemon must all use the
-same deployment and circuit setup. This revision's circuit identifier is
+same deployment and circuit setup. The circuit identifier is
 `zkapi-v2-note-bound-v1`. The key loader rejects old unversioned setup files.
 Replacing a local key directory does not upgrade an existing deployed verifier.
 A vault also needs the historical-root challenge fix: the archived request root
@@ -80,9 +80,3 @@ monitoring, gas funding, fee replacement, redundant infrastructure or external
 signer availability. A transaction stuck without a receipt needs operator
 intervention at the signer. RPC, indexer and signing latency, confirmation depth,
 and any restart/replay time must fit within the vault's challenge window.
-
-Regression tests use a real v2 proof accepted and archived by the active server
-processor, plus a local JSON-RPC/indexer mock to exercise event polling,
-submission failure, restart, same-nonce retry, reverted receipts, and confirmed
-on-chain completion. This is
-not evidence that a live deployment has the daemon configured or running.

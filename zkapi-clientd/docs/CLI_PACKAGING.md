@@ -35,12 +35,31 @@ Runtime requirements: macOS 13+ or Linux with glibc 2.39+, on amd64 or arm64;
 Bash, curl, tar and SHA-256 tooling (`sha256sum` or `shasum`). Linux also needs
 OpenSSL 3, libgcc and CA certificates.
 
-## Existing OA Chat wallets
+## Platform packages and background services
 
-The client has been moved from `OpenAnonymity/oa-chat/daemon` and renamed from
-`oa-chat` to `zkapi-clientd`. Ticket mode was removed. The live deployment pins,
-state schemas, management authentication, helper bridge and wallet recovery
-semantics remain the same.
+This checkout includes directly installable packages pinned to the published
+`clientd-v0.1.1` native bundles. Each contains the client, wallet companion, and
+deployment-pinned proof assets, with SHA-256 checks for every supported archive.
+
+| Platform | Package | Background service |
+| --- | --- | --- |
+| Nix / NixOS | [Flake and modules](../packaging/nix/README.md) | NixOS or Home Manager systemd user service |
+| Arch Linux / AUR | [PKGBUILD and .SRCINFO](../packaging/arch/README.md) | `systemctl --user enable --now zkapi-clientd` |
+| Homebrew | [Formula and tap setup](../packaging/homebrew/README.md) | `brew services start zkapi-clientd` |
+
+Run `zkapi-clientd config` as the user who will run the service before starting
+it. For Nix, follow the module's explicit configuration-directory instructions.
+Services run `zkapi-clientd serve`, keep wallet state outside the package, and
+can be stopped with the corresponding service manager. Stop a foreground daemon
+before starting its service so they do not compete for the same wallet or port.
+Package installation does not fund or initialize a wallet. An unconfigured
+service either remains stopped (Nix modules) or exits with configuration guidance.
+
+The AUR handoff and Homebrew formula are ready to copy into their respective
+package repositories; adding them here does not publish an AUR entry or a public
+Homebrew tap. The Nix flake can be used directly from this checkout.
+
+## Existing OA Chat wallets
 
 A saved zkAPI profile can be reused with `--config-dir`. The default-directory
 selection also recognizes an existing OA Chat zkAPI profile when the new
@@ -98,6 +117,20 @@ then creates a draft release for publication. Homebrew taps and AUR packages
 are not automatically published. Publish a client prerelease only after the
 native, installer and package validation jobs succeed.
 
+After publishing a release, add its tag and four native archive hashes to
+`zkapi-clientd/packaging/releases/clientd-VERSION.json`, then refresh the
+installable manifests from the templates and pinned hashes:
+
+```sh
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.1
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.1 --check
+```
+
+Run these commands from the repository root. Update the version in the package
+check workflow when promoting a new release. Release assembly independently
+hashes the native archives; the checked-in Nix package never overrides the new
+release's generated package.
+
 `install.sh --version MAJOR.MINOR.PATCH` selects a published native bundle from
 `OpenAnonymity/zkapi`. Its release-generated form is pinned to its own version.
 It supports install/update with the same prefix and optional `--setup`.
@@ -123,6 +156,29 @@ python3 scripts/test-packages.py
 ```
 
 Native packaging and service-manager checks have extra platform dependencies;
-see the client workflows. Fixture tests never need live funds. Historical OA
-Chat acceptance records remain in that repository's Git history and are not
-claims of a new zkapi-clientd release or live transaction test.
+see the client workflows. Fixture tests never need live funds.
+
+Run all three platform checks in disposable Docker containers on an SSH host
+(from the repository root):
+
+```sh
+python3 zkapi-clientd/scripts/test-platforms-ssh.py rockypika
+```
+
+The runner copies the source into a new remote temporary directory, downloads
+the four pinned archives, verifies them against the checksum metadata, assembles
+the current package definitions, and runs the Nix, Arch, and Linux Homebrew
+checks. `--platform nix`, `--platform arch`, or `--platform homebrew` selects one.
+Use `--artifacts /path/to/release` to reuse downloaded archives. Local logs are
+written to `zkapi-clientd/build/platform-tests/`; `--logs` selects another directory.
+
+The Docker host needs Python 3, curl, Bash, and permission to run Docker. Service
+tests use disposable privileged containers with private cgroup namespaces so
+systemd can run inside the container. They do not mount a host wallet or the
+Docker socket. Each runner removes its own containers; the SSH runner removes
+its temporary source and archives unless `--keep` is supplied.
+
+These checks install real release binaries and test service configuration,
+missing-profile behavior, and stopping. They do not configure or fund a wallet,
+perform paid inference, or claim macOS `launchd` coverage. Homebrew's macOS
+service checks remain part of the native release workflow.

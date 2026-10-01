@@ -60,7 +60,6 @@ default (`./`) since you're already inside `docs-site/`.
 ### Environment
 
 The documentation site needs no environment variables or signing credentials.
-The retired token faucet and its API route have been removed.
 
 ### Custom domain
 

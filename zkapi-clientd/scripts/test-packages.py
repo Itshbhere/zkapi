@@ -437,6 +437,15 @@ class PackageTests(unittest.TestCase):
     def test_generated_manifests_and_arch_payloads(self):
         self.assertEqual(verify_artifacts(self.artifacts), self.version)
 
+    def test_release_nix_package_is_rendered_for_new_version(self):
+        # A checked-in package pins the current release; assembling a future
+        # release must not overwrite its new version and hashes with that file.
+        text = (self.artifacts / "nix/package.nix").read_text()
+        self.assertIn(f'version = "{self.version}";', text)
+        for target in TARGETS:
+            self.assertIn(sha256(self.artifacts / f"zkapi-clientd_{self.version}_{target}.tar.gz"), text)
+        self.assertFalse((self.artifacts / "nix/test-docker.sh").exists())
+
     def test_stale_srcinfo_is_rejected(self):
         path = self.artifacts / "aur/.SRCINFO"
         path.write_text(path.read_text().replace("glibc>=2.39", "glibc"))

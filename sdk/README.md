@@ -184,17 +184,6 @@ local fixtures and do not connect a wallet or broadcast transactions.
 
 ## Native ETH deployments
 
-The bundled Sepolia configuration pins the September 27 native ETH deployment
-with the `zkapi-v2-note-bound-v1` circuit. The Mainnet configuration pins the
-September 28 native deployment with independent chain-1 vault, signing keys,
-RPC, ETH/USD feed and server origin. Its vault and proof adapter are verified
-at finalized chain state. The live manifest, finalized ETH/USD quote, private
-route restrictions and dedicated challenger checks passed. Mainnet's
-configuration guard is removed. The separate native Mainnet application is
-published at https://oa-wallet-eth-mainnet.vercel.app; its release record
-distinguishes unfunded browser checks from a paid Mainnet end-to-end test.
-See the [Mainnet rollout record](../docs/deployments/mainnet-native-eth-20260928.md).
-
 Native ETH requires a separate, trusted native vault and billing-server
 deployment. Token manifests are unsupported and rejected before wallet mutation. Existing
 notes and transaction journals remain bound to their original deployment; they

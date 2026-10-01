@@ -43,13 +43,13 @@ value. The current SDK and vault support native ETH only.
 Both request and withdrawal circuits compute `L` from the same values used
 for Merkle membership, then require the signed commitment to open as
 `B·G + r·H + L·J`. The independently derived generator `J` binds that state to
-one note. This repairs the earlier construction, where a signed balance could
-be transplanted to another active note.
+one note, preventing a signed balance from being transplanted to another
+active note.
 
 The server can update the commitment without learning `L`. Rerandomization
-changes its blinding while retaining the note term. The repair changes the
-circuit and setup keys even though the v2 JSON schema and public-input order
-remain unchanged.
+changes its blinding while retaining the note term. The circuit and setup keys
+must support this note binding even when deployments share the v2 JSON schema
+and public-input order.
 
 ## Per-request flow
 
@@ -140,8 +140,7 @@ deployed verifiers. Old signed states cannot be relabeled as this revision,
 and immutable vaults require an explicit migration to new contracts. Preserve
 old wallet data for recovery with the corresponding historical client. The
 current SDK rejects legacy token wallets instead of converting their balances
-to ETH. The native-only source cleanup does not change the circuit ID, setup
-keys, proof encoding, or deployed immutable contracts.
+to ETH.
 
 The current elliptic-curve construction is **not post-quantum**. The checked-in
 setup is a single-party development setup, not a reviewed multiparty ceremony.

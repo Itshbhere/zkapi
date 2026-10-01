@@ -105,6 +105,5 @@ wallet, issuance or redemption support. Exact balances and prompt sizes do
 not choose the bucket.
 
 The protocol is experimental and uses the existing single-party Groth16
-setup. See the repository's [note-binding review](../../docs/note-binding-review.md)
-and [native ETH architecture](../../docs/architecture.md). This repository move
-does not deploy servers, change circuits or establish new live acceptance.
+setup. See the repository's [note-bound commitments](../../docs/note-bound-commitments.md)
+and [native ETH architecture](../../docs/architecture.md).

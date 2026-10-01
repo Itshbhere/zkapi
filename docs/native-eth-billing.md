@@ -1,8 +1,7 @@
 # Native ETH browser billing
 
-The current tree is native ETH only. The token-only CLI/client daemon and
-ordinary proxy mode have been removed.
-Use the browser SDK with server/indexer/challenger; see [cleanup details](native-only-cleanup.md).
+The protocol uses native ETH billing with the browser SDK and the
+server, indexer, and challenger services.
 
 Native ETH deployments hold ETH and use integer **gwei** in the existing proof
 ledger: one unit is 1,000,000,000 wei. The browser displays an approximate USD reference value;
@@ -25,17 +24,7 @@ requires circuit `zkapi-v2-note-bound-v1`, its exact revised setup/WASM/key hash
 and the historical-root challenge repair. Integer gwei accounting does not itself
 require a new circuit, but the old circuit allowed signed balance state to move
 between notes and must not be reused. The independent note-bound repair is now a
-mandatory part of this native deployment. See [Note-bound migration](note-binding-review.md).
-
-The first empty September 27 native Sepolia vault at
-`0x0bf47f7fCc28975E4A928587869B73D32CD12f77` used the old verifier. It is
-abandoned and must never be advertised or funded. Its first prepared image/source
-archive is also superseded; the native deployment needs a fresh vault with the
-note-bound adapter and the final reviewed source.
-
-The [September 28 Mainnet rollout record](deployments/mainnet-native-eth-20260928.md)
-tracks its independent native configuration and activation evidence. Preparing
-new pins does not itself deploy or enable a vault.
+mandatory part of this native deployment. See [Note-bound migration](note-bound-commitments.md).
 
 ## Pinned configuration
 
@@ -63,7 +52,7 @@ before answering or accepting a quote. There is no symbol-only fallback.
 Chainlink's reference directory lists the ordinary ETH/USD proxies as
 `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419` on Mainnet and
 `0x694AA1769357215DE4FAC081bf1f309aDC325306` on Sepolia, both eight decimals
-with a 3,600-second heartbeat, checked on 2026-09-27. The server and SDK read
+with a 3,600-second heartbeat. The server and SDK read
 oracle rounds at the RPC `finalized` block tag; the USD reference can therefore
 lag the chain head, and `updated_at` identifies the actual feed observation.
 The native deployment pins a 4,500-second maximum age: the heartbeat plus a
@@ -153,7 +142,7 @@ after expiry. Other errors do not authorize discarding a
 pending journal. `POST /v2/requests` has been removed; all new authorizations
 require prompt-private leases with a proof-bound native quote.
 
-## Deployment and current scope
+## Deployment
 
 The deploy script creates a native-only vault and accepts `REQUEST_CHARGE_CAP`
 in gwei. It checks an optional `CHAIN_ID` against the connected chain. Token and
@@ -182,15 +171,6 @@ settlement preserves the original proof/public inputs required for that challeng
 Do not reuse a daemon, verifier or setup from another circuit. Configure the published manifest separately; these flags do
 not rewrite static frontend manifests. The browser SDK handles funding and
 withdrawals; the operator CLI runs setup, signing-key, server and indexer commands.
-
-Validation includes legacy replay-mutation regressions, native quote identity,
-RPC chain/round/freshness verification, rounding and overflow checks, persisted
-quote recovery, expiry-check serialization behind in-flight issuance, oracle
-reads crossing expiry, finalized-vs-head round advancement and superseded recovery,
-and real browser proof/authorization binding with a signed
-gwei settlement. Contract tests cover native deposit/close/escape/expiry payouts,
-wrong-value rejection, failed-recipient atomicity and recipient reentrancy. Native ETH deployment and
-live end-to-end acceptance are separate from these local tests.
 
 OA provisioning retries accept a shortened remaining lifetime only when the
 relay explicitly marks the station response `replayed: true`. Its original

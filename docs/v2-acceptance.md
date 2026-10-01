@@ -78,38 +78,7 @@ window.
 | ETH/USD quote | Local oracle mock |
 | Transaction signing and chain confirmation | Local Anvil accounts and blocks |
 
-This closes a local lifecycle coverage gap. It does not establish real provider
-behavior, browser/CLI host persistence or UI correctness, the AWS signer
-configuration, public-network
+The harness does not establish real provider behavior, browser/CLI host
+persistence or UI correctness, the AWS signer configuration, public-network
 finality/reorg behavior, or live Sepolia acceptance. Those require their own
 integration runs. The generated result must retain the mocked-provider label.
-
-## Recorded acceptance: September 30, 2026
-
-The complete `npm run test:e2e:v2` command passed at **18:47:05 MDT**. Both
-focused tests passed, the required Rust/contract builds succeeded, and the
-scenario completed in **15.355 seconds after build preparation**. Source HEAD
-was `0cf3948d51f696c1b029dc716e0b7cf95b876c08`; the new acceptance files were
-uncommitted at the time of the run. The result records SHA-256 hashes of the runner, wallet helper, service
-binaries and proof keys alongside the source revision.
-
-- A genuine genesis deposit funded 1,000,000 gwei.
-- Two accepted HTTP inference calls accrued 1,000 micro-USD each in the mock.
-  The server applied and signed two 400-gwei charges; the wallet verified both.
-- Replaying an active lease did not mint a second key. Corrupting each settlement
-  signature was rejected without changing wallet state or losing its journal.
-- A stale escape from the genuinely signed intermediate state was challenged
-  one chain second after initiation. The 86,400-second window stayed unchanged.
-  The daemon preserved the archived proof and inputs and used the current path.
-- The honest real-proof mutual close paid **999,200 gwei** to the recipient and
-  **800 gwei** to the treasury, and closed the primary note. The unrelated
-  10,000-gwei fixture note remained on the disposable chain until shutdown.
-- Runtime keys were revoked and all test-owned processes/listeners shut down.
-
-The machine-readable result is retained locally at
-`.zkapi/acceptance/2026-10-01T00-46-50.568Z-5d79e70c/result.json`, alongside
-receipts, settlement records, the SQLite archive and logs. This private output
-is intentionally gitignored and is not part of the published repository;
-reproduce it with the command above. Fresh adversarial review checked both the implementation and the
-runtime evidence. No production protocol implementation or setup artifact was
-changed to make the test pass.

@@ -17,9 +17,9 @@ withdrawal, challenge, and real Groth16 verifier regressions.
 
 The SDK asset check is `node scripts/sync-sdk-assets.mjs --check` from the repository
 root. Keep the committed WASM and key hashes synchronized with the setup
-manifest. Key generation is a separate operation and is not required for this
-cleanup or ordinary verification. The existing
-[setup trust assumptions and review status](../../setup/v2/README.md) still apply.
+manifest. Key generation is a separate operation and is not required for
+ordinary verification. The
+[setup trust assumptions](../../setup/v2/README.md) apply.
 
 For the complete current native-v2 lifecycle, run `npm run test:e2e:v2` from the
 repository root. It uses real services, proofs and contracts on a local chain,

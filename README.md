@@ -8,7 +8,7 @@ balance returned after usage settlement. The host application owns its UI.
 The active protocol uses Groth16 over BN254, Poseidon, note-bound Baby-JubJub
 commitments and Schnorr signatures, and a 32-level Merkle tree. The ledger uses
 integer gwei. This is an experimental, unaudited protocol with a single-party
-setup; see [the note-binding review](docs/note-binding-review.md).
+setup; see [the note-binding review](docs/note-bound-commitments.md).
 
 ## Local OpenAI-compatible API
 
@@ -44,7 +44,7 @@ and [native billing](docs/native-eth-billing.md).
 The packaged WASM and proving keys support the current circuit
 `zkapi-v2-note-bound-v1`. Ordinary SDK consumers do not need Rust. To rebuild
 WASM deliberately, use `scripts/build-browser-client.sh` and review the changed
-artifact hashes. A source cleanup does not require new proving keys.
+artifact hashes.
 
 ## Full local lifecycle acceptance
 
@@ -85,8 +85,5 @@ verifier/vault and explicit client/fund migration.
 | `demo/contracts/` | Native ETH verifier/vault deployment script |
 | `docker/aws/` | API/indexer/challenger image configuration and restricted signer |
 
-The retired STARK/XMSS implementation, token-payment SDK branches, local token
-client and token deployment demos were removed. Historical releases remain in
-Git history. Existing token wallets must use their matching historical client;
-this SDK rejects them instead of reinterpreting their balances as ETH. See
-[cleanup details](docs/native-only-cleanup.md).
+Existing token wallets must use their matching client release; this SDK rejects
+them instead of reinterpreting their balances as ETH.

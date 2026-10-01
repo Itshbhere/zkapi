@@ -24,8 +24,8 @@ authorizations locally using the packaged WASM and matching proving keys.
 This suite is **not post-quantum**. Groth16/BN254 and the Baby-JubJub commitment
 and signature schemes rely on elliptic-curve assumptions.
 
-The historical Rust type name `Felt252` is retained, but its current encoding
-is a canonical, big-endian BN254 scalar-field element. JSON uses checked
+The Rust type `Felt252` encodes a canonical, big-endian BN254 scalar-field
+element. JSON uses checked
 hexadecimal strings.
 
 ## Binding a balance to its note
@@ -43,8 +43,8 @@ C = B·G + r·H + L·J
 
 The request and withdrawal circuits compute `L` from the same note
 values used in the Merkle-membership proof, then use that leaf in the signed
-balance commitment. This repairs the earlier construction, where a signature
-on `B·G + r·H` could be transplanted to a different active note.
+balance commitment. Binding the signed balance to `L` prevents a signature
+from being transplanted to a different active note.
 
 `G` is the standard Baby-JubJub generator. `H` and `J` are independently derived
 by Keccak-256 try-and-increment, selecting even `y` and clearing the cofactor,
@@ -172,12 +172,9 @@ being used, its exact balance and expiry, and the current signed state.
 
 ## Setup and compatibility
 
-The note-binding revision preserves the v2 JSON schemas and public-input
-order, but it changes the circuit and signed commitments. Legacy unbound
-signed states, proving/verifying keys and deployed verifiers are incompatible.
-The subsequent removal of retired runtimes leaves this circuit revision,
-public-input order and committed setup unchanged; it does not require a new
-setup for deployments already using the note-bound revision.
+The note-binding revision uses the v2 JSON schemas and public-input order,
+but requires matching circuits and signed commitments. Legacy unbound signed
+states, proving/verifying keys and deployed verifiers are incompatible.
 
 Proving and verifying key files carry the `zkapi-v2-note-bound-v1` header, and
 loaders reject earlier files. Deployment manifests advertise
@@ -203,6 +200,6 @@ Implementation references: [v2 primitives](https://github.com/OpenAnonymity/zkap
 [Groth16 circuits](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/rust/crates/zkapi-proof/src/groth16.rs),
 [key loading](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/rust/crates/zkapi-proof/src/compact.rs),
 and [Solidity verifier](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/contracts/src/adapters/Groth16ProofAdapter.sol).
-The [note-binding review](https://github.com/OpenAnonymity/zkapi/blob/main/docs/note-binding-review.md)
+The [note-bound commitments](https://github.com/OpenAnonymity/zkapi/blob/main/docs/note-bound-commitments.md)
 and [setup notes](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/setup/v2/README.md)
-record the repair and migration rationale.
+describe the binding and migration requirements.

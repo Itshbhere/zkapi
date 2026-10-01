@@ -2,12 +2,10 @@
 
 This image runs the native ETH API, indexer and escape challenger with the exact
 `protocol/setup/v2` artifacts. Supply the matching vault/signing keys and pinned
-native oracle configuration. Existing contracts and live services are unchanged
-until an operator deliberately rolls out the new image.
+native oracle configuration.
 
 Build on a Linux VM with Docker Engine and Compose, from the complete source
-tree (including the in-repository `protocol/` source and uncommitted integration
-changes, if those are the intended release):
+tree, including the in-repository `protocol/` source:
 
 ```sh
 sudo install -d -m 0700 /etc/zkapi
@@ -99,7 +97,6 @@ recreated image must use the same setup artifacts as the deployed verifier.
 ## Validation
 
 Run the local SDK, Rust, Solidity, launcher and signer tests before rollout.
-The historical ERC20 acceptance scripts were removed with the token client.
 Use a separately authorized native ETH lifecycle check for the intended network;
 read-only health/quote checks alone do not establish paid inference, withdrawal
 or live escape-challenge success. Preserve server data, checkpoints and signer

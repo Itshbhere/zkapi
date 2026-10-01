@@ -66,9 +66,11 @@ for source, destination in (
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered)
 
-for source in sorted((repo / "zkapi-clientd/packaging/nix").iterdir()):
-    if source.is_file() and not source.name.endswith(".in"):
-        shutil.copyfile(source, artifacts / "nix" / source.name)
+# Keep the release self-contained without copying the checked-in package.nix
+# over the freshly rendered version (or shipping development test runners).
+for name in ("flake.nix", "flake.lock", "nixos-module.nix", "home-manager-module.nix",
+             "service-utils.nix", "README.md"):
+    shutil.copyfile(repo / "zkapi-clientd/packaging/nix" / name, artifacts / "nix" / name)
 
 installer_source = (repo / "zkapi-clientd/install.sh").read_text()
 if installer_source.count("@@VERSION@@") != 1:

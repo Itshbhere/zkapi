@@ -2,18 +2,18 @@
 class ZkapiClientd < Formula
   desc "Local inference API with private prepaid zkAPI access"
   homepage "https://github.com/OpenAnonymity/zkapi"
-  version "@@VERSION@@"
+  version "0.1.1"
   license "MIT"
 
   on_macos do
     depends_on macos: :ventura
     on_arm do
-      url "@@BASE_URL@@/zkapi-clientd_@@VERSION@@_darwin_arm64.tar.gz"
-      sha256 "@@DARWIN_ARM64_SHA256@@"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.1/zkapi-clientd_0.1.1_darwin_arm64.tar.gz"
+      sha256 "80a060cd8063abd5bafccf0e0a6345f7066c9d63a8067c8043e5cd5ca714eeb7"
     end
     on_intel do
-      url "@@BASE_URL@@/zkapi-clientd_@@VERSION@@_darwin_amd64.tar.gz"
-      sha256 "@@DARWIN_AMD64_SHA256@@"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.1/zkapi-clientd_0.1.1_darwin_amd64.tar.gz"
+      sha256 "12b4c62606f17d35d04fc6fea03ebb66d1ceb4a554125ecb2ac5734cc12deaae"
     end
   end
 
@@ -21,12 +21,12 @@ class ZkapiClientd < Formula
     depends_on "openssl@3"
     depends_on "patchelf" => :build
     on_arm do
-      url "@@BASE_URL@@/zkapi-clientd_@@VERSION@@_linux_arm64.tar.gz"
-      sha256 "@@LINUX_ARM64_SHA256@@"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.1/zkapi-clientd_0.1.1_linux_arm64.tar.gz"
+      sha256 "b81358b092ceb2a106fcaf7fd42ec20d92e659a2cc3b0b75e1b8751fea2b61dd"
     end
     on_intel do
-      url "@@BASE_URL@@/zkapi-clientd_@@VERSION@@_linux_amd64.tar.gz"
-      sha256 "@@LINUX_AMD64_SHA256@@"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.1/zkapi-clientd_0.1.1_linux_amd64.tar.gz"
+      sha256 "425507d0e7d9a1fbfbb7d30c639b20812df6e7d2bc9897ad8df036098c48b155"
     end
   end
 

@@ -1,9 +1,17 @@
-# Nix release packaging
+# Nix package and services
 
-This directory is copied into the generated release packaging archive. The
-assembler renders `package.nix.in` as `package.nix` from all four actual archive
-SHA-256 digests. Use the generated directory, not the unrendered source tree.
-The flake lock pins Nixpkgs; archive URLs pin the exact daemon release tag.
+This directory is an installable flake. Its checked-in `package.nix` pins the
+published client release and all four archive SHA-256 digests. The flake lock
+also pins Nixpkgs and Home Manager. From a checkout of this repository:
+
+```sh
+nix profile install path:./zkapi-clientd/packaging/nix#zkapi-clientd
+zkapi-clientd config
+```
+
+Release automation renders `package.nix.in` from the exact release archives and
+publishes `zkapi-clientd-nix.tar.gz` as a standalone flake. It also includes the
+flake in the combined packaging archive.
 
 After extracting `zkapi-clientd-packaging.tar.gz`, install without root privileges:
 
@@ -22,11 +30,12 @@ is created by a build, installation, or activation.
 
 ## NixOS user service
 
-Add the generated directory as a flake input (retain it in your configuration
-repository or publish it separately as an immutable release flake):
+Add the package directory as a flake input. Copy it into your configuration
+repository or point to an immutable repository revision:
 
 ```nix
 inputs.zkapi-clientd.url = "path:./zkapi-clientd-release/nix";
+# Or: github:OpenAnonymity/zkapi/<revision>?dir=zkapi-clientd/packaging/nix
 ```
 
 Then include the module and explicitly choose the login users:
@@ -69,8 +78,29 @@ garbage collection do not remove it.
 
 ## Release validation
 
-`zkapi-clientd/scripts/test-nix.py RELEASE_ARTIFACTS` evaluates all four packages and
-builds/executes the current host's package from the local release archive. It
-also evaluates the NixOS and Home Manager service declarations without starting
-a daemon or creating user state. Run this check on each native release host.
-Unlike generated manifests, the packaging templates cannot be installed directly.
+`zkapi-clientd/scripts/test-nix.py RELEASE_ARTIFACTS` evaluates all four packages,
+validates the standalone flake archive, and builds/executes the current host's
+package from its checksummed local release archive. It also evaluates the NixOS
+and Home Manager service declarations and private-state assertions. Run this
+check on each native release host.
+
+On a Linux Docker host, test the package and actual user service units with:
+
+```sh
+bash zkapi-clientd/packaging/nix/test-docker.sh "$PWD" /path/to/assembled-release
+```
+
+The runner uses `nixos/nix:2.24.14`, the locked package set, and a disposable
+non-root user. It checks both rendered NixOS and Home Manager units with
+`systemd-analyze`, starts each with a real systemd user manager, confirms that a
+missing profile prevents startup, then confirms that the real packaged daemon
+rejects an invalid profile with configuration guidance and can be stopped.
+It verifies that the profile remains unchanged and no wallet is created.
+Docker runs with `--privileged --cgroupns=private` for the isolated manager's
+writable cgroups; no host cgroup tree or Docker socket is mounted. The container
+is removed on exit. Run the script on the remote host when using SSH, since its
+two path arguments name files on the Docker host.
+
+This is Nix package and systemd user-service validation in Docker, not a full
+NixOS boot test. It does not initialize or fund a wallet, run paid inference, or
+test macOS service management.
