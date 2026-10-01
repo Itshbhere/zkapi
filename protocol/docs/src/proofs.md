@@ -18,5 +18,5 @@ public input order is in [inputs.rs](../../rust/crates/zkapi-types/src/inputs.rs
 Keys use circuit ID `zkapi-v2-note-bound-v1`. Their matching generated Solidity
 verifier and Poseidon implementation are committed. The browser wallet consumes
 the same proving-key bytes. See [setup compatibility](../../setup/v2/README.md):
-the committed keys are a single-party development setup, and earlier circuit
-keys or signed states are incompatible.
+the committed keys use a single-party setup with no multi-party ceremony.
+Earlier circuit keys or signed states are incompatible.

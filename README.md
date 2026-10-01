@@ -46,13 +46,21 @@ The packaged WASM and proving keys support the current circuit
 WASM deliberately, use `scripts/build-browser-client.sh` and review the changed
 artifact hashes. A source cleanup does not require new proving keys.
 
+## Full local lifecycle acceptance
+
+Run `npm run test:e2e:v2` to build and test deposit, HTTP lease issuance, mocked
+provider usage, signed settlement, real-proof stale withdrawal/challenge and
+honest withdrawal on a fresh local chain. The provider and oracle are mocked;
+protocol services, wallet proofs and contracts are real. See the
+[acceptance process and coverage limits](docs/v2-acceptance.md).
+
 ## Operator services
 
 - `zkapi serverd`: native ETH lease authorization, settlement and Schnorr signing.
 - `zkapi-indexerd` / `zkapi indexer`: vault event indexing and Merkle paths.
 - `zkapi-challenged`: durable escape monitoring and challenge submission.
 - `zkapi signing-keys`: derive deployment public keys from operator seeds.
-- `zkapi setup --output-dir NEW_DIRECTORY`: generate a fresh development setup.
+- `zkapi setup --output-dir NEW_DIRECTORY`: generate a fresh single-party Groth16 setup.
 
 Native server startup requires a pinned oracle RPC/feed and a lease issuer.
 Use [deployment instructions](docs/deployment.md), [Docker operation](docker/aws/README.md)

@@ -45,13 +45,15 @@ advertise `proof_setup.circuit_id` and clients must pin the new key hashes and
 vault address. The header is an accidental-mismatch guard, not setup provenance
 or a substitute for independently pinned key hashes.
 
-The checked-in `protocol/setup/v2` directory now contains a **new single-party
-development setup** produced with OS randomness by the repaired source. The
+The checked-in `protocol/setup/v2` directory contains a **single-party Groth16
+setup** produced with OS randomness by the repaired source. The
 historical directory name does not imply compatibility with the old keys.
 The matching Solidity verifier and SDK WASM/proving keys must travel together.
-These test artifacts do not establish a reviewed multiparty ceremony, and are
-not production launch artifacts. A production release needs an independently
-reviewed design and setup with recorded provenance and trust assumptions.
+No multi-party ceremony has been conducted. Independent review of the design,
+setup provenance and trust assumptions remains open. Artifact hashes identify
+the setup files but do not establish that setup secrets were destroyed. This
+setup terminology was clarified on September 30; the repair and deployment
+evidence below is unchanged.
 
 Existing vaults have immutable verifiers and keys. They cannot be repaired by
 replacing a server or frontend. Existing unbound signed states are incompatible

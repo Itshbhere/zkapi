@@ -12,6 +12,7 @@
     "build:mainnet": "node scripts/build-sdk.mjs --network mainnet",
     "test": "npm run test:sdk",
     "test:sdk": "node --test sdk/test/*.test.mjs",
+    "test:e2e:v2": "bash scripts/run-v2-acceptance.sh",
     "verify:assets": "node scripts/sync-sdk-assets.mjs --check"
   },
   "devDependencies": {

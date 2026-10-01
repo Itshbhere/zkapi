@@ -43,7 +43,7 @@ and `CHALLENGE_PERIOD_SECONDS`. The deployment output is constructor metadata;
 prepare the public SDK manifest with circuit/key hashes and oracle/deployment
 pins separately. The vault no longer accepts a token constructor argument.
 
-Use a fresh directory for any intentional development setup. Existing immutable
+Use a fresh directory when intentionally generating a new Groth16 setup. Existing immutable
 contracts are not modified by this source cleanup. Keep challenger coverage and
 persistent server/indexer state for every funded deployment during a rollout.
 

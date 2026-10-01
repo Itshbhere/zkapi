@@ -13,7 +13,7 @@ Its circuit ID is `zkapi-v2-note-bound-v1`. Read the
 
 ```text
 contracts/      Solidity vault, BN254 Poseidon, and Groth16 verifier
-setup/v2/       Circuit-specific development keys and manifest
+setup/v2/       Circuit-specific Groth16 keys and manifest
 rust/crates/
   zkapi-types   Canonical BN254 field encoding and v2 wire statements
   zkapi-core    BN254 Poseidon, note/nullifier helpers, and Merkle trees
