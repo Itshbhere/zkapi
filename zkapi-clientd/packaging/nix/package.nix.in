@@ -62,7 +62,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Local inference API with private prepaid zkAPI access";
-    homepage = "https://github.com/OpenAnonymity/zkapi";
+    homepage = "https://github.com/ethereum/zkapi";
     license = lib.licenses.mit;
     mainProgram = "zkapi-clientd";
     platforms = builtins.attrNames archives;

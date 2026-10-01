@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 var errWithdrawalWaitStopped = errors.New("stopped waiting; the withdrawal may still be progressing; inspect saved status")

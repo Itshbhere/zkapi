@@ -174,7 +174,7 @@ def verify_artifacts(directory):
         check(name not in sums, f"Duplicate checksum for {name}")
         sums[name] = digest
     formula_text = formula.read_text()
-    base_url = f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{version}"
+    base_url = f"https://github.com/ethereum/zkapi/releases/download/clientd-v{version}"
     pairs = re.findall(r'url "([^"\n]+)"\s+sha256 "([0-9a-f]{64})"', formula_text)
     check(len(pairs) == 4, "Homebrew formula must select all four native archives")
     check(f'  version "{version}"' in formula_text, "Homebrew version differs from AUR")
@@ -254,7 +254,7 @@ def verify_makepkg(directory, version):
         text = pkgbuild.read_text()
         for target in ("linux_amd64", "linux_arm64"):
             archive = directory / f"zkapi-clientd_{version}_{target}.tar.gz"
-            text = text.replace(f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{version}/"
+            text = text.replace(f"https://github.com/ethereum/zkapi/releases/download/clientd-v{version}/"
                                 f"zkapi-clientd_${{pkgver}}_{target}.tar.gz", archive.as_uri())
         pkgbuild.write_text(text)
         command(["makepkg", "--nodeps", "--force", "--noconfirm"], cwd=build, timeout=120)
@@ -295,7 +295,7 @@ def verify_homebrew(directory, version, user_service=True):
         text = (directory / "homebrew/zkapi-clientd.rb").read_text()
         for target in TARGETS:
             archive = directory / f"zkapi-clientd_{version}_{target}.tar.gz"
-            text = text.replace(f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{version}/"
+            text = text.replace(f"https://github.com/ethereum/zkapi/releases/download/clientd-v{version}/"
                                 + archive.name, archive.as_uri())
         (repository / "Formula/zkapi-clientd.rb").write_text(text)
         command(["git", "init", "-q", repository])

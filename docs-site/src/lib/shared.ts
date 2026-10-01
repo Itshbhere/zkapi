@@ -4,7 +4,7 @@ export const docsImageRoute = '/og/docs';
 export const docsContentRoute = '/llms.mdx/docs';
 
 export const gitConfig = {
-  user: 'OpenAnonymity',
+  user: 'ethereum',
   repo: 'zkapi',
   branch: 'main',
 };

@@ -35,7 +35,7 @@ repository or point to an immutable repository revision:
 
 ```nix
 inputs.zkapi-clientd.url = "path:./zkapi-clientd-release/nix";
-# Or: github:OpenAnonymity/zkapi/<revision>?dir=zkapi-clientd/packaging/nix
+# Or: github:ethereum/zkapi/<revision>?dir=zkapi-clientd/packaging/nix
 ```
 
 Then include the module and explicitly choose the login users:

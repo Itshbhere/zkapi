@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
 )
 
 func TestServeUsesSavedZKAPIWithoutChangingWalletConfiguration(t *testing.T) {

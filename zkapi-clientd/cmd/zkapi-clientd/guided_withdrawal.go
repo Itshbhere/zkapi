@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 // Quoting reserves the selected note and destination, but cannot sign. Resume

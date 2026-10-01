@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/activity"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/activity"
 )
 
 type settlementRunnerFunc func(context.Context)

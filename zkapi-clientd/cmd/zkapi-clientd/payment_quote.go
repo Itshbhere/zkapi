@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 func activeFundingConfig(ctx context.Context, c config.Config) (config.Config, error) {

@@ -72,7 +72,7 @@ for target in ('linux_amd64','linux_arm64','darwin_amd64','darwin_arm64'):
     name=f'zkapi-clientd_{version}_{target}.tar.gz'; path=stage/'release'/name
     if not path.exists():
         subprocess.run(['curl','--fail','--location','--silent','--show-error','--retry','3',
-            f'https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{version}/{name}',
+            f'https://github.com/ethereum/zkapi/releases/download/clientd-v{version}/{name}',
             '--output',str(path)],check=True)
     if hashlib.sha256(path.read_bytes()).hexdigest()!=record['artifacts'][name]:
         raise RuntimeError(f'Release checksum mismatch: {name}')

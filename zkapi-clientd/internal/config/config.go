@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/relay"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
 )
 
 // Compatible requests share a provider credential within this fixed window,

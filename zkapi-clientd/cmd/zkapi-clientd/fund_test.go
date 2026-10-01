@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 func TestFundingAmountExactUnits(t *testing.T) {

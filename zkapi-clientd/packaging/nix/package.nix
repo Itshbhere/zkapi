@@ -15,7 +15,7 @@ stdenv.mkDerivation {
   pname = "zkapi-clientd";
   inherit version;
   src = fetchurl {
-    url = "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_${version}_${archive.target}.tar.gz";
+    url = "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_${version}_${archive.target}.tar.gz";
     inherit (archive) sha256;
   };
 
@@ -62,7 +62,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Local inference API with private prepaid zkAPI access";
-    homepage = "https://github.com/OpenAnonymity/zkapi";
+    homepage = "https://github.com/ethereum/zkapi";
     license = lib.licenses.mit;
     mainProgram = "zkapi-clientd";
     platforms = builtins.attrNames archives;

@@ -4,7 +4,7 @@ pkgver=@@VERSION@@
 pkgrel=1
 pkgdesc='Local inference API with private prepaid zkAPI access'
 arch=('x86_64' 'aarch64')
-url='https://github.com/OpenAnonymity/zkapi'
+url='https://github.com/ethereum/zkapi'
 license=('MIT')
 depends=('ca-certificates' 'glibc>=2.39' 'gcc-libs' 'openssl>=3')
 optdepends=('systemd: user service management')

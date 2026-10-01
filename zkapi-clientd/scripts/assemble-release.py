@@ -21,7 +21,7 @@ repo = Path(__file__).resolve().parents[2]
 artifacts = args.artifacts.resolve()
 values = {
     "VERSION": args.version,
-    "BASE_URL": f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{args.version}",
+    "BASE_URL": f"https://github.com/ethereum/zkapi/releases/download/clientd-v{args.version}",
 }
 required = {"zkapi-clientd", "zkapi-walletd", "zkapi-clientd.service", "LICENSE", "CLI_PACKAGING.md", "VERSION"}
 required |= {"share/zkapi-clientd/build-info.json", "share/zkapi-clientd/third-party/dependencies.json"}

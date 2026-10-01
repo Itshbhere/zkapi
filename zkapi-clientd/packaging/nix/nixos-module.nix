@@ -43,7 +43,7 @@ in {
     environment.systemPackages = [ cfg.package ];
     systemd.user.services.zkapi-clientd = {
       description = "Open Anonymity local inference API";
-      documentation = [ "https://github.com/OpenAnonymity/zkapi" ];
+      documentation = [ "https://github.com/ethereum/zkapi" ];
       wantedBy = lib.optionals cfg.startAtLogin [ "default.target" ];
       unitConfig = {
         # Repeated trigger conditions are ORed; a single joined username is invalid.

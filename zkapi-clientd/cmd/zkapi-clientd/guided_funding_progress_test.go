@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 // Capture the live display separately from the permanent transcript so the

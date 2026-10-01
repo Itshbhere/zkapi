@@ -101,7 +101,7 @@ def main():
     require(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version), "Invalid generated release version.")
     for system, target in SYSTEMS.items():
         manifest = packages[system]
-        expected = f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{version}/zkapi-clientd_{version}_{target}.tar.gz"
+        expected = f"https://github.com/ethereum/zkapi/releases/download/clientd-v{version}/zkapi-clientd_{version}_{target}.tar.gz"
         require(manifest["version"] == version and manifest["url"] == expected, f"Unpinned/mismatched archive for {system}")
         require(re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"]), f"Invalid archive digest for {system}")
         archive = artifacts / f"zkapi-clientd_{version}_{target}.tar.gz"

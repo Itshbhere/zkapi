@@ -64,7 +64,7 @@ elif command == "curl":
         sys.exit("Expected exactly one HTTPS URL: " + repr(args))
     url = urls[0]
     match = re.fullmatch(
-        r"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v"
+        r"https://github.com/ethereum/zkapi/releases/download/clientd-v"
         r"([0-9]+\.[0-9]+\.[0-9]+)/(SHA256SUMS|zkapi-clientd_[0-9.]+_(darwin|linux)_(amd64|arm64)\.tar\.gz)",
         url,
     )

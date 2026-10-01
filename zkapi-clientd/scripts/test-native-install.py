@@ -83,7 +83,7 @@ shutil.copyfile(files[urls[0][len(base):]], args[args.index("--output") + 1])
         checksums.write_text(f"{hashlib.sha256(selected_archive.read_bytes()).hexdigest()}  {selected_archive.name}\n")
         environment.update(
             OA_NATIVE_TEST_ARCHIVE=str(selected_archive),
-            OA_NATIVE_TEST_BASE=f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{selected_version}/")
+            OA_NATIVE_TEST_BASE=f"https://github.com/ethereum/zkapi/releases/download/clientd-v{selected_version}/")
         subprocess.run(["/bin/bash", "-s", "--", "--prefix", str(prefix)],
                        input=installer.replace("@@VERSION@@", selected_version),
                        text=True, env=environment, check=True, timeout=120)

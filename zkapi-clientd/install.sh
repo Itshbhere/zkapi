@@ -176,7 +176,7 @@ HELP
 
     temporary=$(mktemp -d "${TMPDIR:-/tmp}/zkapi-clientd-install.XXXXXX")
     archive_name="zkapi-clientd_${release_version}_${platform}_${architecture}.tar.gz"
-    base_url="https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v${release_version}"
+    base_url="https://github.com/ethereum/zkapi/releases/download/clientd-v${release_version}"
     download() {
         curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error \
             --location --retry 3 --connect-timeout 15 --max-time 1800 --output "$2" "$1"

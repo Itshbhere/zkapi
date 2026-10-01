@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 var errFundingWaitStopped = errors.New("stopped waiting; inspect saved status before continuing")

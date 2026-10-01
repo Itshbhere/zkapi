@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/relay"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 // The wizard uses the same owner-authenticated quote/approval endpoints as

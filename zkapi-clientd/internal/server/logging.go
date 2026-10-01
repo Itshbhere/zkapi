@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/activity"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/activity"
 )
 
 // LogRequests reports only inference API activity using fixed route/method

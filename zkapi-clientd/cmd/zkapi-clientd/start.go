@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/relay"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 	"golang.org/x/sys/unix"
 )
 

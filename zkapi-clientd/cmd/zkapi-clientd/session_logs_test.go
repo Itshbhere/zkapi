@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 func sessionLogFeed(instance string, first uint64, events ...zkapi.SessionEvent) zkapi.SessionEvents {

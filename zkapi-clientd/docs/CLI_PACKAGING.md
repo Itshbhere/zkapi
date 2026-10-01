@@ -5,7 +5,7 @@
 Install or update the `0.1.3` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.3/install.sh | bash
+curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/install.sh | bash
 ```
 
 Then configure and serve:
@@ -133,7 +133,7 @@ hashes the native archives; the checked-in Nix package never overrides the new
 release's generated package.
 
 `install.sh --version MAJOR.MINOR.PATCH` selects a published native bundle from
-`OpenAnonymity/zkapi`. Its release-generated form is pinned to its own version.
+`ethereum/zkapi`. Its release-generated form is pinned to its own version.
 It supports install/update with the same prefix and optional `--setup`.
 `--setup` runs configuration after activation; no configuration is performed
 by default. Update the pinned README URL when publishing another client release.

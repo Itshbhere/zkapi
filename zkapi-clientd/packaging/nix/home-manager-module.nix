@@ -32,7 +32,7 @@ in {
     systemd.user.services.zkapi-clientd = {
       Unit = {
         Description = "Open Anonymity local inference API";
-        Documentation = [ "https://github.com/OpenAnonymity/zkapi" ];
+        Documentation = [ "https://github.com/ethereum/zkapi" ];
         ConditionPathExists = "${cfg.configDir}/config.json";
         StartLimitIntervalSec = 60;
         StartLimitBurst = 5;

@@ -28,7 +28,7 @@ def main():
         parser.error("checksum metadata tag does not match requested version")
     values = {
         "VERSION": args.version,
-        "BASE_URL": f"https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v{args.version}",
+        "BASE_URL": f"https://github.com/ethereum/zkapi/releases/download/clientd-v{args.version}",
     }
     for target in ("linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64"):
         digest = record["artifacts"][f"zkapi-clientd_{args.version}_{target}.tar.gz"]

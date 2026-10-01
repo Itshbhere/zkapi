@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
 	"golang.org/x/sys/unix"
 )
 

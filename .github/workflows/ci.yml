@@ -100,4 +100,4 @@ jobs:
           persist-credentials: false
 
       - name: Build Docker image
-        run: docker build -f docker/Dockerfile -t zkapi/ef-collaboration:ci .
+        run: docker build -f docker/Dockerfile -t ethereum/zkapi:ci .

@@ -4,7 +4,7 @@ export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALY
 
 tap_dir=$(mktemp -d /tmp/zkapi-brew-tap.XXXXXX)
 mkdir -p "$tap_dir/Formula"
-sed -E 's@https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v[^/]+/@file:///opt/artifacts/@g' \
+sed -E 's@https://github.com/ethereum/zkapi/releases/download/clientd-v[^/]+/@file:///opt/artifacts/@g' \
   /opt/zkapi-package-test/zkapi-clientd.rb > "$tap_dir/Formula/zkapi-clientd.rb"
 git init -q "$tap_dir"
 git -C "$tap_dir" add Formula/zkapi-clientd.rb

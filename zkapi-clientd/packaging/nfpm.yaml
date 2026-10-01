@@ -4,7 +4,7 @@ platform: linux
 version: ${OA_PACKAGE_VERSION}
 maintainer: Open Anonymity <contact@openanonymity.ai>
 vendor: Open Anonymity
-homepage: https://github.com/OpenAnonymity/zkapi
+homepage: https://github.com/ethereum/zkapi
 description: Local OpenAI-compatible API with private prepaid zkAPI access
 license: MIT
 section: net

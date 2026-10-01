@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
 )
 
 type configureAction func(context.Context, string, config.Config, string, setupPrompter, io.Writer) error

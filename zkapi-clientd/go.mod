@@ -1,4 +1,4 @@
-module github.com/OpenAnonymity/zkapi/zkapi-clientd
+module github.com/ethereum/zkapi/zkapi-clientd
 
 go 1.25.0
 

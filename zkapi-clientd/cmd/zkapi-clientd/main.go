@@ -18,10 +18,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/config"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/relay"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/server"
-	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/zkapi"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/server"
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
 
 var version = "dev"
