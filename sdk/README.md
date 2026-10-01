@@ -299,3 +299,18 @@ issuance lock. The response must match the saved request ID, nullifier, and
 payload hash. Local wall-clock expiry, a changed market price, or a missing
 nullifier alone never clears a proof. Wallet balances continue to display their
 current USD value independently of a running key's frozen conversion.
+
+## Default deployments
+
+The packaged mainnet and Sepolia configurations use
+`https://zkapi-mainnet.openanonymity.ai` and
+`https://zkapi-sepolia.openanonymity.ai`. Both pin the already deployed
+September 30 native ETH vaults and their signing keys. Proof artifacts and
+circuit hashes are unchanged. Hosts may continue supplying reviewed explicit
+profiles as described above.
+
+The runtime refuses to load an active note, pending deposit, lease or other
+unfinished recovery state from a different deployment. Keep the matching older
+application for old balances; changing the default profile does not migrate a
+note to another contract. The hostname-only switch for an existing September 30
+wallet retains its deployment identity and stored state.

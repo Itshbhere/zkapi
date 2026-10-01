@@ -431,7 +431,7 @@ func TestInferenceConflictDistinguishesWithdrawalFromUnknownConflict(t *testing.
 			bridge := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/oa/v1/status":
-					_ = json.NewEncoder(w).Encode(map[string]any{"bridge_version": 4, "chain_id": 1, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928", "contract_address": "0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41", "billing_asset": "native_eth", "billing_unit": "gwei", "circuit_id": "zkapi-v2-note-bound-v1"})
+					_ = json.NewEncoder(w).Encode(map[string]any{"bridge_version": 4, "chain_id": 1, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930", "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe", "billing_asset": "native_eth", "billing_unit": "gwei", "circuit_id": "zkapi-v2-note-bound-v1"})
 				case "/oa/v1/lease":
 					body, _ := io.ReadAll(r.Body)
 					if string(body) != `{"request_limit_micro_usd":1000000}` {

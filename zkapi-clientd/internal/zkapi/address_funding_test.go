@@ -19,7 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-const addressTestVault = "0x4bdc8718c4f39289455a3c15f8bd2c345aa51a41"
+const addressTestVault = "0x4386fdbda35d995beb3bf8625118ec5982ec81fe"
 const addressTestToken = "0x2222222222222222222222222222222222222222"
 const addressTestBlock = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 

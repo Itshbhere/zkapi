@@ -1,10 +1,10 @@
 {
-  "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928",
+  "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
   "network": "mainnet",
   "chain_id": 1,
   "rpc_url": "https://ethereum-rpc.publicnode.com",
   "protocol_version": 2,
-  "contract_address": "0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41",
+  "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
   "billing_asset": "native_eth",
   "billing_unit": "gwei",
   "billing_token_address": null,
@@ -13,18 +13,18 @@
   "native_price_feed_decimals": 8,
   "native_price_max_age_seconds": 4500,
   "demo_mint_enabled": false,
-  "proof_adapter_address": "0x1bf126FAAb86d494c9118c5b221dDB9E792F04A0",
+  "proof_adapter_address": "0x8e92013Dd7cc86f75b539DBD3814B2e603e0F9C1",
   "poseidon_library_address": "0xc6B55e86668d8c446B3D81273AAb9CBb20F28c7f",
-  "treasury_address": "0xD2de9A7E560227E5676c906eE1F1df35e6f281D5",
-  "deploy_block": 26077290,
-  "protocol_server_url": "https://54.67.93.98.sslip.io",
-  "indexer_url": "https://54.67.93.98.sslip.io",
-  "config_url": "https://54.67.93.98.sslip.io/config.json",
+  "treasury_address": "0x7665Af7d8C08733A22d0ac370EE8c5e2E21379BB",
+  "deploy_block": 26091339,
+  "protocol_server_url": "https://zkapi-mainnet.openanonymity.ai",
+  "indexer_url": "https://zkapi-mainnet.openanonymity.ai",
+  "config_url": "https://zkapi-mainnet.openanonymity.ai/config.json",
   "request_charge_cap": 50000,
   "note_ttl_seconds": 2592000,
   "challenge_period_seconds": 86400,
   "auth_scheme": "state-anchor",
-  "provider": "metered",
+  "provider": "native_leases",
   "upstreams": [
     "openrouter"
   ],
@@ -38,12 +38,12 @@
     "withdrawal_verifying_key_sha256": "2a8ea7f07176e369a93d1d816124192a798d1466c99fd6dc47850ba82094b679"
   },
   "clearance_signing_key": {
-    "x": "0x16ebef22bba6d46f751082f5ff0c7f7001f41bd0e8f118756b47fb221a41d37d",
-    "y": "0x4c3f1557dc61534d2f6e9895f587859e4e29d82e700589c835b1a76ae043a93"
+    "x": "0x12d2b4547d9de0a359fc26abcf5e66cd359be83b53167850c9070540a8045cec",
+    "y": "0x11cc3f621d6d39b557b4bb64826ebaaeda04f98910f116e307d6650177dead82"
   },
   "state_signing_key": {
-    "x": "0x2f4349723c128a6be5929302522085d415f83047951103c7a226b4aca8696e99",
-    "y": "0x16e0cc2f4014e9719748326057d02ac360067d92656c63a3a9ce7ff4e57d0c10"
+    "x": "0x2094c5f9e183a8aef5be682556a17aa4dbafdb03fd6e6a97d75a03efed2fe5a4",
+    "y": "0x11c7bbbeb288a09378e6721bd06ed5cc95b87046ff8cf6733e46ced0af1300d7"
   },
   "privacy_mode": {
     "ephemeral_key_source": "oa_org",
@@ -53,14 +53,24 @@
     "lease_ttl_seconds": 300
   },
   "source": {
-    "zkapi_ef_sha": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
-    "protocol_sha": "8b2d4e3da921f956e1eb6b93afbf722a877c060c"
+    "zkapi_ef_sha": "95b022fd339a391321481d31dffa4b947954b0a6",
+    "protocol_sha": "95b022fd339a391321481d31dffa4b947954b0a6",
+    "protocol_vendored_from_sha": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+    "proof_setup_protocol_sha": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+    "sdk_artifact_protocol_sha": "8b2d4e3da921f956e1eb6b93afbf722a877c060c"
+  },
+  "deployment_evidence": {
+    "plan_sha256": "fc9a7e80007a30047a2b47526c9fe71d65191e2b6550e52930a8f0fef87d473c",
+    "verifier_transaction_hash": "0x45f2f5259476afd5f64a6a62a36c9012c3a26efcdd35b048a7fac5ae1ba43780",
+    "vault_transaction_hash": "0xf753fd93c7e672f7b851f261f600e06930e502bdfd73be29ce8a065643df6985",
+    "verifier_runtime_keccak256": "0x5cfce41ec9f29c8e23cb6a30c8d4bc328f7d98032ccd7683a888b88d73766ab9",
+    "vault_runtime_keccak256": "0x0ccfe907122037eef6220c8e9f4792b82a6a23a80b908eaeb8a7fd27c759a5a0"
   },
   "models": [],
   "limitations": [
     "Single-party development setup; circuit, Rust and Solidity integration are not production-audited.",
     "Deposits are permissionless and no application-enforced deposit or TVL cap exists.",
-    "No live end-to-end or isolated escape-challenge acceptance is claimed by this deployment record.",
+    "No funded inference, withdrawal or live escape-challenge acceptance is claimed by configuration generation.",
     "ETH balances fluctuate in USD value; the latest finalized ETH/USD oracle round may lag the market."
   ]
 }

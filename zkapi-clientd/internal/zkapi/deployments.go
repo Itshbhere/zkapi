@@ -1,6 +1,7 @@
 package zkapi
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -72,10 +73,15 @@ func writeDeploymentManifest(dir string, raw []byte) (string, error) {
 			return "", errors.New("zkAPI deployment manifest must be a private regular file")
 		}
 		saved, err := os.ReadFile(path)
-		if err != nil || string(saved) != string(raw) {
+		if err != nil {
 			return "", errors.New("saved zkAPI deployment differs from this release; preserve the wallet and use a separate configuration directory")
 		}
-		return path, nil
+		if bytes.Equal(saved, raw) {
+			return path, nil
+		}
+		if !isSepoliaOriginMigration(saved, raw) {
+			return "", errors.New("saved zkAPI deployment differs from this release; preserve the wallet and use a separate configuration directory")
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", errors.New("cannot read saved zkAPI deployment")
 	}
@@ -101,6 +107,29 @@ func writeDeploymentManifest(dir string, raw []byte) (string, error) {
 		err = syncDirectoryChain(dir)
 	}
 	return path, err
+}
+
+// Only the three exact origin fields of the September 30 Sepolia manifest may
+// change. Byte equality for everything else preserves all wallet/proof bindings,
+// unknown fields, and the existing rule that other deployment changes fail closed.
+func isSepoliaOriginMigration(saved, packaged []byte) bool {
+	if !bytes.Contains(packaged, []byte(`"deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930"`)) {
+		return false
+	}
+	legacy := append([]byte(nil), packaged...)
+	for _, field := range []string{"protocol_server_url", "indexer_url", "config_url"} {
+		suffix := ""
+		if field == "config_url" {
+			suffix = "/config.json"
+		}
+		current := []byte(fmt.Sprintf(`"%s": "https://zkapi-sepolia.openanonymity.ai%s"`, field, suffix))
+		previous := []byte(fmt.Sprintf(`"%s": "https://sepolia.100.21.48.23.sslip.io%s"`, field, suffix))
+		if bytes.Count(legacy, current) != 1 {
+			return false
+		}
+		legacy = bytes.Replace(legacy, current, previous, 1)
+	}
+	return bytes.Equal(saved, legacy)
 }
 
 // Validate the installed proving assets before the companion opens its wallet.
