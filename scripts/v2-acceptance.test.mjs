@@ -70,3 +70,27 @@ test('loopback transport ignores inherited proxy environment and rejects public 
         }
     }
 });
+
+test('provider mock fails one creation before creating any key, then recovers', async () => {
+    const mock = mockProvider('test-management');
+    const server = http.createServer(mock.handler);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const create = () => localJSON(`${base}/v1/keys`, { method: 'POST',
+        headers: { authorization: 'Bearer test-management' }, value: {
+            name: 'failure-regression', limit: 0.001, expires_at: new Date(Date.now() + 60_000).toISOString(),
+            include_byok_in_limit: true,
+        } });
+    try {
+        mock.failNextCreate();
+        assert.equal((await create()).status, 503);
+        assert.equal(mock.keys.size, 0);
+        assert.deepEqual(mock.events, [{ type: 'create_failed', name: 'failure-regression' }]);
+        assert.equal((await create()).status, 200);
+        assert.equal(mock.keys.size, 1);
+        assert.deepEqual(mock.events.map(event => event.type), ['create_failed', 'issued']);
+    } finally {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+    }
+});

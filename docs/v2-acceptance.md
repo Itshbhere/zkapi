@@ -2,7 +2,9 @@
 
 This process tests the current native ETH protocol from a real deposit through
 provider usage, signed settlement, a challenged stale escape, and a successful
-real-proof withdrawal. The provider and price oracle are local mocks. Everything
+real-proof withdrawal. A separate regression verifies that a failed issuance
+cannot create access from the saved request after its note begins or completes
+an escape withdrawal. The provider and price oracle are local mocks. Everything
 runs on loopback with disposable Anvil accounts; no existing wallet, hosted
 server, provider credential, public RPC, or testnet funds are required.
 
@@ -23,8 +25,11 @@ the acceptance scenario itself uses only loopback endpoints. It uses the
 checked-in proving keys and does not generate or replace a setup.
 
 Each run saves a private timestamped directory under `.zkapi/acceptance/` with
-its JSON result, transaction receipts, service logs and server database. Override
-the parent directory with `npm run test:e2e:v2 -- --output-dir /path/to/results`.
+its JSON result, transaction receipts, service logs and server database. The
+result records the source commit, whether the working tree has changes, a hash
+of the tracked diff against that commit, and the tested binary/artifact hashes.
+Override the parent directory with
+`npm run test:e2e:v2 -- --output-dir /path/to/results`.
 The runner shuts down its own child processes and listeners on success or
 failure. Existing wallet data and deployment directories are never loaded.
 
@@ -60,11 +65,20 @@ the acceptance evidence; simply having this script does not establish a pass.
    the current path from the indexer and submits its own challenge transaction.
 7. Obtain clearance for the current state through HTTP and submit its real
    mutual-withdrawal proof. Check the remaining-balance payout and treasury charge.
+8. Deposit a separate fresh note and prepare a real genesis escape proof and
+   request proof. Make the provider fail one key creation after the request has
+   been reserved. Confirm the reservation remains and no key was created.
+9. Start that note's escape, then retry the exact saved issuance request. Require
+   `nullifier_used` and no new provider creation attempt. Advance only the local
+   chain clock past the challenge deadline and finalize the full refund. Retry
+   the same saved request again and require the same rejection, with no key.
 
-The vault keeps its 86,400-second challenge period. Challenges occur before that
-deadline; the process does not wait a day or advance time to finalize the stale
-withdrawal. Mining local confirmation blocks does not shorten the configured
-window.
+The vault keeps its 86,400-second challenge period. The challenged stale
+withdrawal in step 6 runs before its deadline without a time jump. The separate
+failed-issuance regression advances the disposable Anvil clock by 86,401 seconds
+to test the state after a completed refund. Neither scenario requires a real
+one-day wait or changes the configured challenge period. The result records
+these timing conditions separately.
 
 ## Coverage boundary
 
@@ -72,10 +86,10 @@ window.
 | --- | --- |
 | Deposit, escape, challenge and mutual withdrawal | Actual native vault and Groth16 verifier on Anvil |
 | Wallet state, proofs and settlement verification | Actual `zkapi-browser` Rust operations behind a small in-memory JSONL driver |
-| Lease issuance, retirement, recovery and clearance | Actual HTTP API server and SQLite database |
+| Lease issuance, retirement, recovery and clearance | Actual HTTP API server and SQLite database; failed issuance remains reserved but cannot retry against an on-chain spent nullifier |
 | Tree paths and challenge submission | Actual indexer and challenger processes |
 | Inference and key management | Local provider mock; usage accrues when an inference call is accepted |
-| ETH/USD quote | Local oracle mock |
+| ETH/USD quote | Local oracle mock; vault identity and nullifier reads are forwarded to the actual local chain |
 | Transaction signing and chain confirmation | Local Anvil accounts and blocks |
 
 The harness does not establish real provider behavior, browser/CLI host

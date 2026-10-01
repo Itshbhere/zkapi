@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha3::{Digest, Keccak256};
+use zkapi_types::Felt252;
 
 use crate::error::ServerError;
 
@@ -230,7 +232,7 @@ impl NativeBillingOracle {
             .ok_or_else(|| invalid("invalid oracle contract response"))
     }
 
-    async fn assert_deployment(&self) -> Result<(), ServerError> {
+    async fn assert_chain(&self) -> Result<(), ServerError> {
         let actual = self.rpc("eth_chainId", json!([])).await?;
         let chain = actual
             .as_str()
@@ -239,6 +241,43 @@ impl NativeBillingOracle {
         if chain != Some(self.chain_id) {
             return Err(invalid("native oracle RPC returned the wrong chain"));
         }
+        Ok(())
+    }
+
+    /// A durable request reservation is not fresh authorization to issue access.
+    /// Check the current vault state even on exact retries, without refreshing
+    /// their proof-bound price/root. Call again after activation before exposing
+    /// the provider secret, since withdrawal may occur during provider I/O.
+    pub async fn assert_request_unspent(&self, nullifier: &Felt252) -> Result<(), ServerError> {
+        let result = async {
+            self.assert_chain().await?;
+            let selector = Keccak256::digest(b"usedNullifiers(uint256)");
+            let data = format!(
+                "0x{}{}",
+                hex::encode(&selector[..4]),
+                hex::encode(nullifier.as_bytes())
+            );
+            let raw = self.call(&self.contract_address, &data).await?;
+            if raw.len() != 66 {
+                return Err(invalid("invalid vault nullifier response length"));
+            }
+            match decode_word(&raw, 0)? {
+                0 => Ok(()),
+                1 => Err(ServerError::NullifierUsed),
+                _ => Err(invalid("invalid vault nullifier boolean")),
+            }
+        }
+        .await;
+        // A failed read is not evidence that the client's request is invalid.
+        // Keep its reservation recoverable and tell the client it can retry.
+        result.map_err(|error| match error {
+            ServerError::NullifierUsed => error,
+            _ => ServerError::Internal(format!("vault authorization check failed: {error}")),
+        })
+    }
+
+    async fn assert_deployment(&self) -> Result<(), ServerError> {
+        self.assert_chain().await?;
         let decimals = decode_word(
             &self.call(&self.config.feed_address, "0x313ce567").await?,
             0,
@@ -409,6 +448,111 @@ mod tests {
         q.expires_at += 1;
         assert!(q.validate_identity(&c, 11155111).is_err());
     }
+
+    #[tokio::test]
+    async fn issuance_authorization_requires_an_explicit_unspent_vault_response() {
+        use axum::{routing::post, Json, Router};
+        use std::sync::{Arc, Mutex};
+
+        let chain = Arc::new(Mutex::new(json!("0xaa36a7")));
+        let response = Arc::new(Mutex::new(json!({
+            "jsonrpc":"2.0", "id":1, "result":format!("0x{:064x}", 0)
+        })));
+        let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let app = Router::new().route("/", post({
+            let chain = chain.clone();
+            let response = response.clone();
+            let calls = calls.clone();
+            move |Json(request): Json<Value>| {
+                let chain = chain.clone();
+                let response = response.clone();
+                let calls = calls.clone();
+                async move {
+                    calls.lock().unwrap().push(request.clone());
+                    if request["method"] == "eth_chainId" {
+                        Json(json!({"jsonrpc":"2.0", "id":1, "result":chain.lock().unwrap().clone()}))
+                    } else {
+                        Json(response.lock().unwrap().clone())
+                    }
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rpc_url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let vault = "0x0000000000000000000000000000000000000001";
+        let oracle = NativeBillingOracle::new(
+            NativeBillingConfig {
+                rpc_url,
+                feed_address: quote().feed_address,
+                decimals: 8,
+                max_age_seconds: 3600,
+            },
+            11155111,
+            vault.into(),
+        )
+        .unwrap();
+        let nullifier = Felt252::from_u64(123);
+        oracle.assert_request_unspent(&nullifier).await.unwrap();
+        {
+            let requests = calls.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0]["method"], "eth_chainId");
+            assert_eq!(requests[1]["method"], "eth_call");
+            // Independent known selector and ABI word, rather than repeating
+            // the production encoder, guard the queried mapping and key.
+            assert_eq!(
+                requests[1]["params"],
+                json!([
+                    {"to":vault, "data":format!("0xaad24061{:064x}", 123)}, "latest"
+                ])
+            );
+        }
+        *response.lock().unwrap() =
+            json!({"jsonrpc":"2.0", "id":1, "result":format!("0x{:064x}", 1)});
+        assert!(matches!(
+            oracle.assert_request_unspent(&nullifier).await,
+            Err(ServerError::NullifierUsed)
+        ));
+        for malformed in [
+            json!({"jsonrpc":"2.0", "id":1, "result":"0x"}),
+            json!({"jsonrpc":"2.0", "id":1, "result":"0x0"}),
+            json!({"jsonrpc":"2.0", "id":1, "result":format!("0x{:064x}", 2)}),
+            json!({"jsonrpc":"2.0", "id":1, "result":format!("0x{}", "f".repeat(64))}),
+            json!({"jsonrpc":"2.0", "id":1, "result":format!("0x{}", "0".repeat(128))}),
+            json!({"jsonrpc":"2.0", "id":1, "result":false}),
+            json!({"jsonrpc":"2.0", "id":1, "error":{"code":-32000}}),
+            json!({"jsonrpc":"2.0", "id":2, "result":format!("0x{:064x}", 0)}),
+        ] {
+            *response.lock().unwrap() = malformed;
+            let error = oracle.assert_request_unspent(&nullifier).await.unwrap_err();
+            assert!(matches!(error, ServerError::Internal(_)));
+            assert!(error.is_retriable());
+        }
+        *response.lock().unwrap() =
+            json!({"jsonrpc":"2.0", "id":1, "result":format!("0x{:064x}", 0)});
+        for wrong_chain in [
+            json!("0x1"),
+            json!("0xaa36a8"),
+            json!(11155111),
+            json!("junk"),
+        ] {
+            *chain.lock().unwrap() = wrong_chain;
+            let before = calls.lock().unwrap().len();
+            assert!(matches!(
+                oracle.assert_request_unspent(&nullifier).await,
+                Err(ServerError::Internal(_))
+            ));
+            assert_eq!(calls.lock().unwrap().len(), before + 1);
+        }
+        task.abort();
+        let _ = task.await;
+        assert!(matches!(
+            oracle.assert_request_unspent(&nullifier).await,
+            Err(ServerError::Internal(_))
+        ));
+    }
+
     #[tokio::test]
     async fn oracle_checks_chain_vault_round_and_freshness() {
         use axum::{routing::post, Json, Router};

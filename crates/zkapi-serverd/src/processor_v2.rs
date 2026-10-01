@@ -339,10 +339,10 @@ impl RequestProcessor {
         }
         let mut resume_provisioning = false;
         let mut issued_at = current_timestamp();
-        if let Some(existing) = self
+        let existing = self
             .store
-            .lookup_openrouter_lease(&request.client_request_id)
-        {
+            .lookup_openrouter_lease(&request.client_request_id);
+        if let Some(existing) = existing.as_ref() {
             let persisted_binding = api_request_binding(&existing.api_request)?;
             if existing.request_nullifier != request.public_inputs.request_nullifier
                 || persisted_binding != api_request_binding(request)?
@@ -361,6 +361,15 @@ impl RequestProcessor {
             if existing.status != "provisioning" || existing.key_hash.is_some() {
                 return Err(ServerError::LeasePending);
             }
+        }
+        // A reservation preserves the accepted request, not permission to mint
+        // new access after its collateral has entered an escape or been paid
+        // out. Check immediately before provider I/O, including OA retries
+        // that might be the first successful upstream issuance.
+        self.native_oracle
+            .assert_request_unspent(&request.public_inputs.request_nullifier)
+            .await?;
+        if let Some(existing) = existing {
             match &lease_config.source {
                 OpenRouterLeaseSourceConfig::OpenRouter { .. } => {
                     let provisioner = self.openrouter.as_ref().ok_or_else(|| {
@@ -481,6 +490,13 @@ impl RequestProcessor {
             }
             return Err(error);
         }
+        // The chain may have consumed this nullifier during provider I/O.
+        // Persist activation first so challenge evidence and settlement survive
+        // either a consumed nullifier or an unavailable RPC, but never expose
+        // the runtime key unless its authorization is still unspent.
+        self.native_oracle
+            .assert_request_unspent(&request.public_inputs.request_nullifier)
+            .await?;
         Ok(IssuedOpenRouterLease {
             lease: OpenRouterLeaseResponse {
                 status: "active".to_string(),
@@ -1370,6 +1386,265 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct IssuanceMock {
+        spent: bool,
+        consume_on_create: bool,
+        fail_create: bool,
+        fail_rpc_after_create: bool,
+        creates: usize,
+        provider_calls: usize,
+        nullifier_reads: usize,
+    }
+
+    type IssuanceMockState = Arc<std::sync::Mutex<IssuanceMock>>;
+
+    async fn issuance_rpc(
+        axum::extract::State(state): axum::extract::State<IssuanceMockState>,
+        axum::Json(body): axum::Json<serde_json::Value>,
+    ) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+        let mut state = state.lock().unwrap();
+        if state.fail_rpc_after_create && state.creates > 0 {
+            return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        }
+        let result = if body["method"] == "eth_chainId" {
+            "0x1".to_string()
+        } else {
+            assert_eq!(body["method"], "eth_call");
+            assert_eq!(body["params"][1], "latest");
+            assert_eq!(
+                body["params"][0]["to"],
+                "0x0000000000000000000000000000000000000001"
+            );
+            let selector = Keccak256::digest(b"usedNullifiers(uint256)");
+            assert_eq!(
+                body["params"][0]["data"],
+                format!("0x{}{:064x}", hex::encode(&selector[..4]), 77)
+            );
+            state.nullifier_reads += 1;
+            format!("0x{:064x}", u8::from(state.spent))
+        };
+        Ok(axum::Json(
+            serde_json::json!({"jsonrpc":"2.0","id":1,"result":result}),
+        ))
+    }
+
+    fn configure_issuance_rpc(processor: &mut RequestProcessor, url: String) {
+        let config = processor.config.native_billing.as_mut().unwrap();
+        config.rpc_url = url;
+        processor.native_oracle = NativeBillingOracle::new(
+            config.clone(),
+            processor.config.chain_id,
+            "0x0000000000000000000000000000000000000001".into(),
+        )
+        .unwrap();
+    }
+
+    async fn unspent_rpc(processor: &mut RequestProcessor) -> tokio::task::JoinHandle<()> {
+        let app = axum::Router::new()
+            .route("/", axum::routing::post(issuance_rpc))
+            .with_state(Arc::new(std::sync::Mutex::new(IssuanceMock::default())));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        configure_issuance_rpc(
+            processor,
+            format!("http://{}", listener.local_addr().unwrap()),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() })
+    }
+
+    async fn issuance_processor(
+        oa: bool,
+        state: IssuanceMockState,
+    ) -> (RequestProcessor, ApiRequestV2, tokio::task::JoinHandle<()>) {
+        use axum::{
+            extract::State,
+            http::StatusCode,
+            routing::{get, post},
+            Json, Router,
+        };
+        use serde_json::{json, Value};
+        async fn create(
+            State(state): State<IssuanceMockState>,
+            Json(body): Json<Value>,
+        ) -> Result<Json<Value>, StatusCode> {
+            let mut state = state.lock().unwrap();
+            state.provider_calls += 1;
+            state.creates += 1;
+            if state.fail_create {
+                state.fail_create = false;
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+            state.spent |= state.consume_on_create;
+            let response = if body.get("credit_limit").is_some() {
+                json!({"source":"oa_org", "key":"runtime-key", "key_hash":"test-hash",
+                    "credit_limit":body["credit_limit"], "duration_minutes":body["duration_minutes"],
+                    "expires_at_unix":current_timestamp()+300,
+                    "station_id":"station", "station_recently_attested":true,
+                    "station_signature":"ab".repeat(64), "org_signature":"cd".repeat(64),
+                    "verifier_url":"https://verifier.example", "openrouter_api_base":"https://openrouter.ai/api/v1"})
+            } else {
+                json!({"key":"runtime-key", "data":{"hash":"test-hash", "name":body["name"],
+                    "limit":body["limit"], "expires_at":body["expires_at"], "include_byok_in_limit":true}})
+            };
+            Ok(Json(response))
+        }
+        async fn list(State(state): State<IssuanceMockState>) -> Json<Value> {
+            state.lock().unwrap().provider_calls += 1;
+            Json(json!({"data":[]}))
+        }
+        let app = Router::new()
+            .route("/rpc", post(issuance_rpc))
+            .route("/v1/keys", get(list).post(create))
+            .route("/api/zkapi/request_key", post(create))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let store = Arc::new(NullifierStore::in_memory().unwrap());
+        let mut processor = oa_lease_processor(store.clone());
+        configure_issuance_rpc(&mut processor, format!("{url}/rpc"));
+        if oa {
+            processor.oa_org = Some(Arc::new(
+                OaOrgProvisioner::new(url, "test-secret".into()).unwrap(),
+            ));
+        } else {
+            processor.config.openrouter_leases.as_mut().unwrap().source =
+                OpenRouterLeaseSourceConfig::OpenRouter {
+                    management_key: "test-secret".into(),
+                    api_base: url.clone(),
+                };
+            processor.openrouter = Some(Arc::new(
+                OpenRouterProvisioner::new("test-secret".into(), url).unwrap(),
+            ));
+            processor.oa_org = None;
+        }
+        // Resume at the durable verified boundary, with a frozen quote and
+        // request that have aged out. The admission proof tests are separate.
+        let mut request = unverified_lease_request(&processor);
+        request.payload = crate::test_support::lease_payload(&processor.config, 100);
+        request.payload_hash = canonical_payload_hash(request.payload.as_bytes());
+        request.public_inputs.request_time = 100;
+        request.proof.proof = base64::engine::general_purpose::STANDARD.encode(b"verified-proof");
+        store.reserve_openrouter_lease(&request).unwrap();
+        let id = oa.then(|| RequestProcessor::native_oa_request_id(&request).unwrap());
+        store
+            .create_openrouter_lease_with_oa_id(
+                &request,
+                if oa { "oa_org" } else { "openrouter" },
+                100,
+                400,
+                400,
+                3.0,
+                id.as_deref(),
+            )
+            .unwrap();
+        (processor, request, server)
+    }
+
+    #[tokio::test]
+    async fn failed_issuance_cannot_retry_after_withdrawal_consumes_its_nullifier() {
+        for oa in [false, true] {
+            let state = Arc::new(std::sync::Mutex::new(IssuanceMock {
+                fail_create: true,
+                ..Default::default()
+            }));
+            let (processor, request, server) = issuance_processor(oa, state.clone()).await;
+            assert!(matches!(
+                processor.issue_openrouter_lease(&request).await,
+                Err(ServerError::Internal(_))
+            ));
+            let provider_calls = {
+                let mut state = state.lock().unwrap();
+                assert_eq!(state.creates, 1);
+                state.spent = true;
+                state.provider_calls
+            };
+            assert!(matches!(
+                processor.issue_openrouter_lease(&request).await,
+                Err(ServerError::NullifierUsed)
+            ));
+            assert_eq!(state.lock().unwrap().provider_calls, provider_calls);
+            let reserved = processor
+                .store
+                .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                .unwrap();
+            assert_eq!(reserved.status, NullifierStatus::Reserved);
+            assert_eq!(
+                reserved.api_request_binding.as_deref(),
+                Some(api_request_binding(&request).unwrap().as_str())
+            );
+            assert!(
+                crate::watcher::ChallengeWatcher::new(processor.store.clone())
+                    .challenge_transcript(&request.public_inputs.request_nullifier)
+                    .is_none()
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn collateral_change_during_issuance_never_exposes_key_and_retains_evidence() {
+        for oa in [false, true] {
+            for rpc_failure in [false, true] {
+                let state = Arc::new(std::sync::Mutex::new(IssuanceMock {
+                    consume_on_create: !rpc_failure,
+                    fail_rpc_after_create: rpc_failure,
+                    ..Default::default()
+                }));
+                let (processor, request, server) = issuance_processor(oa, state.clone()).await;
+                let result = processor.issue_openrouter_lease(&request).await;
+                if rpc_failure {
+                    assert!(matches!(result, Err(ServerError::Internal(_))));
+                } else {
+                    assert!(matches!(result, Err(ServerError::NullifierUsed)));
+                }
+                assert_eq!(state.lock().unwrap().creates, 1);
+                let lease = processor
+                    .store
+                    .lookup_openrouter_lease(&request.client_request_id)
+                    .unwrap();
+                assert_eq!(lease.status, "active");
+                assert_eq!(lease.key_hash.as_deref(), Some("test-hash"));
+                assert_eq!(
+                    api_request_binding(&lease.api_request).unwrap(),
+                    api_request_binding(&request).unwrap()
+                );
+                assert!(
+                    crate::watcher::ChallengeWatcher::new(processor.store.clone())
+                        .challenge_transcript(&request.public_inputs.request_nullifier)
+                        .is_some()
+                );
+                // Recovery of already activated access needs no fresh chain
+                // read and cannot repeat provider issuance after either error.
+                assert!(matches!(
+                    processor.issue_openrouter_lease(&request).await,
+                    Err(ServerError::LeasePending)
+                ));
+                assert_eq!(state.lock().unwrap().creates, 1);
+                server.abort();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn unspent_reserved_retry_keeps_frozen_quote_after_unrelated_root_change() {
+        for oa in [false, true] {
+            let state = Arc::new(std::sync::Mutex::new(IssuanceMock::default()));
+            let (processor, request, server) = issuance_processor(oa, state.clone()).await;
+            processor.update_root(Felt252::from_u64(999));
+            let quote = processor.lease_authorization(&request).unwrap().1;
+            assert!(quote.expires_at < current_timestamp());
+            let issued = processor.issue_openrouter_lease(&request).await.unwrap();
+            assert_eq!(issued.lease.api_key, "runtime-key");
+            assert_eq!(issued.billing_quote, quote);
+            assert_eq!(issued.lease.spending_limit_usd, 3.0);
+            let state = state.lock().unwrap();
+            assert_eq!(state.creates, 1);
+            assert_eq!(state.nullifier_reads, 2);
+            server.abort();
+        }
+    }
+
+    #[derive(Default)]
     struct RetirementMock {
         disabled: bool,
         deleted: bool,
@@ -1934,6 +2209,7 @@ mod tests {
             decimals: 8,
             max_age_seconds: 4500,
         });
+        let chain_server = unspent_rpc(&mut processor).await;
         let mut request = unverified_lease_request(&processor);
         request.payload = json!({"mode":"openrouter_ephemeral_lease","version":1,"billing_quote":{
             "asset":"native_eth","units_per_eth":1_000_000_000,"chain_id":1,
@@ -1976,6 +2252,7 @@ mod tests {
             "active"
         );
         server.abort();
+        chain_server.abort();
     }
 
     #[tokio::test]
@@ -1997,6 +2274,7 @@ mod tests {
             "0x0000000000000000000000000000000000000001".into(),
         )
         .unwrap();
+        let chain_server = unspent_rpc(&mut processor).await;
         let mut request = unverified_lease_request(&processor);
         request.payload = serde_json::to_string(&OpenRouterLeaseAuthorization::default()).unwrap();
         assert!(processor.lease_authorization(&request).is_err());
@@ -2112,6 +2390,7 @@ mod tests {
         let mut missing_config = oa_lease_processor(Arc::new(NullifierStore::in_memory().unwrap()));
         missing_config.config.native_billing = None;
         assert!(missing_config.lease_authorization(&request).is_err());
+        chain_server.abort();
     }
     #[tokio::test]
     async fn native_issuance_rechecks_expiry_after_delayed_oracle_read() {
@@ -2250,6 +2529,9 @@ mod tests {
                         format!("0x{:064x}", 8)
                     } else if data == "0x4d1352fd" {
                         format!("0x{:064x}", 1_000_000_000)
+                    } else if data.starts_with("0xaad24061") {
+                        assert_eq!(request["params"][1], "latest");
+                        format!("0x{:064x}", 0)
                     } else {
                         let latest = if request["params"][1] == "finalized" {
                             finalized.load(Ordering::SeqCst)

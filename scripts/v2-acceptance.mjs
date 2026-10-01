@@ -73,6 +73,7 @@ export async function localJSON(url, { method = 'GET', value, headers = {} } = {
 export function mockProvider(managementKey = 'local-only-management-key') {
     const keys = new Map();
     const events = [];
+    let pendingCreateFailures = 0;
     const handler = async (req, res) => {
         try {
             const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -105,6 +106,11 @@ export function mockProvider(managementKey = 'local-only-management-key') {
                 assert.ok(value.limit > 0 && value.limit <= 1, 'bounded local key limit required');
                 assert.equal(value.include_byok_in_limit, true);
                 assert.ok(Date.parse(value.expires_at) > Date.now());
+                if (pendingCreateFailures > 0) {
+                    pendingCreateFailures--;
+                    events.push({ type: 'create_failed', name: value.name });
+                    return respond(res, 503, { error: 'injected local key creation failure' });
+                }
                 const hash = randomUUID();
                 const key = { ...value, hash, key: `local-runtime-${randomUUID()}`, disabled: false,
                     deleted: false, usage_micro_usd: 0, calls: 0 };
@@ -135,7 +141,7 @@ export function mockProvider(managementKey = 'local-only-management-key') {
             respond(res, 400, { error: error.message });
         }
     };
-    return { handler, keys, events };
+    return { handler, keys, events, failNextCreate: () => { pendingCreateFailures++; } };
 }
 
 function options(args) {
@@ -318,6 +324,7 @@ async function main() {
         const deployment = await deployed.deploymentTransaction().wait();
         const vaultAddress = await deployed.getAddress();
         const vault = new Contract(vaultAddress, vaultArtifact.abi, signer);
+        const usedNullifierCall = new RegExp(`^${vault.interface.getFunction('usedNullifiers').selector}[0-9a-fA-F]{64}$`);
         assert.equal(await vault.challengePeriod(), 86400n);
         const config = { protocol_version: 2, chain_id: CHAIN_ID, contract_address: vaultAddress,
             request_charge_cap: CAP, policy_charge_cap: 0, policy_enabled: false,
@@ -373,8 +380,10 @@ async function main() {
                     result = coder.encode(['uint80', 'int256', 'uint256', 'uint256', 'uint80'], [123, MOCK_PRICE, quoteTimestamp, quoteTimestamp, 123]);
                 }
             } else {
-                assert.ok(call.method === 'eth_chainId' || (call.method === 'eth_call' && target?.to?.toLowerCase() === vaultAddress.toLowerCase()
-                    && target.data === '0x4d1352fd'), 'unexpected oracle RPC read');
+                const vaultRead = call.method === 'eth_call' && target?.to?.toLowerCase() === vaultAddress.toLowerCase()
+                    && (target.data === '0x4d1352fd' || usedNullifierCall.test(target.data));
+                assert.ok(call.method === 'eth_chainId' || vaultRead, 'unexpected oracle RPC read');
+                if (vaultRead) assert.equal(call.params[1], 'latest', 'vault authorization must use the current chain state');
                 result = await rpc(rpcUrl, call.method, call.params);
             }
             respond(res, 200, { jsonrpc: '2.0', id: call.id, result });
@@ -571,21 +580,103 @@ async function main() {
         await synchronizedTree();
         assert.equal(mock.keys.size, 2);
         assert.ok([...mock.keys.values()].every(key => key.deleted && key.calls === 1));
+
+        console.log('Testing failed issuance recovery after escape initiation and finalization on the local chain.');
+        const retryClient = wallet('failed-issuance');
+        await retryClient('init', { config });
+        const retryNote = await deposit(retryClient, DEPOSIT);
+        await waitFor('server observes regression deposit root', async () =>
+            BigInt((await get(`${serverUrl}/health`)).current_root) === await vault.currentRoot());
+        const retryPath = await treePath(retryClient, retryNote.noteId);
+        // Prepare the genuine genesis exit before the request journal exists.
+        // This models retaining the original wallet state, without inventing a signature.
+        const retryEscape = await retryClient('prepare_withdrawal', { args: { mode: 'escape', destination,
+            active_root: retryPath.active_root, merkle_siblings: retryPath.siblings } });
+        const retryEscapeInputs = [...coder.decode([WITHDRAWAL_TUPLE], retryEscape.inputs_abi)[0]];
+        const retryQuote = await get(`${serverUrl}/v2/billing/quote`);
+        const retryId = `acceptance-failed-issuance-${randomUUID()}`;
+        const failedRequest = await retryClient('prepare_request', { args: {
+            payload: JSON.stringify({ mode: 'openrouter_ephemeral_lease', version: 1, billing_quote: retryQuote }),
+            active_root: retryPath.active_root, merkle_siblings: retryPath.siblings, client_request_id: retryId,
+            request_time: Math.floor(Date.now() / 1000), created_at_ms: Date.now() } });
+        const retryNullifier = failedRequest.request.public_inputs.request_nullifier;
+        assert.equal(retryEscapeInputs[11], BigInt(retryNullifier), 'request and escape must consume the same genuine state');
+        assert.equal(retryEscapeInputs[9], BigInt(DEPOSIT));
+        assert.equal(await vault.usedNullifiers(retryNullifier), false);
+        const keysBeforeFailure = mock.keys.size;
+        mock.failNextCreate();
+        const failedIssue = await request(`${serverUrl}/v2/openrouter/leases`, { method: 'POST', value: failedRequest.request });
+        assert.equal(failedIssue.status, 500);
+        assert.equal(failedIssue.value.error_code, 'internal_error');
+        assert.equal(mock.events.filter(event => event.type === 'create_failed').length, 1,
+            'the failure must occur at the mock provider, after request reservation');
+        assert.equal(mock.keys.size, keysBeforeFailure);
+        const failedRecovery = await get(`${serverUrl}/v2/requests/${retryId}`);
+        assert.equal(failedRecovery.nullifier_status, 'reserved');
+        assert.equal(failedRecovery.request_response, undefined);
+        const attemptsBeforeRetry = mock.events.filter(event => event.type === 'issued' || event.type === 'create_failed').length;
+        const retryBalances = { vault: await balance(vaultAddress), destination: await balance(destination), treasury: await balance(treasury) };
+        const retryInitiated = await (await vault.initiateEscapeWithdrawal(retryEscapeInputs, retryEscape.proof_hex, retryEscape.siblings)).wait();
+        assert.equal(await vault.usedNullifiers(retryNullifier), true);
+        assert.equal((await vault.pendingWithdrawals(retryNote.noteId))[0], true);
+        async function rejectedSpentRetry() {
+            const retried = await request(`${serverUrl}/v2/openrouter/leases`, { method: 'POST', value: failedRequest.request });
+            assert.equal(retried.status, 409);
+            assert.equal(retried.value.error_code, 'nullifier_used');
+            assert.equal(mock.keys.size, keysBeforeFailure, 'spent retry must never create another provider key');
+            assert.equal(mock.events.filter(event => event.type === 'issued' || event.type === 'create_failed').length,
+                attemptsBeforeRetry, 'spent retry must be rejected before provider creation');
+            return { http_status: retried.status, error_code: retried.value.error_code };
+        }
+        const pendingRetry = await rejectedSpentRetry();
+        await assert.rejects(vault.finalizeEscapeWithdrawal.staticCall(retryNote.noteId), 'the honest escape still has its full challenge window');
+        // Only this separate regression advances the disposable chain clock.
+        // The earlier daemon challenge runs within the unchanged 24-hour window.
+        await rpc(rpcUrl, 'evm_increaseTime', [86401]);
+        await rpc(rpcUrl, 'anvil_mine', ['0x1']);
+        const retryFinalized = await (await vault.finalizeEscapeWithdrawal(retryNote.noteId)).wait();
+        assert.equal(retryFinalized.status, 1);
+        assert.equal((await vault.notes(retryNote.noteId))[3], 3n);
+        assert.equal((await vault.pendingWithdrawals(retryNote.noteId))[0], false);
+        assert.equal(await balance(destination) - retryBalances.destination, BigInt(DEPOSIT) * GWEI);
+        assert.equal(await balance(treasury), retryBalances.treasury);
+        assert.equal(retryBalances.vault - await balance(vaultAddress), BigInt(DEPOSIT) * GWEI);
+        assert.equal(await balance(vaultAddress), BigInt(EXTRA_DEPOSIT) * GWEI);
+        const finalizedRetry = await rejectedSpentRetry();
+        assert.equal((await get(`${serverUrl}/v2/requests/${retryId}`)).nullifier_status, 'reserved');
+        const failedIssuance = { note_id: retryNote.noteId, client_request_id: retryId, request_nullifier: retryNullifier,
+            deposit_transaction: retryNote.receipt.hash, initiation_transaction: retryInitiated.hash,
+            finalization_transaction: retryFinalized.hash, failed_create_left_reserved_request: true,
+            exact_saved_request_replayed: true, rejected_while_pending: pendingRetry, rejected_after_finalization: finalizedRetry,
+            provider_create_attempts_before_retry: attemptsBeforeRetry, provider_create_attempts_after_retry: attemptsBeforeRetry,
+            additional_provider_keys: mock.keys.size - keysBeforeFailure, user_payout_gwei: DEPOSIT,
+            real_escape_proof: true, challenge_period_seconds: 86400, local_time_jump_seconds: 86401 };
+        await save('failed-issuance-regression.json', failedIssuance);
+        await save('failed-issuance-request.json', failedRequest.request);
+        await save('failed-issuance-escape-initiation-receipt.json', retryInitiated);
+        await save('failed-issuance-escape-finalization-receipt.json', retryFinalized);
         const hashes = {};
         for (const file of [fileURLToPath(import.meta.url), path.join(ROOT, 'crates/zkapi-serverd/examples/v2_acceptance_wallet.rs'),
             ...['zkapi', 'zkapi-indexerd', 'zkapi-challenged', 'examples/v2_acceptance_wallet'].map(file => path.join(opts.binDir, file)),
             ...['request.pk', 'request.vk', 'withdrawal.pk', 'withdrawal.vk'].map(file => path.join(ROOT, 'protocol/setup/v2', file))]) {
             hashes[path.relative(ROOT, file)] = createHash('sha256').update(await fs.readFile(file)).digest('hex');
         }
+        const gitOutput = args => {
+            const result = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+            assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.error?.message ?? result.stderr}`);
+            return result.stdout;
+        };
         const result = { passed: true, timestamp: new Date().toISOString(), elapsed_wall_seconds: (Date.now() - started) / 1000,
-            source_commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim(),
+            source_commit: gitOutput(['rev-parse', 'HEAD']).trim(),
+            source_dirty: gitOutput(['status', '--porcelain']).trim().length > 0,
+            tracked_source_diff_sha256: createHash('sha256').update(gitOutput(['diff', '--binary', 'HEAD'])).digest('hex'),
             artifact_sha256: hashes,
             network: { chain_id: CHAIN_ID, kind: 'disposable loopback Anvil', fork: false, public_rpc: false },
             coverage: { wallet: 'production browser wallet Rust APIs; fresh random genesis note',
                 proof_system: 'real checked-in Groth16 proving keys and deployed verifier',
                 server: 'actual zkapi serverd HTTP routes and SQLite archive', indexer: 'actual zkapi-indexerd',
                 challenger: 'actual zkapi-challenged daemon', provider: 'loopback mock management and inference HTTP service',
-                oracle: 'loopback mock price feed; chain and native-vault identity checked against actual Anvil',
+                oracle: 'loopback mock price feed; chain, native-vault identity and live nullifiers checked against actual Anvil',
                 external_provider_verified: false, oa_station_verified: false, live_network_verified: false },
             deposit: { transaction: primary.receipt.hash, note_id: primary.noteId, amount_gwei: DEPOSIT, genuine_genesis: true },
             settlements, mock_provider_events: mock.events,
@@ -596,11 +687,12 @@ async function main() {
                 restored_active: true, pending_cleared: true, no_payout: true, confirmations_observed: 2 },
             withdrawal: { transaction: closeReceipt.hash, real_proof: true, signed_clearance: true,
                 user_payout_gwei: DEPOSIT - totalCharge, treasury_payout_gwei: totalCharge, closed: true },
+            failed_issuance_retry: failedIssuance,
             unrelated_note: { note_id: unrelated.noteId, retained_local_balance_gwei: EXTRA_DEPOSIT },
             all_runtime_keys_revoked: true };
         await save('mutual-close-receipt.json', closeReceipt);
         await save('result.json', result);
-        console.log(`PASS: deposit → two provider calls → signed settlements → stale escape → daemon challenge → mutual withdrawal.\nEvidence: ${runDir}`);
+        console.log(`PASS: deposit → two provider calls → signed settlements → stale escape → daemon challenge → mutual withdrawal; failed issuance cannot mint access after escape.\nEvidence: ${runDir}`);
     } catch (error) {
         await save('failure.json', { passed: false, error: error.message, stack: error.stack });
         console.error(`FAIL: ${error.message}\nEvidence: ${runDir}`);

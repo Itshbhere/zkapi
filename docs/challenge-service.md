@@ -67,12 +67,33 @@ cannot let a stale escape mature. Mere provisioning is insufficient: the service
 keeps that request pending until a key has been durably activated or usage
 finalized. Evidence reconstruction is read-only and never signs a balance or
 changes usage accounting. Returned
-transaction hashes suppress duplicate submissions until a receipt is available;
-reverted calls refresh their path and retry. Dropped or orphaned transactions
+transaction hashes suppress duplicate submissions while the RPC still knows the
+unmined transaction; confirmed nonce consumption allows an outstanding
+withdrawal to refresh its path and retry. Dropped or orphaned transactions
 are resubmitted with their reserved nonce once the RPC no longer knows their hash. Ambiguous send errors retain the
 nonce across restart. Successful challenges are retired only after the pending withdrawal also
 disappears at the configured confirmation depth, preventing a tip reorg from
 silently losing the obligation.
+
+Nonce reconciliation runs before checking a withdrawal's deadline, evidence or
+continued existence. A reserved nonce consumed in the latest block no longer
+blocks other notes, even when the original send returned no hash and its
+challenge has expired. Its ownership remains in the checkpoint until consumption
+reaches the configured confirmation depth; a tip reorg therefore cannot silently
+forget the reservation. A reverted transaction is eligible for a fresh nonce
+after that confirmation depth. If a withdrawal disappears or a replayed event
+replaces its nullifier, the checkpoint retains its outstanding nonce separately
+until confirmed consumption. Older checkpoints load without a migration.
+
+An **unmined** ambiguous nonce still prevents new allocations. The RPC's pending
+count alone is not proof that a transaction consumed it. While its withdrawal is
+eligible, the daemon retries that same nonce. Once it expires or is replaced,
+the daemon reports that signer intervention is required: the operator must
+resolve the existing transaction at that nonce. It does not automatically reuse
+the nonce for another note or send a cancellation, because the original signed
+transaction may still be pending. This restriction is distinct from an expired
+obligation whose nonce has already mined; that obligation cannot starve the
+remaining queue. The bounded signer does not expose general cancellation calls.
 
 Watch `escape challenge requires retry`, `challenge poll failed`, and especially
 `MISSED escape challenge deadline` logs. This service does not configure

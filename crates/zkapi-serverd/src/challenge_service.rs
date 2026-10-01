@@ -51,6 +51,24 @@ struct Checkpoint {
     next_block: u64,
     last_block_hash: Option<String>,
     pending: BTreeMap<u32, PendingChallenge>,
+    /// A completed/replaced withdrawal must not discard an in-flight nonce.
+    #[serde(default)]
+    detached_nonces: BTreeMap<u64, DetachedNonce>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct DetachedNonce {
+    note_id: u32,
+    nullifier: Felt252,
+    transaction_hash: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NonceState {
+    Free,
+    Reserved,
+    Pending,
+    Mined,
 }
 
 pub struct ChallengeService {
@@ -88,6 +106,7 @@ impl ChallengeService {
                 next_block: config.from_block,
                 last_block_hash: None,
                 pending: BTreeMap::new(),
+                detached_nonces: BTreeMap::new(),
             }
         };
         ensure!(
@@ -165,15 +184,30 @@ impl ChallengeService {
                     let nullifier = words[0];
                     let old = self.checkpoint.pending.get(&(note as u32));
                     if old.is_none_or(|old| old.nullifier != nullifier) {
-                        self.checkpoint.pending.insert(
-                            note as u32,
-                            PendingChallenge {
-                                nullifier,
-                                transaction_hash: None,
-                                nonce: None,
-                                deadline_reported: false,
-                            },
-                        );
+                        self.detach_nonce(note as u32);
+                        let mut pending = PendingChallenge {
+                            nullifier,
+                            transaction_hash: None,
+                            nonce: None,
+                            deadline_reported: false,
+                        };
+                        // Replaying historical events may temporarily replace
+                        // this note and then restore its current nullifier.
+                        // Recover its exact reservation instead of stranding it.
+                        let restored_nonce = self
+                            .checkpoint
+                            .detached_nonces
+                            .iter()
+                            .find(|(_, entry)| {
+                                entry.note_id == note as u32 && entry.nullifier == nullifier
+                            })
+                            .map(|(nonce, _)| *nonce);
+                        if let Some(nonce) = restored_nonce {
+                            let entry = self.checkpoint.detached_nonces.remove(&nonce).unwrap();
+                            pending.nonce = Some(nonce);
+                            pending.transaction_hash = entry.transaction_hash;
+                        }
+                        self.checkpoint.pending.insert(note as u32, pending);
                     }
                 }
                 self.checkpoint.last_block_hash = Some(after_hash.to_owned());
@@ -181,6 +215,7 @@ impl ChallengeService {
                 self.persist()?;
             }
         }
+        self.reconcile_detached_nonces().await?;
         // Each note gets a fresh current-root path. A previous successful
         // challenge can change that root before the next submission.
         let mut notes: Vec<_> = self.checkpoint.pending.keys().copied().collect();
@@ -196,7 +231,18 @@ impl ChallengeService {
         });
         let mut first_error = None;
         for note in notes {
-            if let Err(error) = self.reconcile(note).await {
+            // Nonce ownership is independent of the withdrawal's deadline,
+            // evidence and current state. In particular, an ambiguous send
+            // which has mined must not prevent other notes from progressing.
+            let nonce_state = match self.reconcile_nonce(note).await {
+                Ok(state) => state,
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                    break; // No safe new allocation when nonce status is unknown.
+                }
+            };
+            let owned_nonce = self.checkpoint.pending[&note].nonce;
+            if let Err(error) = self.reconcile(note, nonce_state).await {
                 tracing::error!(note_id = note, error = %error, "escape challenge requires retry");
                 if first_error.is_none() {
                     first_error = Some(error);
@@ -205,9 +251,12 @@ impl ChallengeService {
                 // other notes. An ambiguous send is different: resolve its
                 // reserved nonce before asking the signer for another one.
             }
-            if self.checkpoint.pending.get(&note).is_some_and(|pending| {
-                pending.nonce.is_some() && pending.transaction_hash.is_none()
-            }) {
+            if nonce_state != NonceState::Mined
+                && (self.checkpoint.pending.get(&note).is_some_and(|pending| {
+                    pending.nonce.is_some() && pending.transaction_hash.is_none()
+                }) || owned_nonce
+                    .is_some_and(|nonce| self.checkpoint.detached_nonces.contains_key(&nonce)))
+            {
                 break;
             }
         }
@@ -217,7 +266,7 @@ impl ChallengeService {
         }
     }
 
-    async fn reconcile(&mut self, note: u32) -> anyhow::Result<()> {
+    async fn reconcile(&mut self, note: u32, nonce_state: NonceState) -> anyhow::Result<()> {
         let pending = self.checkpoint.pending[&note].clone();
         let mut query = selector("pendingWithdrawals(uint32)");
         query.extend_from_slice(Felt252::from_u64(note as u64).as_bytes());
@@ -239,6 +288,7 @@ impl ChallengeService {
             if confirmed_state[0] != Felt252::ZERO && confirmed_state[2] == pending.nullifier {
                 return Ok(());
             }
+            self.detach_nonce(note);
             self.checkpoint.pending.remove(&note);
             self.persist()?;
             return Ok(());
@@ -266,35 +316,13 @@ impl ChallengeService {
             }
             // Keep the obligation until confirmed vault completion, including
             // the possibility of a reorg back before the deadline.
+            if nonce_state == NonceState::Reserved {
+                bail!("expired challenge retains an unmined reserved nonce; signer intervention required before allocating another nonce");
+            }
             return Ok(());
         }
-        if let Some(hash) = &pending.transaction_hash {
-            let receipt = self.rpc("eth_getTransactionReceipt", json!([hash])).await?;
-            if receipt.is_null() {
-                // A dropped or orphaned transaction can be resubmitted with
-                // its durable nonce. A known pending transaction is left alone.
-                if !self
-                    .rpc("eth_getTransactionByHash", json!([hash]))
-                    .await?
-                    .is_null()
-                {
-                    return Ok(());
-                }
-                self.checkpoint
-                    .pending
-                    .get_mut(&note)
-                    .unwrap()
-                    .transaction_hash = None;
-            } else {
-                let entry = self.checkpoint.pending.get_mut(&note).unwrap();
-                entry.transaction_hash = None;
-                entry.nonce = None;
-                if quantity(&receipt["status"])? == 1 {
-                    self.persist()?;
-                    return Ok(());
-                }
-            }
-            self.persist()?;
+        if matches!(nonce_state, NonceState::Pending | NonceState::Mined) {
+            return Ok(());
         }
         let response: PathResponse = self
             .client
@@ -361,22 +389,17 @@ impl ChallengeService {
                 .await?,
         )?;
         let nonce = if let Some(nonce) = self.checkpoint.pending[&note].nonce {
-            // A pending count can already include the ambiguous send. Only
-            // the mined count permits moving past a previously reserved nonce.
-            let mined_nonce = quantity(
-                &self
-                    .rpc(
-                        "eth_getTransactionCount",
-                        json!([self.config.sender, "latest"]),
-                    )
-                    .await?,
-            )?;
-            if mined_nonce > nonce {
-                chain_nonce
-            } else {
-                nonce
-            }
+            nonce
         } else {
+            ensure!(
+                !self
+                    .checkpoint
+                    .pending
+                    .values()
+                    .any(|entry| entry.nonce == Some(chain_nonce))
+                    && !self.checkpoint.detached_nonces.contains_key(&chain_nonce),
+                "RPC pending nonce conflicts with a durable challenge reservation"
+            );
             chain_nonce
         };
         self.checkpoint.pending.get_mut(&note).unwrap().nonce = Some(nonce);
@@ -396,6 +419,109 @@ impl ChallengeService {
             .transaction_hash = Some(hash.clone());
         self.persist()?;
         tracing::info!(note_id = note, transaction_hash = %hash, "submitted escape challenge");
+        Ok(())
+    }
+
+    /// Retain ownership even if the note's withdrawal is completed or replaced.
+    /// The caller persists the queue change and this reservation atomically.
+    fn detach_nonce(&mut self, note: u32) {
+        if let Some(pending) = self.checkpoint.pending.get(&note) {
+            if let Some(nonce) = pending.nonce {
+                self.checkpoint.detached_nonces.insert(
+                    nonce,
+                    DetachedNonce {
+                        note_id: note,
+                        nullifier: pending.nullifier,
+                        transaction_hash: pending.transaction_hash.clone(),
+                    },
+                );
+            }
+        }
+    }
+
+    async fn nonce_counts(&self) -> anyhow::Result<(u64, u64)> {
+        let head = quantity(&self.rpc("eth_blockNumber", json!([])).await?)?;
+        let latest = quantity(
+            &self
+                .rpc(
+                    "eth_getTransactionCount",
+                    json!([self.config.sender, "latest"]),
+                )
+                .await?,
+        )?;
+        let confirmed = if let Some(block) = head.checked_sub(self.config.confirmations) {
+            quantity(
+                &self
+                    .rpc(
+                        "eth_getTransactionCount",
+                        json!([self.config.sender, format!("0x{block:x}")]),
+                    )
+                    .await?,
+            )?
+        } else {
+            0
+        };
+        // A reorg or newly mined block may race the two reads. Never retire a
+        // reservation whose consumption the latest nonce read did not observe.
+        Ok((latest, confirmed.min(latest)))
+    }
+
+    async fn reconcile_nonce(&mut self, note: u32) -> anyhow::Result<NonceState> {
+        let pending = self.checkpoint.pending[&note].clone();
+        let Some(nonce) = pending.nonce else {
+            return Ok(NonceState::Free);
+        };
+        let (latest, confirmed) = self.nonce_counts().await?;
+        if confirmed > nonce {
+            let entry = self.checkpoint.pending.get_mut(&note).unwrap();
+            entry.nonce = None;
+            entry.transaction_hash = None;
+            self.persist()?;
+            return Ok(NonceState::Free);
+        }
+        if latest > nonce {
+            // Let other notes advance, but retain this ownership until enough
+            // confirmations have passed to protect against a tip reorg.
+            return Ok(NonceState::Mined);
+        }
+        if let Some(hash) = &pending.transaction_hash {
+            if !self
+                .rpc("eth_getTransactionByHash", json!([hash]))
+                .await?
+                .is_null()
+            {
+                return Ok(NonceState::Pending);
+            }
+            self.checkpoint
+                .pending
+                .get_mut(&note)
+                .unwrap()
+                .transaction_hash = None;
+            self.persist()?;
+        }
+        Ok(NonceState::Reserved)
+    }
+
+    async fn reconcile_detached_nonces(&mut self) -> anyhow::Result<()> {
+        if self.checkpoint.detached_nonces.is_empty() {
+            return Ok(());
+        }
+        let (latest, confirmed) = self.nonce_counts().await?;
+        self.checkpoint
+            .detached_nonces
+            .retain(|nonce, _| *nonce >= confirmed);
+        self.persist()?;
+        if let Some((nonce, entry)) = self
+            .checkpoint
+            .detached_nonces
+            .iter()
+            .find(|(nonce, _)| **nonce >= latest)
+        {
+            bail!(
+                "unmined reserved nonce {nonce} for completed or replaced note {} requires signer intervention; refusing conflicting challenge submission",
+                entry.note_id
+            );
+        }
         Ok(())
     }
 
@@ -520,8 +646,12 @@ mod tests {
         nullifier: Felt252,
         active: bool,
         confirmed_active: bool,
-        receipt_failed: bool,
         mined_nonce: u64,
+        pending_nonce: Option<u64>,
+        confirmed_nonce: Option<u64>,
+        transaction_known: bool,
+        withdrawals: BTreeMap<u32, (bool, Felt252, u64)>,
+        event_note: u32,
         fail_note_one: bool,
         reorg_during_scan: bool,
         block_hash: String,
@@ -529,6 +659,31 @@ mod tests {
         fail_first_send: bool,
         root: Felt252,
         siblings: [Felt252; MERKLE_DEPTH],
+    }
+    impl MockChain {
+        fn new(nullifier: Felt252) -> Self {
+            let siblings = zkapi_core::v2::zero_hashes()[..MERKLE_DEPTH]
+                .try_into()
+                .unwrap();
+            Self {
+                nullifier,
+                active: true,
+                confirmed_active: true,
+                mined_nonce: 3,
+                pending_nonce: None,
+                confirmed_nonce: None,
+                transaction_known: true,
+                withdrawals: BTreeMap::new(),
+                event_note: 0,
+                fail_note_one: false,
+                reorg_during_scan: false,
+                block_hash: "0xforkA".into(),
+                sends: vec![],
+                fail_first_send: false,
+                root: zkapi_core::v2::merkle_root(0, &Felt252::ZERO, &siblings),
+                siblings,
+            }
+        }
     }
     fn encoded(values: &[Felt252]) -> Value {
         json!(format!(
@@ -557,7 +712,7 @@ mod tests {
                     state.reorg_during_scan = false;
                 }
                 json!([{
-                    "topics": [format!("0x{}", hex::encode(Keccak256::digest(ESCAPE_EVENT.as_bytes()))), format!("0x{:064x}", 0)],
+                    "topics": [format!("0x{}", hex::encode(Keccak256::digest(ESCAPE_EVENT.as_bytes()))), format!("0x{:064x}", state.event_note)],
                     "data": encoded(&[state.nullifier, Felt252::from_u64(100), Felt252::from_u64(5), Felt252::from_u64(200), state.root])
                 }])
             }
@@ -579,6 +734,14 @@ mod tests {
                     "0x{}",
                     hex::encode(selector("pendingWithdrawals(uint32)"))
                 )) {
+                    let note = u32::from_str_radix(&data[data.len() - 8..], 16).unwrap();
+                    if let Some((active, nullifier, deadline)) = state.withdrawals.get(&note) {
+                        return Json(json!({"jsonrpc": "2.0", "id": 1, "result": encoded(&[
+                            Felt252::from_u64(*active as u64), Felt252::from_u64(8),
+                            *nullifier, Felt252::from_u64(100), Felt252::from_u64(5),
+                            Felt252::from_u64(*deadline),
+                        ])}));
+                    }
                     encoded(&[
                         Felt252::from_u64(if request["params"][1] == "latest" {
                             state.active as u64
@@ -598,7 +761,16 @@ mod tests {
                 }
             }
             "eth_estimateGas" => json!("0x989680"),
-            "eth_getTransactionCount" => json!(format!("0x{:x}", state.mined_nonce)),
+            "eth_getTransactionCount" => json!(format!(
+                "0x{:x}",
+                if request["params"][1] == "pending" {
+                    state.pending_nonce.unwrap_or(state.mined_nonce)
+                } else if request["params"][1] == "latest" {
+                    state.mined_nonce
+                } else {
+                    state.confirmed_nonce.unwrap_or(state.mined_nonce)
+                }
+            )),
             "eth_sendTransaction" => {
                 state.sends.push(request["params"][0].clone());
                 if state.fail_first_send {
@@ -609,17 +781,12 @@ mod tests {
                 }
                 json!("0xsubmitted")
             }
-            "eth_getTransactionReceipt" => {
-                if state.receipt_failed {
-                    state.receipt_failed = false;
-                    state.mined_nonce += 1;
-                    json!({ "status": "0x0" })
+            "eth_getTransactionByHash" => {
+                if state.transaction_known {
+                    json!({ "hash": "0xsubmitted", "blockNumber": Value::Null })
                 } else {
                     Value::Null
                 }
-            }
-            "eth_getTransactionByHash" => {
-                json!({ "hash": "0xsubmitted", "blockNumber": Value::Null })
             }
             _ => panic!("unexpected RPC method {method}"),
         };
@@ -628,6 +795,280 @@ mod tests {
     async fn path(State(state): State<Arc<Mutex<MockChain>>>) -> Json<Value> {
         let state = state.lock().unwrap();
         Json(json!({"note_id": 0, "leaf": Felt252::ZERO, "siblings": state.siblings.to_vec()}))
+    }
+
+    struct Fixture {
+        store: Arc<NullifierStore>,
+        config: ChallengeServiceConfig,
+        chain: Arc<Mutex<MockChain>>,
+        server: tokio::task::JoinHandle<()>,
+        _directory: tempfile::TempDir,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    impl Fixture {
+        async fn new() -> Self {
+            let (store, request) = crate::watcher::tests::finalized_v2_request().await;
+            let chain = Arc::new(Mutex::new(MockChain::new(
+                request.public_inputs.request_nullifier,
+            )));
+            let app = Router::new()
+                .route("/", post(rpc))
+                .route("/v1/tree/notes/{note}/zero-path", get(path))
+                .with_state(chain.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let directory = tempfile::tempdir().unwrap();
+            let config = ChallengeServiceConfig {
+                rpc_url: url.clone(),
+                indexer_url: url,
+                sender: "0x0000000000000000000000000000000000000001".into(),
+                contract_address: request.public_inputs.contract_address,
+                chain_id: 1,
+                from_block: 0,
+                confirmations: 2,
+                checkpoint: directory.path().join("checkpoint.json"),
+                proof_setup_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../protocol/setup/v2"),
+            };
+            Self {
+                store,
+                config,
+                chain,
+                server,
+                _directory: directory,
+            }
+        }
+
+        fn service(&self) -> ChallengeService {
+            ChallengeService::new(self.config.clone(), self.store.clone()).unwrap()
+        }
+
+        fn reserve(&self, service: &mut ChallengeService, note: u32, expired: bool) {
+            let mut chain = self.chain.lock().unwrap();
+            let nullifier = chain.nullifier;
+            chain
+                .withdrawals
+                .insert(note, (true, nullifier, if expired { 100 } else { 200 }));
+            service.checkpoint.pending.insert(
+                note,
+                PendingChallenge {
+                    nullifier,
+                    transaction_hash: None,
+                    nonce: Some(3),
+                    deadline_reported: false,
+                },
+            );
+            service.persist().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_ambiguous_mined_nonce_allows_queue_progress_across_restart() {
+        let fixture = Fixture::new().await;
+        let mut service = fixture.service();
+        fixture.reserve(&mut service, 1, true);
+        {
+            let mut chain = fixture.chain.lock().unwrap();
+            chain.mined_nonce = 4;
+            chain.confirmed_nonce = Some(3);
+        }
+        drop(service);
+        let mut service = fixture.service();
+        service.poll_once().await.unwrap();
+        assert_eq!(fixture.chain.lock().unwrap().sends.len(), 1);
+        assert_eq!(fixture.chain.lock().unwrap().sends[0]["nonce"], "0x4");
+        assert_eq!(
+            service.checkpoint.pending[&1].nonce,
+            Some(3),
+            "retain tip-reorg protection"
+        );
+        assert!(service.checkpoint.pending[&1].deadline_reported);
+        drop(service);
+        let mut service = fixture.service();
+        service.poll_once().await.unwrap();
+        assert_eq!(
+            fixture.chain.lock().unwrap().sends.len(),
+            1,
+            "restart cannot duplicate submission"
+        );
+        fixture.chain.lock().unwrap().confirmed_nonce = Some(4);
+        service.poll_once().await.unwrap();
+        assert_eq!(service.checkpoint.pending[&1].nonce, None);
+        assert_eq!(fixture.chain.lock().unwrap().sends.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn expired_ambiguous_unmined_nonce_blocks_conflicts_even_when_pending_count_advances() {
+        let fixture = Fixture::new().await;
+        let mut service = fixture.service();
+        fixture.reserve(&mut service, 1, true);
+        fixture.chain.lock().unwrap().pending_nonce = Some(4);
+        drop(service);
+        let mut service = fixture.service();
+        assert!(service
+            .poll_once()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unmined reserved nonce"));
+        assert!(fixture.chain.lock().unwrap().sends.is_empty());
+        assert_eq!(service.checkpoint.pending[&1].nonce, Some(3));
+        assert_eq!(service.checkpoint.pending[&0].nonce, None);
+    }
+
+    #[tokio::test]
+    async fn completed_withdrawal_retains_ambiguous_nonce_through_restart_and_tip_reorg() {
+        let fixture = Fixture::new().await;
+        let mut service = fixture.service();
+        fixture.reserve(&mut service, 1, false);
+        fixture
+            .chain
+            .lock()
+            .unwrap()
+            .withdrawals
+            .get_mut(&1)
+            .unwrap()
+            .0 = false;
+        service.poll_once().await.unwrap();
+        assert!(!service.checkpoint.pending.contains_key(&1));
+        assert!(service.checkpoint.detached_nonces.contains_key(&3));
+        assert!(fixture.chain.lock().unwrap().sends.is_empty());
+        drop(service);
+        let mut service = fixture.service();
+        assert!(service
+            .poll_once()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("requires signer intervention"));
+        {
+            let mut chain = fixture.chain.lock().unwrap();
+            chain.mined_nonce = 4;
+            chain.confirmed_nonce = Some(3);
+        }
+        service.poll_once().await.unwrap();
+        assert_eq!(fixture.chain.lock().unwrap().sends.len(), 1);
+        assert!(service.checkpoint.detached_nonces.contains_key(&3));
+        // A tip reorg undoes consumption, so the durable reservation blocks
+        // fresh nonce allocation again rather than silently forgetting it.
+        fixture.chain.lock().unwrap().mined_nonce = 3;
+        drop(service);
+        let mut service = fixture.service();
+        assert!(service
+            .poll_once()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("requires signer intervention"));
+        assert_eq!(fixture.chain.lock().unwrap().sends.len(), 1);
+        {
+            let mut chain = fixture.chain.lock().unwrap();
+            chain.mined_nonce = 5;
+            chain.confirmed_nonce = Some(5);
+            chain.active = false;
+            chain.confirmed_active = false;
+        }
+        service.poll_once().await.unwrap();
+        assert!(service.checkpoint.detached_nonces.is_empty());
+        assert!(service.checkpoint.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replacement_withdrawal_event_does_not_discard_old_reserved_nonce() {
+        let fixture = Fixture::new().await;
+        let mut service = fixture.service();
+        let old_nullifier = Felt252::from_u64(999);
+        service.checkpoint.pending.insert(
+            0,
+            PendingChallenge {
+                nullifier: old_nullifier,
+                transaction_hash: None,
+                nonce: Some(3),
+                deadline_reported: false,
+            },
+        );
+        service.persist().unwrap();
+        assert!(service
+            .poll_once()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("requires signer intervention"));
+        assert_eq!(
+            service.checkpoint.detached_nonces[&3].nullifier,
+            old_nullifier
+        );
+        assert_eq!(
+            service.checkpoint.pending[&0].nullifier,
+            fixture.chain.lock().unwrap().nullifier
+        );
+        assert!(fixture.chain.lock().unwrap().sends.is_empty());
+        drop(service);
+        fixture.chain.lock().unwrap().mined_nonce = 4;
+        let mut service = fixture.service();
+        service.poll_once().await.unwrap();
+        assert!(service.checkpoint.detached_nonces.is_empty());
+        assert_eq!(fixture.chain.lock().unwrap().sends.len(), 1);
+        assert_eq!(fixture.chain.lock().unwrap().sends[0]["nonce"], "0x4");
+    }
+
+    #[tokio::test]
+    async fn event_replay_restores_reservation_when_its_original_nullifier_returns() {
+        let fixture = Fixture::new().await;
+        let mut service = fixture.service();
+        let original_nullifier = fixture.chain.lock().unwrap().nullifier;
+        fixture.reserve(&mut service, 0, false);
+        // An intervening fork presents a different withdrawal for this note.
+        fixture.chain.lock().unwrap().nullifier = Felt252::from_u64(999);
+        assert!(service
+            .poll_once()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("requires signer intervention"));
+        assert!(service.checkpoint.detached_nonces.contains_key(&3));
+        {
+            let mut chain = fixture.chain.lock().unwrap();
+            chain.nullifier = original_nullifier;
+            chain.block_hash = "0xforkB".into();
+        }
+        drop(service);
+        let mut service = fixture.service();
+        service.poll_once().await.unwrap();
+        assert!(service.checkpoint.detached_nonces.is_empty());
+        assert_eq!(service.checkpoint.pending[&0].nonce, Some(3));
+        assert_eq!(fixture.chain.lock().unwrap().sends.len(), 1);
+        assert_eq!(fixture.chain.lock().unwrap().sends[0]["nonce"], "0x3");
+    }
+
+    #[tokio::test]
+    async fn lagging_rpc_pending_count_cannot_reuse_another_notes_known_nonce() {
+        let fixture = Fixture::new().await;
+        let mut service = fixture.service();
+        fixture.reserve(&mut service, 1, true);
+        service
+            .checkpoint
+            .pending
+            .get_mut(&1)
+            .unwrap()
+            .transaction_hash = Some("0xsubmitted".into());
+        service.persist().unwrap();
+        assert!(service
+            .poll_once()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("conflicts with a durable challenge reservation"));
+        assert!(fixture.chain.lock().unwrap().sends.is_empty());
+        assert_eq!(service.checkpoint.pending[&1].nonce, Some(3));
+        assert_eq!(service.checkpoint.pending[&0].nonce, None);
     }
 
     #[tokio::test]
@@ -657,21 +1098,10 @@ mod tests {
         let siblings = zkapi_core::v2::zero_hashes()[..MERKLE_DEPTH]
             .try_into()
             .unwrap();
-        let root = zkapi_core::v2::merkle_root(0, &Felt252::ZERO, &siblings);
-        let chain = Arc::new(Mutex::new(MockChain {
-            nullifier: request.public_inputs.request_nullifier,
-            active: true,
-            confirmed_active: true,
-            receipt_failed: false,
-            mined_nonce: 3,
-            fail_note_one: false,
-            reorg_during_scan: true,
-            block_hash: "0xforkA".into(),
-            sends: vec![],
-            fail_first_send: true,
-            root,
-            siblings,
-        }));
+        let mut mock = MockChain::new(request.public_inputs.request_nullifier);
+        mock.reorg_during_scan = true;
+        mock.fail_first_send = true;
+        let chain = Arc::new(Mutex::new(mock));
         let app = Router::new()
             .route("/", post(rpc))
             .route("/v1/tree/notes/{note}/zero-path", get(path))
@@ -737,16 +1167,27 @@ mod tests {
             "pending receipt must not cause another send"
         );
         // A reverted challenge refreshes the live path and is resubmitted.
-        chain.lock().unwrap().receipt_failed = true;
+        // A reverted transaction consumes its nonce while leaving the
+        // withdrawal active; receipt availability is not needed to recover.
+        chain.lock().unwrap().mined_nonce += 1;
         restarted.poll_once().await.unwrap();
         assert_eq!(chain.lock().unwrap().sends.len(), 3);
         assert_eq!(chain.lock().unwrap().sends[2]["nonce"], "0x4");
         // A latest-block success alone must not drop the obligation: it can
         // disappear in a tip reorg while the scan checkpoint stays canonical.
-        chain.lock().unwrap().active = false;
+        {
+            let mut chain = chain.lock().unwrap();
+            chain.active = false;
+            chain.mined_nonce = 5;
+            chain.confirmed_nonce = Some(4);
+        }
         restarted.poll_once().await.unwrap();
         assert!(!restarted.checkpoint.pending.is_empty());
-        chain.lock().unwrap().confirmed_active = false;
+        {
+            let mut chain = chain.lock().unwrap();
+            chain.confirmed_active = false;
+            chain.confirmed_nonce = None;
+        }
         restarted.poll_once().await.unwrap();
         assert!(restarted.checkpoint.pending.is_empty());
 

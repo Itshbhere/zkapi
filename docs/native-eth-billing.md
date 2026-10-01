@@ -104,6 +104,28 @@ including its quote, is persisted before upstream key provisioning. The rate is
 never refreshed on a matching retry or during settlement. In particular, a
 restart or an oracle outage cannot reprice an existing lease.
 
+An accepted reservation does not authorize new access after its state has been
+withdrawn. Before contacting either provider to create a key, including an exact
+reserved/provisioning retry, the server checks the configured chain ID and the
+vault's `usedNullifiers(request_nullifier)` at `latest`. Only an explicit ABI
+`false` permits issuance. Consumed nullifiers return `nullifier_used`; unavailable,
+wrong-chain or malformed RPC responses fail closed with a retriable server error.
+This live authorization read does not refresh the frozen quote or require the
+original Merkle root to remain current after unrelated deposits.
+
+After provider creation, the server durably activates the lease and repeats the
+same check before returning its secret. If a withdrawal consumed the nullifier
+during provider I/O, or the read fails, no key is returned. The active record is
+retained for challenge evidence and normal status/settlement recovery; the server
+does not erase an already issued key's accounting obligation. RPC availability
+is therefore required for new key delivery, including retries. Existing lease
+status and settlement recovery do not require this issuance check.
+
+A withdrawal started after key delivery still requires timely operation of the
+challenger. These checks do not replace the configured challenge window, a
+trustworthy view of the selected chain, or sufficient operational time to observe
+and challenge a stale escape. The deployment's 24-hour window is unchanged.
+
 For ledger units `U`, oracle integer answer `P`, and decimals `D`, the upstream
 budget in micro-USD is:
 
