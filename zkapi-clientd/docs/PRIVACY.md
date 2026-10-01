@@ -14,12 +14,33 @@ certificate verification and hides the source IP from destination services;
 the relay still sees connection metadata. A configured relay failure never
 falls back to direct HTTPS. Environment proxy variables are ignored.
 
-The client keeps the same deployed manifest/contract pins, station/key binding
-and verification rules. If the verifier is unavailable, only an eligible
-trusted station can use the web-compatible outage exception; invalid evidence
-is not an outage. A fixed warning and `verifier-unavailable` response metadata
-report that exception. One verification result remains with its acquired key;
-there is no background re-verification queue.
+The client keeps the deployed manifest/contract pins and normal station/key
+verification binding. Unverified continuation requires the compiled `oa-station`
+Ed25519 public key, scoped to `https://verifier2.openanonymity.ai`, and local
+verification of the station signature over the exact station ID, provider key
+and integer expiry. A station name, `station_recently_attested` flag or live
+broadcast cannot add a trusted station. Unknown stations still need a matching
+successful verifier approval, including during rate limiting and outages.
+
+For that pinned station, the client may continue through a verifier outage or
+refusal such as HTTP 401 `Invalid org signature`. Invalid station signatures block
+fallback. Known bans at verification, expired keys and mismatched verifier
+bindings block access. TLS,
+redirect, cancellation, response-size and lease/cap/origin checks remain in
+force. The same compiled pin is used by the web app. Its initial provenance is
+the HTTPS verifier broadcast observed on October 1, 2026; operator identity was
+not independently confirmed through another channel. This release accepts that
+one-time trust bootstrap. A pin rotation requires a reviewed client release.
+
+This exception trusts the station identity; it does not establish org-signature
+validity, provider-account ownership or provider logging/training settings.
+Fallback remains `verified: false`, with `verifier-unavailable` status and the
+fixed `trusted_station_fallback` detail. A fixed warning explains the reduced
+assurance without exposing keys, station signatures or verifier response bodies.
+One verification result remains with its acquired key for the configured fixed
+reuse window; there is no background re-verification or ban polling. The gateway
+rejects legacy outage detail values from older helpers, whose fallback did not
+enforce this station pin.
 
 The default key-reuse window is a fixed 60 seconds from acquisition, capped by
 the provider's expiry; reusing a key does not extend it. Compatible requests can

@@ -292,7 +292,7 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 	case "verifier-unavailable":
 		w.Header().Set("X-OA-Verification-Status", status)
 		switch detail := response.Header.Get("X-OA-Verification-Detail"); detail {
-		case "recently_attested_outage", "rate_limited", "ownership_check_error":
+		case "trusted_station_fallback":
 			w.Header().Set("X-OA-Verification-Detail", detail)
 		}
 	}

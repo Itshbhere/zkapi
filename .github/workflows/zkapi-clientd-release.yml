@@ -57,13 +57,19 @@ jobs:
           python3 zkapi-clientd/scripts/test-packages.py
           python3 zkapi-clientd/scripts/test-prepare-zkapi.py
           python3 zkapi-clientd/scripts/test-source-install.py
+      - name: Prepare pinned native wallet source
+        run: zkapi-clientd/scripts/prepare-zkapi.sh "$RUNNER_TEMP/zkapi-walletd-source"
+      - name: Test native wallet and station trust policy
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/zkapi-walletd-source"
+          cargo test --release --locked -p zkapi-clientd
       - name: Build native bundle and Linux packages
         shell: bash
         run: |
           version=${OA_RELEASE_VERSION:-${GITHUB_REF_NAME#clientd-v}}
           SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
           export SOURCE_DATE_EPOCH
-          zkapi-clientd/scripts/prepare-zkapi.sh "$RUNNER_TEMP/zkapi-walletd-source"
           zkapi-clientd/scripts/build-native.sh "$version" "$RUNNER_TEMP/artifacts" "$RUNNER_TEMP/zkapi-walletd-source"
       - name: Check native archive executables and runtime libraries
         shell: bash

@@ -135,7 +135,7 @@ func TestStreamingFlushesPartialFrameBeforeUpstreamFinishes(t *testing.T) {
 			case <-ctx.Done():
 			}
 		}()
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Oa-Verification-Status": {"verifier-unavailable"}, "X-Oa-Verification-Detail": {"recently_attested_outage"}}, Body: reader}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Oa-Verification-Status": {"verifier-unavailable"}, "X-Oa-Verification-Detail": {"trusted_station_fallback"}}, Body: reader}, nil
 	}}
 	s := apiServer(t, b)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -158,7 +158,7 @@ func TestStreamingFlushesPartialFrameBeforeUpstreamFinishes(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("upstream write did not reach client before completion")
 	}
-	if resp.Header.Get("X-OA-Verification-Status") != "verifier-unavailable" || resp.Header.Get("X-OA-Verification-Detail") != "recently_attested_outage" {
+	if resp.Header.Get("X-OA-Verification-Status") != "verifier-unavailable" || resp.Header.Get("X-OA-Verification-Detail") != "trusted_station_fallback" {
 		t.Fatal("outage warning did not reach client before the stream completed")
 	}
 	if resp.Header.Get("X-Accel-Buffering") != "no" {
@@ -288,9 +288,10 @@ func TestVerificationHeadersExposeOnlyLocalStatusEnums(t *testing.T) {
 		name, status, detail, wantStatus, wantDetail string
 	}{
 		{"verified", "verified", "provider-private-detail", "verified", ""},
-		{"attested outage", "verifier-unavailable", "recently_attested_outage", "verifier-unavailable", "recently_attested_outage"},
-		{"rate limited", "verifier-unavailable", "rate_limited", "verifier-unavailable", "rate_limited"},
-		{"ownership unavailable", "verifier-unavailable", "ownership_check_error", "verifier-unavailable", "ownership_check_error"},
+		{"trusted fallback", "verifier-unavailable", "trusted_station_fallback", "verifier-unavailable", "trusted_station_fallback"},
+		{"legacy attested outage", "verifier-unavailable", "recently_attested_outage", "verifier-unavailable", ""},
+		{"legacy rate limited", "verifier-unavailable", "rate_limited", "verifier-unavailable", ""},
+		{"legacy ownership unavailable", "verifier-unavailable", "ownership_check_error", "verifier-unavailable", ""},
 		{"private outage detail", "verifier-unavailable", "provider-secret station=private", "verifier-unavailable", ""},
 		{"unknown status", "provider-secret", "recently_attested_outage", "", ""},
 		{"pending", "pending", "ownership_check_error", "", ""},
