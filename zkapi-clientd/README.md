@@ -7,7 +7,7 @@ A local OpenAI-compatible API, paid from your private ETH balance. No OA account
 Install or update:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.1/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.2/install.sh | bash
 ```
 
 Configure your wallet:
@@ -38,7 +38,7 @@ For a fresh key per inference request, stop `serve`, run
 With reuse disabled, settlement starts after each response. Fresh keys may wait
 for the previous key's settlement.
 
-To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved.
+To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved. Mainnet wallets created with the September 28 deployment need their matching earlier client and a separate configuration directory for the fresh deployment; see [existing-wallet guidance](docs/CLI_ZKAPI.md#deployment-origins-and-existing-wallets).
 
 To withdraw, run `zkapi-clientd config --menu` and choose `withdraw`. It asks for the destination and waits for extra ETH for fees only if needed.
 

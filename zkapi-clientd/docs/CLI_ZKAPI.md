@@ -108,9 +108,11 @@ and existing funding records continue to reject a different deployment or
 contract. Do not delete recovery data to bypass a deployment mismatch.
 Older Sepolia deployments likewise require their matching earlier client.
 
-These defaults are source changes; the published `clientd-v0.1.1` binaries retain
-their earlier compiled origins and mainnet deployment. Updating the repository
-does not update an installed binary or publish a new release.
+These defaults are included in `clientd-v0.1.2`. The earlier `clientd-v0.1.1`
+binaries retain their compiled origins and mainnet deployment and remain
+available for recovery. Stop `serve` before installing an update; the installer
+preserves private files and previous bundles. Updating the repository alone
+does not update an installed binary.
 
 ## Withdrawals
 
