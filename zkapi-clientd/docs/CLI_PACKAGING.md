@@ -38,7 +38,7 @@ OpenSSL 3, libgcc and CA certificates.
 ## Platform packages and background services
 
 This checkout includes directly installable packages pinned to the published
-`clientd-v0.1.2` native bundles. Each contains the client, wallet companion, and
+`clientd-v0.1.3` native bundles. Each contains the client, wallet companion, and
 deployment-pinned proof assets, with SHA-256 checks for every supported archive.
 
 | Platform | Package | Background service |
@@ -121,8 +121,8 @@ After publishing a release, add its tag and four native archive hashes to
 installable manifests from the templates and pinned hashes:
 
 ```sh
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.2
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.2 --check
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.3
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.3 --check
 ```
 
 Run these commands from the repository root. Update the version in the package

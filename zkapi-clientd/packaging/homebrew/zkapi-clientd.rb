@@ -2,18 +2,18 @@
 class ZkapiClientd < Formula
   desc "Local inference API with private prepaid zkAPI access"
   homepage "https://github.com/OpenAnonymity/zkapi"
-  version "0.1.2"
+  version "0.1.3"
   license "MIT"
 
   on_macos do
     depends_on macos: :ventura
     on_arm do
-      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.2/zkapi-clientd_0.1.2_darwin_arm64.tar.gz"
-      sha256 "2bf4c25501d8a77ffc4d759b21e9ac4de739c0330fd163d707a1eb866daa2856"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_darwin_arm64.tar.gz"
+      sha256 "7f7d1188f35f211b210563094c6354a1a3109f6318790ed89d32c45546bd5822"
     end
     on_intel do
-      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.2/zkapi-clientd_0.1.2_darwin_amd64.tar.gz"
-      sha256 "d02b5025b355149120e3c656dfe711f2444e540c33c9514320e9746d0fcb8bed"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_darwin_amd64.tar.gz"
+      sha256 "cde13c1021859cf0486ddce25ee9276791c953ff301794c5f629fba97228e95d"
     end
   end
 
@@ -21,12 +21,12 @@ class ZkapiClientd < Formula
     depends_on "openssl@3"
     depends_on "patchelf" => :build
     on_arm do
-      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.2/zkapi-clientd_0.1.2_linux_arm64.tar.gz"
-      sha256 "89f719dceeed67d40a6da75ff6aae2eb51feae63724067ee5d6d569f3308e1c7"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_linux_arm64.tar.gz"
+      sha256 "1eb8b36618341aa406f6b83b2843c30dbadd5ad08dc86111f94961594b5bc26b"
     end
     on_intel do
-      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.2/zkapi-clientd_0.1.2_linux_amd64.tar.gz"
-      sha256 "11f8e24d7612a8bd28981194a5fa4999ae0cccbd50366364f14a8ce1e7d63497"
+      url "https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_linux_amd64.tar.gz"
+      sha256 "fa9184770e7864cd71ac8081545a4e55036924dbae456632244682b8541addf5"
     end
   end
 
