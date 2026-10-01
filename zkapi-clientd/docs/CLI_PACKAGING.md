@@ -2,10 +2,10 @@
 
 ## One-command installation
 
-Install or update the `0.1.0` prerelease:
+Install or update the `0.1.1` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/zkapi/releases/download/clientd-v0.1.1/install.sh | bash
 ```
 
 Then configure and serve:
@@ -84,7 +84,7 @@ On macOS install Xcode command-line tools and the corresponding Homebrew tools.
 
 ```sh
 ./scripts/prepare-zkapi.sh /tmp/clientd-wallet-source
-./scripts/build-native.sh 0.1.0 /tmp/clientd-artifacts /tmp/clientd-wallet-source
+./scripts/build-native.sh 0.1.1 /tmp/clientd-artifacts /tmp/clientd-wallet-source
 ```
 
 Run on the native target. Supported release targets are macOS 13+ and Linux
