@@ -1,5 +1,28 @@
 # Current implementation notes
 
+## 2026-09-30: Client 0.1.1 prerelease
+
+- Published [clientd-v0.1.1](https://github.com/OpenAnonymity/zkapi/releases/tag/clientd-v0.1.1)
+  from `bf4893bdf369131efd8da9c55c01e2fbb4139562`, containing the latest
+  `main` implementation at release preparation plus the versioned install docs.
+  The client README and installation guide now pin the one-command installer
+  to this release. It includes mined-receipt deposit activation, unsigned funding
+  recovery, interactive configuration, key lifecycle logging/settlement and the
+  fresh September 30 Sepolia deployment. Existing Sepolia profiles need their
+  matching older client; use a separate configuration for the fresh deployment.
+- All four native builds, native install/reinstall checks, assembly and package
+  validation passed in [CI](https://github.com/OpenAnonymity/zkapi/actions/runs/36794123992).
+  Independent artifact review confirmed the exact source, patches, proof pins,
+  executable architectures and complete checksum coverage. All 12 public
+  downloads match the reviewed artifacts. See [release evidence](releases/clientd-0.1.1.json).
+- On Darwin arm64, both native and public piped installer checks passed fresh
+  install, `0.1.0` to `0.1.1` upgrade and same-version reinstall in an isolated
+  prefix. Private sentinel state and permissions, previous bundles and matched
+  frontend/helper selection were preserved. No build or PATH instructions are
+  emitted. The real local development installation was left unchanged.
+  This release task performed no live wallet transaction and changed no server
+  deployment; the earlier Sepolia acceptance record remains historical evidence.
+
 ## 2026-09-30: Successful client deposits activate at the mined receipt
 
 - At the user's explicit request, successful native ETH deposits now activate

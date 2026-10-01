@@ -89,9 +89,9 @@ Sepolia. Installing the client does not deploy a server or contract.
 Preserve old Sepolia profiles and the matching earlier client for recovery.
 A fresh deployment needs a separate `--config-dir`; saved manifests and funding
 records are never silently rebound. Do not delete an existing profile to get
-past a deployment mismatch. The September 30 change is source-only until a
-new client bundle is explicitly published; installing an older release retains
-its older embedded deployment.
+past a deployment mismatch. The September 30 deployment is included in
+`clientd-v0.1.1`; installing an older release retains its older embedded
+deployment.
 
 ## Withdrawals
 
