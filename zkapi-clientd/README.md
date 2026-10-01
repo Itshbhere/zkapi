@@ -31,9 +31,12 @@ The default reuses an OpenRouter key for a fixed window of up to 60 seconds.
 Compatible requests from different chats, local clients, and Open WebUI's title
 and follow-up requests can share a key and its spending cap; the provider can
 link those requests. Existing profiles retain their saved key-reuse setting.
+Settlement starts automatically when the window ends, even without another
+request. An active response finishes first.
 For a fresh key per inference request, stop `serve`, run
 `zkapi-clientd config --key-reuse-window-seconds 0`, then restart `serve`.
-Fresh keys may wait for the previous key's settlement.
+With reuse disabled, settlement starts after each response. Fresh keys may wait
+for the previous key's settlement.
 
 To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved.
 

@@ -45,6 +45,8 @@ type Client struct {
 	usedLeases     map[[32]byte]uint64
 	requestSlot    chan struct{}
 	settlementPoll time.Duration
+	settlementWake chan struct{}
+	leaseGroup     *leaseGroup // accessed only while owning requestSlot
 	now            func() time.Time
 	cachedLease    *reusableLease // accessed only while owning requestSlot
 	keySerial      uint64         // process-local display number; contains no key material
@@ -111,7 +113,7 @@ func New(config Config) (*Client, error) {
 	inference.CheckRedirect = noRedirect
 	inference.Jar = nil
 	local := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext}, CheckRedirect: noRedirect, Timeout: 4 * time.Minute}
-	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64), requestSlot: make(chan struct{}, 1), settlementPoll: 5 * time.Second, now: time.Now}, nil
+	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64), requestSlot: make(chan struct{}, 1), settlementPoll: 5 * time.Second, settlementWake: make(chan struct{}, 1), now: time.Now}, nil
 }
 
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -386,10 +388,7 @@ func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (provid
 				return providerLease{}, err
 			}
 			retirementAttempted = true
-			started := time.Now()
-			activity.Report(ctx, activity.Event{Kind: activity.SettlementStarted})
-			err = c.retireLease(ctx)
-			activity.Report(ctx, activity.Event{Kind: activity.SettlementFinished, Complete: err == nil, Duration: time.Since(started)})
+			err = c.settleGroup(ctx)
 			if err == nil {
 				continue
 			}
@@ -462,12 +461,17 @@ func (c *Client) acceptLease(raw json.RawMessage, budget uint64) (providerLease,
 	c.usedLeases[hash] = lease.ExpiresAt
 	c.keySerial++
 	lease.serial = c.keySerial
+	until := now.Add(c.config.KeyReuseWindow)
+	if expiry := time.Unix(int64(lease.ExpiresAt)-1, 0); expiry.Before(until) {
+		until = expiry
+	}
+	c.leaseGroup = &leaseGroup{serial: lease.serial, until: until}
 	if c.config.KeyReuseWindow > 0 {
-		until := now.Add(c.config.KeyReuseWindow)
-		if expiry := time.Unix(int64(lease.ExpiresAt)-1, 0); expiry.Before(until) {
-			until = expiry
-		}
 		c.cachedLease = &reusableLease{providerLease: lease, budget: budget, until: until}
+	}
+	select {
+	case c.settlementWake <- struct{}{}:
+	default:
 	}
 	return lease, nil
 }

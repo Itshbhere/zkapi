@@ -1,5 +1,17 @@
 # Current implementation notes
 
+## 2026-09-30: Automatic client key settlement
+
+- The client starts settlement when a key's fixed reuse window ends, without
+  waiting for another inference request. The default remains 60 seconds from
+  acquisition, capped by provider expiry; reuse never extends the deadline.
+  An active provider response finishes first. With reuse disabled, settlement
+  starts after each response.
+- Background settlement start/result logs use the local `key_ref`. Wallet
+  session-end and cost logs still require authoritative signed settlement.
+  The helper recovers pending or ambiguous outcomes without repeated retirement
+  requests.
+
 ## 2026-09-30: Client 0.1.1 prerelease
 
 - Published [clientd-v0.1.1](https://github.com/OpenAnonymity/zkapi/releases/tag/clientd-v0.1.1)

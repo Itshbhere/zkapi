@@ -139,17 +139,19 @@ a reason to expose an unauthenticated listener on all interfaces.
 
 Requests are serialized, including concurrent chat/title requests. By default,
 compatible requests reuse an OpenRouter key for a fixed window of up to 60
-seconds from acquisition. Reuse does not extend the window. Requests from
-**different chats and local clients**, including Open WebUI's automatic title
-and follow-up requests, can share a key and its aggregate spending cap; the
-provider can link all those requests. Each request checks current model policy.
-When an earlier lease blocks a fresh key, the daemon requests settlement
-immediately instead of waiting for the key's full expiry. This also applies
-when a configured reuse window expires or the required spending cap changes.
-The settlement-result log measures this operation separately from queueing,
-issuing the next key and inference. Signed settlement can still take several
-minutes. Inference is never retried
-automatically after a provider/transport error.
+seconds from acquisition, capped by the provider's expiry. Reuse does not extend
+the window. Requests from **different chats and local clients**, including Open
+WebUI's automatic title and follow-up requests, can share a key and its aggregate
+spending cap; the provider can link all those requests. Each request checks
+current model policy.
+The daemon starts settlement automatically when the window ends, even if no
+further request arrives. If a provider response is still active, it finishes
+before settlement starts. A required spending-cap change can also retire the
+previous key before its window ends. When an earlier lease blocks a fresh key,
+the daemon requests settlement instead of waiting for the key's full expiry.
+The helper recovers pending or ambiguous settlement outcomes without repeated
+retirement requests. Signed settlement can still take several minutes.
+Inference is never retried automatically after a provider/transport error.
 
 New profiles and profiles without `key_reuse_window_seconds` use 60 seconds.
 Existing profiles retain an explicitly saved window. Stop `serve`, run
@@ -157,7 +159,8 @@ Existing profiles retain an explicitly saved window. Stop `serve`, run
 require a fresh key per inference request. Use the same `--config-dir` if set.
 A value from 1 to 300 sets the fixed reuse window in seconds. Use 60 to restore
 the default. Setting 0 gives every inference request a fresh key without
-depending on a chat ID supplied by the UI.
+depending on a chat ID supplied by the UI, and starts settlement after the
+response ends.
 
 Normal output assigns each HTTP request a local sequential `request=` number.
 Key selection includes `key_ref=`, a local key serial, and `source=fresh` or
@@ -166,8 +169,10 @@ OpenRouter keys; no key material is printed. The release line reports
 `response_complete=true` or `false` and whether the key is retired locally or
 available for reuse within the configured window. Local retirement means the
 daemon will not reuse the key; it is not proof of provider revocation or signed
-wallet settlement. A waiting line identifies earlier-key settlement as the
-reason an inference request is waiting.
+wallet settlement. Background settlement logs identify the local `key_ref`
+and report its start and result; the duration excludes queueing, key issuance
+and inference. A waiting line identifies earlier-key settlement as the reason
+an inference request is waiting.
 
 Wallet key-session starts and ends use independent session numbers. These are
 not the `key_ref` numbers, especially after a daemon restart. Session ends,
