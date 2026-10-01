@@ -1,14 +1,20 @@
 # zkAPI
 
-zkAPI provides a browser wallet and backend for private, prepaid API access funded
-with native ETH. The browser proves that a private note can cover a bounded
-runtime-key lease, calls the inference provider directly, and verifies the signed
-balance returned after usage settlement. The host application owns its UI.
+zkAPI lets you pay for AI and other APIs with ETH and make unlinkable requests.
+It keeps API usage separate from your on-chain deposit: the service can verify
+that you can pay without learning which deposit is yours.
 
-The active protocol uses Groth16 over BN254, Poseidon, note-bound Baby-JubJub
-commitments and Schnorr signatures, and a 32-level Merkle tree. The ledger uses
-integer gwei. This is an experimental, unaudited protocol with a single-party
-setup; see [the note-binding review](docs/note-bound-commitments.md).
+Built by Open Anonymity in collaboration with the Ethereum Foundation, zkAPI
+uses zero-knowledge proofs to make this possible. Deposit ETH, pay only for what
+you use, and withdraw your remaining balance on-chain.
+
+Live web app: [**chat.openanonymity.ai**](https://chat.openanonymity.ai/) —
+try zkAPI in OA Chat by choosing the Ethereum wallet option.
+
+Documentation: [**zkapi.openanonymity.ai**](https://zkapi.openanonymity.ai/).
+
+The protocol is experimental; see
+[the note-binding review](docs/note-bound-commitments.md).
 
 ## Local OpenAI-compatible API
 
@@ -71,6 +77,12 @@ and settlement.
 The keys in `protocol/setup/v2` must match the vault's immutable verifier and
 the client's pinned proof artifacts. The `setup` command generates new keys; it
 is not part of connecting a client to the configured vault.
+
+## Protocol details
+
+The active protocol uses Groth16 over BN254, Poseidon, note-bound Baby-JubJub
+commitments and Schnorr signatures, and a 32-level Merkle tree. The ledger uses
+integer gwei, and the protocol relies on a single-party setup.
 
 ## Source layout
 
