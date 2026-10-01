@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run on the Docker host; e.g. invoke this script through ssh rockypika.
+# Run on the Docker host; e.g. invoke this script through ssh user@docker-host.example.
 set -euo pipefail
 
 if [[ $# != 1 ]]; then

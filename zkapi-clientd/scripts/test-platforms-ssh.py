@@ -2,8 +2,8 @@
 """Run package/service smoke tests in disposable Docker containers over SSH.
 
 Examples (from any working directory):
-  python3 zkapi-clientd/scripts/test-platforms-ssh.py rockypika
-  python3 zkapi-clientd/scripts/test-platforms-ssh.py rockypika --platform arch
+  python3 zkapi-clientd/scripts/test-platforms-ssh.py user@docker-host.example
+  python3 zkapi-clientd/scripts/test-platforms-ssh.py user@docker-host.example --platform arch
 
 Requires local ssh/rsync and remote Python 3, curl, Docker, and Bash. The Docker
 runners start isolated systemd managers; some require privileged containers.
@@ -29,7 +29,7 @@ def remote(host, argv, **kwargs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("host", nargs="?", default="rockypika")
+    parser.add_argument("host", help="Explicit SSH host alias or user@host for Docker tests")
     parser.add_argument("--platform", choices=("all", "nix", "arch", "homebrew"), default="all")
     parser.add_argument("--artifacts", type=Path, help="Copy cached native archives instead of downloading them remotely")
     parser.add_argument("--logs", type=Path, default=ROOT / "zkapi-clientd/build/platform-tests")

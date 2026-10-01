@@ -70,7 +70,7 @@ function openDatabase() {
         };
         request.onsuccess = () => {
             const database = request.result;
-            // A second OA Chat tab may load newer wallet code while this tab is
+            // A second browser tab may load newer wallet code while this tab is
             // still open. Closing here lets the upgrader proceed instead of
             // stranding durable withdrawal recovery behind a blocked DB.
             database.onversionchange = () => {

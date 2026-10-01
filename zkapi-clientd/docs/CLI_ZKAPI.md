@@ -94,11 +94,13 @@ and proof setup. Hostname updates do not rotate any deployed key or contract.
 The OA issuer, verifier and provider routing are unchanged.
 
 A saved September 30 Sepolia profile can continue on the new hostname. At
-startup the client atomically updates only an exact prior packaged manifest
-whose three origin fields used the old Sepolia hostname. Every other byte must
-match the current packaged manifest. Wallet keys, notes, signed transactions,
-recovery journals and permissions are preserved. Unknown origins or any other
-manifest differences fail closed; no remote manifest authorizes a migration.
+startup the client atomically updates only the exact prior packaged manifest
+to its exact canonical replacement, using a reviewed pair of SHA-256 hashes.
+The pair differs only in the three origin fields; every other byte is identical.
+Any changed source or target bytes, including formatting, are rejected.
+Wallet keys, notes, signed transactions, recovery journals and permissions are
+preserved. Unknown origins or any other manifest differences fail closed; no
+remote manifest authorizes a migration.
 
 The mainnet default also advances from the September 28 vault to the already
 existing September 30 vault. Keep an older mainnet profile with its matching
@@ -205,8 +207,8 @@ New profiles use the OS user configuration directory plus `zkapi-clientd`:
 `~/.config/zkapi-clientd` on Linux or
 `~/Library/Application Support/zkapi-clientd` on macOS.
 `ZKAPI_CLIENTD_CONFIG_DIR` or global `--config-dir` selects another directory.
-Existing OA Chat zkAPI profiles can be reused without moving keys or recovery
-journals. See [migration and updates](CLI_PACKAGING.md#existing-oa-chat-wallets).
+Existing zkAPI profiles can be reused without moving keys or recovery
+journals. See [wallet reuse and updates](CLI_PACKAGING.md#existing-wallets).
 Never initialize a new profile over orphaned recovery state or reinterpret
 legacy token balances as ETH. Keep the matching historical client for recovery
 of retired token wallets.

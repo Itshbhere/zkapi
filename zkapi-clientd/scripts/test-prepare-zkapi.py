@@ -13,7 +13,7 @@ SCRIPTS = Path(__file__).resolve().parent
 
 class PreparationTests(unittest.TestCase):
     def test_added_sources_are_verified_and_unexpected_changes_rejected(self):
-        with tempfile.TemporaryDirectory(prefix="oa-prepare-test-") as directory:
+        with tempfile.TemporaryDirectory(prefix="zkapi-prepare-test-") as directory:
             root = Path(directory)
             global_config = root / "gitconfig"
             environment = dict(os.environ, GIT_CONFIG_GLOBAL=str(global_config),

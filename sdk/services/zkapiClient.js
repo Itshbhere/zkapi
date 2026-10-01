@@ -270,8 +270,8 @@ class ZkapiClient extends EventTarget {
             complete = await reconcile('expiry payments', () => this.syncExpiryHistory()) && complete;
             return complete;
         } catch (error) {
-            // Startup recovery must never summon MetaMask or prevent OA Chat
-            // from loading. The exact durable state remains available through
+            // Startup recovery must never summon MetaMask or prevent the host from
+            // loading. The exact durable state remains available through
             // the explicit status action in the balance panel.
             console.warn('Unable to reconcile browser withdrawals on load.', error);
             return false;

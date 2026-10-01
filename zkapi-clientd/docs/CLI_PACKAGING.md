@@ -59,17 +59,16 @@ The AUR handoff and Homebrew formula are ready to copy into their respective
 package repositories; adding them here does not publish an AUR entry or a public
 Homebrew tap. The Nix flake can be used directly from this checkout.
 
-## Existing OA Chat wallets
+## Existing wallets
 
-A saved zkAPI profile can be reused with `--config-dir`. The default-directory
-selection also recognizes an existing OA Chat zkAPI profile when the new
-location is absent, so a funded default wallet does not appear empty after the
-rename. It uses that directory in place; it does not copy, delete or re-key it.
-`OA_CHAT_CONFIG_DIR` remains a fallback if `ZKAPI_CLIENTD_CONFIG_DIR` is unset.
-Ticket profiles and malformed/orphaned legacy state need explicit attention,
-not silent conversion. Stop the old daemon before switching clients. Never run
-two clients against one wallet. Keep old binaries for ticket or legacy token
-recovery; the new installer uses separate executable and install names.
+Reuse a saved zkAPI profile with `--config-dir`. Default-directory selection
+also recognizes compatible existing profiles when the current default location
+is absent. It uses the directory in place without copying, deleting or re-keying
+wallet state. `ZKAPI_CLIENTD_CONFIG_DIR` explicitly selects a directory.
+Malformed profiles, orphaned recovery files and unsupported ticket profiles
+require explicit attention; they are never silently converted. Stop the previous
+daemon before switching clients, and never run two clients against one wallet.
+Keep each retired deployment's wallet and matching client together for recovery.
 
 ## Native bundle
 
@@ -155,6 +154,21 @@ python3 scripts/test-prepare-zkapi.py
 python3 scripts/test-packages.py
 ```
 
+The default Go tests check exact source/target manifest digest matching with
+synthetic origins. To also exercise the actual prior-release Sepolia manifest,
+extract its immutable Git object into a temporary fixture and run the persistence
+integration test (from the repository root):
+
+```sh
+fixture=$(mktemp)
+git show bf4893bdf369131efd8da9c55c01e2fbb4139562:zkapi-clientd/internal/zkapi/deployments/sepolia.json > "$fixture"
+(cd zkapi-clientd && ZKAPI_TEST_PREVIOUS_MANIFEST="$fixture" go test ./internal/zkapi -run TestSepoliaOriginMigrationPreservesWalletAndRejectsOtherChanges)
+rm -f "$fixture"
+```
+
+The test checks the fixture's pinned SHA-256 before any simulated wallet update.
+It never reads an installed profile or contacts an old endpoint.
+
 Native packaging and service-manager checks have extra platform dependencies;
 see the client workflows. Fixture tests never need live funds.
 
@@ -162,11 +176,12 @@ Run all three platform checks in disposable Docker containers on an SSH host
 (from the repository root):
 
 ```sh
-python3 zkapi-clientd/scripts/test-platforms-ssh.py rockypika
+python3 zkapi-clientd/scripts/test-platforms-ssh.py user@docker-host.example
 ```
 
-The runner copies the source into a new remote temporary directory, downloads
-the four pinned archives, verifies them against the checksum metadata, assembles
+Replace `user@docker-host.example` with your Docker host; the host argument is
+required. The runner copies the source into a new remote temporary directory,
+downloads the four pinned archives, verifies them against the checksum metadata, assembles
 the current package definitions, and runs the Nix, Arch, and Linux Homebrew
 checks. `--platform nix`, `--platform arch`, or `--platform homebrew` selects one.
 Use `--artifacts /path/to/release` to reuse downloaded archives. Local logs are

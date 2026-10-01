@@ -109,27 +109,21 @@ func writeDeploymentManifest(dir string, raw []byte) (string, error) {
 	return path, err
 }
 
-// Only the three exact origin fields of the September 30 Sepolia manifest may
-// change. Byte equality for everything else preserves all wallet/proof bindings,
-// unknown fields, and the existing rule that other deployment changes fail closed.
+// These exact September 30 Sepolia manifests differ only in their three origin
+// fields. Pin both sides so neither changed wallet/proof bindings nor an arbitrary
+// replacement can use this exception. Hashes retain compatibility without keeping
+// a retired endpoint in the source. All other deployment changes fail closed.
+const previousSepoliaManifestSHA256 = "f3ca3f1f648d872ad7263f783fca84699223917748f36828a571387bef959bc3"
+const canonicalSepoliaManifestSHA256 = "d7b4f21cc54df41c72fc577c70e1e528f487da34efd4d83c4c285c61fe438a20"
+
 func isSepoliaOriginMigration(saved, packaged []byte) bool {
-	if !bytes.Contains(packaged, []byte(`"deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930"`)) {
-		return false
-	}
-	legacy := append([]byte(nil), packaged...)
-	for _, field := range []string{"protocol_server_url", "indexer_url", "config_url"} {
-		suffix := ""
-		if field == "config_url" {
-			suffix = "/config.json"
-		}
-		current := []byte(fmt.Sprintf(`"%s": "https://zkapi-sepolia.openanonymity.ai%s"`, field, suffix))
-		previous := []byte(fmt.Sprintf(`"%s": "https://sepolia.100.21.48.23.sslip.io%s"`, field, suffix))
-		if bytes.Count(legacy, current) != 1 {
-			return false
-		}
-		legacy = bytes.Replace(legacy, current, previous, 1)
-	}
-	return bytes.Equal(saved, legacy)
+	return matchesManifestMigration(saved, packaged, previousSepoliaManifestSHA256, canonicalSepoliaManifestSHA256)
+}
+
+func matchesManifestMigration(saved, packaged []byte, sourceSHA256, targetSHA256 string) bool {
+	source := sha256.Sum256(saved)
+	target := sha256.Sum256(packaged)
+	return hex.EncodeToString(source[:]) == sourceSHA256 && hex.EncodeToString(target[:]) == targetSHA256
 }
 
 // Validate the installed proving assets before the companion opens its wallet.

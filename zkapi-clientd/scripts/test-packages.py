@@ -181,7 +181,7 @@ def verify_artifacts(directory):
     required = {"zkapi-clientd", "zkapi-walletd", "zkapi-clientd.service", "LICENSE", "CLI_PACKAGING.md", "VERSION",
                 "share/zkapi-clientd/build-info.json", "share/zkapi-clientd/third-party/dependencies.json"}
     required.update("share/zkapi-clientd/proof-setup/" + asset for asset in PROOF_FILES)
-    with tempfile.TemporaryDirectory(prefix="oa-package-payloads-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zkapi-package-payloads-") as temporary:
         for target in TARGETS:
             name = f"zkapi-clientd_{version}_{target}.tar.gz"
             archive = directory / name
@@ -219,13 +219,13 @@ def verify_artifacts(directory):
                      *("nix/" + name for name in nix_names))
     for name in (*handoff_names, "zkapi-clientd-packaging.tar.gz", "zkapi-clientd-nix.tar.gz"):
         check(sums.get(name) == sha256(directory / name), f"SHA256SUMS mismatch for {name}")
-    with tempfile.TemporaryDirectory(prefix="oa-packaging-handoff-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zkapi-packaging-handoff-") as temporary:
         unpacked = Path(temporary)
         extract_archive(directory / "zkapi-clientd-packaging.tar.gz", unpacked)
         for name in handoff_names:
             check((unpacked / name).is_file() and sha256(unpacked / name) == sha256(directory / name),
                   f"Packaging handoff archive differs from generated {name}")
-    with tempfile.TemporaryDirectory(prefix="oa-nix-handoff-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zkapi-nix-handoff-") as temporary:
         unpacked = Path(temporary)
         extract_archive(directory / "zkapi-clientd-nix.tar.gz", unpacked)
         for name in nix_names:
@@ -241,7 +241,7 @@ def verify_makepkg(directory, version):
     check(os.geteuid() != 0, "Run makepkg as a non-root user in a disposable Arch host")
     check(shutil.which("makepkg") is not None and shutil.which("bsdtar") is not None,
           "Native Arch validation requires makepkg and bsdtar")
-    with tempfile.TemporaryDirectory(prefix="oa-makepkg-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zkapi-makepkg-") as temporary:
         root = Path(temporary)
         build = root / "build"
         build.mkdir()
@@ -286,9 +286,9 @@ def verify_homebrew(directory, version, user_service=True):
     installed = command(["brew", "list", "--formula", "--full-name"], env=env).splitlines()
     check(not any(name.split("/")[-1] == "zkapi-clientd" for name in installed),
           "Refusing to replace an existing Homebrew zkapi-clientd installation")
-    with tempfile.TemporaryDirectory(prefix="oa-homebrew-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zkapi-homebrew-") as temporary:
         root = Path(temporary)
-        tap = f"oa-validation-{os.getpid()}/packages"
+        tap = f"zkapi-validation-{os.getpid()}/packages"
         formula = tap + "/zkapi-clientd"
         repository = root / "tap"
         (repository / "Formula").mkdir(parents=True)
@@ -402,8 +402,21 @@ def verify_homebrew(directory, version, user_service=True):
 
 
 class PackageTests(unittest.TestCase):
+    def test_remote_checks_require_an_explicit_valid_host(self):
+        with tempfile.TemporaryDirectory(prefix="zkapi-ssh-arguments-") as temp:
+            logs = Path(temp) / "logs"
+            for host in ([], ["--", "-bad-host"], ["bad;host"]):
+                result = subprocess.run(
+                    [sys.executable, str(REPO / "zkapi-clientd/scripts/test-platforms-ssh.py"),
+                     "--logs", str(logs), *host], capture_output=True, text=True,
+                    env={**os.environ, "PATH": temp})
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("host", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(logs.exists(), "invalid host allocated test output")
+
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="oa-package-fixture-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="zkapi-package-fixture-")
         self.addCleanup(self.temporary.cleanup)
         self.artifacts = Path(self.temporary.name) / "artifacts"
         self.artifacts.mkdir()

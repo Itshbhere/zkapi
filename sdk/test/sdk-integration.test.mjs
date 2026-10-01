@@ -93,7 +93,7 @@ test('packaged proof assets and host-built worker are independent of source subm
             assert.equal(result.files['wasm/zkapi_browser_bg.wasm'], pinned.files['wasm/zkapi_browser_bg.wasm']);
             const worker = await fs.readFile(path.join(result.directory, 'assets/zkapiWasmWorker.js'), 'utf8');
             assert.match(worker, /\.\.\/wasm\/zkapi_browser_bg\.wasm/);
-            assert.doesNotMatch(worker, /oa-chat|funding-page|networkProxy/);
+            assert.doesNotMatch(worker, /ChatApp|funding-page|networkProxy/);
         }
         await assert.rejects(buildBrowserSdkAssets({outDir: temp, network: 'invalid', build}), /Network/);
         await assert.rejects(buildBrowserSdkAssets({outDir: temp, publicPath: '//other.example/', build}), /same-origin/);

@@ -83,7 +83,7 @@ func defaultDirAt(base string) (string, error) {
 		return "", err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
-		return "", errors.New("the previous oa-chat configuration directory must be a private real directory; preserve it or select an explicit --config-dir")
+		return "", errors.New("the previous configuration directory must be a private real directory; preserve it or select an explicit --config-dir")
 	}
 	entries, err := os.ReadDir(legacy)
 	if err != nil {
@@ -93,7 +93,7 @@ func defaultDirAt(base string) (string, error) {
 		return target, nil
 	}
 	if _, err := readConfig(legacy); err != nil {
-		return "", fmt.Errorf("the previous oa-chat profile needs attention; preserve its wallet and use an explicit --config-dir to select another profile: %w", err)
+		return "", fmt.Errorf("the previous profile needs attention; preserve its wallet and use an explicit --config-dir to select another profile: %w", err)
 	}
 	return legacy, nil
 }
@@ -134,7 +134,7 @@ func Validate(c Config) error {
 		return errors.New("api_key must contain at least 32 non-space characters")
 	}
 	if c.Backend != "zkapi" {
-		return errors.New("this client supports only zkAPI profiles; keep ticket wallets in oa-chat and use a separate configuration directory for zkapi-clientd")
+		return errors.New("this client supports only zkAPI profiles; keep ticket wallets with their matching client and use a separate configuration directory for zkapi-clientd")
 	}
 	if c.Concurrency < 1 || c.Concurrency > 64 {
 		return errors.New("concurrency must be between 1 and 64")

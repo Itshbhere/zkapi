@@ -43,7 +43,7 @@ installer = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
 if installer.count("@@VERSION@@") != 1:
     parser.error("installer release placeholder is missing or ambiguous")
 
-with tempfile.TemporaryDirectory(prefix="oa-native-install-") as directory:
+with tempfile.TemporaryDirectory(prefix="zkapi-native-install-") as directory:
     root = Path(directory)
     prefix = root / "prefix with spaces"
     shim = root / "download-bin"

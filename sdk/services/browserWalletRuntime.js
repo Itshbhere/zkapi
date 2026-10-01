@@ -271,7 +271,7 @@ class BrowserWalletRuntime extends EventTarget {
         this.legacyMigrationInProgress = false;
         this.channel = null;
         // sessionStorage survives a reload in this tab but is isolated from an
-        // independently-opened OA Chat tab. That lets crash recovery retire a
+        // independently opened browser tab. That lets crash recovery retire a
         // lost in-memory key without allowing another live tab to take it.
         this.ownerId = browserTabOwnerId();
     }
@@ -1791,8 +1791,8 @@ class BrowserWalletRuntime extends EventTarget {
 
             // A browser can restart with a durable proof made under an older
             // spending policy. Finish that byte-identical request safely, but
-            // never expose its legacy-cap key to OA Chat. Settle it unused,
-            // install the signed receipt, then prove the selected model budget.
+            // never expose its legacy-cap key to the host application. Settle it
+            // unused, install the signed receipt, then prove the selected budget.
             const desiredLimitCredits = this.leaseBudget(spendingLimitUsd, requestBillingQuote(request));
             if (Number(request.public_inputs.solvency_bound) !== desiredLimitCredits) {
                 try {
@@ -2001,7 +2001,7 @@ class BrowserWalletRuntime extends EventTarget {
             && Number(this.runtime.lease.settle_after || this.runtime.lease.expires_at) > now
             && this.runtime.lease.ownerId !== this.ownerId) {
             throw new BrowserWalletHttpError(
-                `Another OA Chat tab owns the current private key until ${new Date(Number(this.runtime.lease.settle_after || this.runtime.lease.expires_at) * 1000).toLocaleTimeString()}.`,
+                `Another browser tab owns the current private key until ${new Date(Number(this.runtime.lease.settle_after || this.runtime.lease.expires_at) * 1000).toLocaleTimeString()}.`,
                 409,
                 'lease_tab_conflict'
             );
@@ -2354,13 +2354,13 @@ class BrowserWalletRuntime extends EventTarget {
                 authorization: `Bearer ${lease.api_key}`,
                 'content-type': 'application/json',
                 'http-referer': location.origin,
-                'x-title': 'oa-chat'
+                'x-title': 'zkAPI'
             },
             release: () => {
                 if (released) return;
                 released = true;
                 // A fetch resolves when headers arrive, not when an SSE body is
-                // finished. Keep the lease checked out for the whole OA stream.
+                // finished. Keep the lease checked out for the entire stream.
                 lease.inFlight = Math.max(0, lease.inFlight - 1);
                 if (lease.inFlight === 0
                     && Number(lease.settle_after) * 1000 <= Date.now()) {
