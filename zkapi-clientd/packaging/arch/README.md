@@ -48,11 +48,11 @@ python3 zkapi-clientd/scripts/sync-packages.py 0.1.2
 
 ## Docker validation
 
-To use Docker on `rockypika` from your local checkout, run this from the
+To use Docker on an explicitly selected SSH host from your local checkout, run this from the
 repository root:
 
 ```sh
-python3 zkapi-clientd/scripts/test-platforms-ssh.py rockypika --platform arch
+python3 zkapi-clientd/scripts/test-platforms-ssh.py user@docker-host.example --platform arch
 ```
 
 On a Linux Docker host, run:

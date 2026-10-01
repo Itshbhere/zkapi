@@ -161,12 +161,87 @@ func TestDeploymentManifestRejectsSymlinksAndUnsafeFiles(t *testing.T) {
 	}
 }
 
+func TestManifestMigrationRequiresBothCompleteManifests(t *testing.T) {
+	_, packaged, err := pinnedDeployment("sepolia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest := sha256.Sum256(packaged); hex.EncodeToString(digest[:]) != canonicalSepoliaManifestSHA256 {
+		t.Fatal("packaged Sepolia manifest changed; review both migration pins before updating")
+	}
+	// Synthetic endpoints exercise the same exact-byte guard without retaining
+	// a retired service address in fixtures or contacting it during tests.
+	previous := bytes.ReplaceAll(packaged, []byte("https://zkapi-sepolia.openanonymity.ai"), []byte("https://retired.example"))
+	sourceHash, targetHash := sha256.Sum256(previous), sha256.Sum256(packaged)
+	sourcePin, targetPin := hex.EncodeToString(sourceHash[:]), hex.EncodeToString(targetHash[:])
+	if !matchesManifestMigration(previous, packaged, sourcePin, targetPin) {
+		t.Fatal("exact source and target did not match")
+	}
+	if isSepoliaOriginMigration(previous, packaged) {
+		t.Fatal("synthetic manifest used the production migration exception")
+	}
+	for _, change := range []struct{ name, before, after string }{
+		{"vault", "0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F", "0x1111111111111111111111111111111111111111"},
+		{"deployment", "fresh-20260930", "fresh-20260928"},
+		{"signer", "0x25a4453190e930f9716eebcab165170706d31d1b3969d106a50d7ae374a23d61", "0x1"},
+		{"proof", "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584", strings.Repeat("a", 64)},
+		{"issuer", "https://org-staging.openanonymity.ai", "https://untrusted.example"},
+		{"additional field", "{\n", "{\n  \"unreviewed\": true,\n"},
+		{"formatting", "{\n", "{\n\n"},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			changedSource := bytes.Replace(previous, []byte(change.before), []byte(change.after), 1)
+			changedTarget := bytes.Replace(packaged, []byte(change.before), []byte(change.after), 1)
+			if bytes.Equal(changedSource, previous) || bytes.Equal(changedTarget, packaged) {
+				t.Fatal("test did not mutate both manifests")
+			}
+			if matchesManifestMigration(changedSource, packaged, sourcePin, targetPin) ||
+				matchesManifestMigration(previous, changedTarget, sourcePin, targetPin) ||
+				matchesManifestMigration(changedSource, changedTarget, sourcePin, targetPin) {
+				t.Fatal("changed source or target accepted")
+			}
+		})
+	}
+	otherOrigin := bytes.ReplaceAll(previous, []byte("https://retired.example"), []byte("https://untrusted.example"))
+	partial := bytes.Replace(previous, []byte("https://retired.example"), []byte("https://zkapi-sepolia.openanonymity.ai"), 1)
+	for _, candidate := range [][]byte{otherOrigin, partial, packaged, nil} {
+		if matchesManifestMigration(candidate, packaged, sourcePin, targetPin) {
+			t.Fatal("unexpected source origin or missing source accepted")
+		}
+	}
+	_, mainnet, _ := pinnedDeployment("mainnet")
+	if matchesManifestMigration(previous, mainnet, sourcePin, targetPin) ||
+		matchesManifestMigration(previous, nil, sourcePin, targetPin) ||
+		matchesManifestMigration(packaged, previous, sourcePin, targetPin) {
+		t.Fatal("unrelated, missing or reversed replacement accepted")
+	}
+}
+
+// Optional integration fixture: extract the immutable prior release manifest
+// with the command in CLI_PACKAGING.md. Default tests remain offline; reviewers
+// can verify the complete persisted-wallet path using the actual prior bytes.
 func TestSepoliaOriginMigrationPreservesWalletAndRejectsOtherChanges(t *testing.T) {
 	_, packaged, err := pinnedDeployment("sepolia")
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := bytes.ReplaceAll(packaged, []byte("https://zkapi-sepolia.openanonymity.ai"), []byte("https://sepolia.100.21.48.23.sslip.io"))
+	fixture := os.Getenv("ZKAPI_TEST_PREVIOUS_MANIFEST")
+	if fixture == "" {
+		t.Skip("set ZKAPI_TEST_PREVIOUS_MANIFEST to test the actual prior release manifest")
+	}
+	legacy, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest := sha256.Sum256(legacy); hex.EncodeToString(digest[:]) != previousSepoliaManifestSHA256 {
+		t.Fatal("historical fixture does not match the reviewed migration source")
+	}
+	var manifest struct {
+		ProtocolURL string `json:"protocol_server_url"`
+	}
+	if err := json.Unmarshal(legacy, &manifest); err != nil || manifest.ProtocolURL == "" {
+		t.Fatal("invalid historical fixture")
+	}
 	for name, mutate := range map[string]func([]byte) []byte{
 		"origin only": func(raw []byte) []byte { return raw },
 		"vault": func(raw []byte) []byte {
@@ -185,10 +260,10 @@ func TestSepoliaOriginMigrationPreservesWalletAndRejectsOtherChanges(t *testing.
 			return bytes.Replace(raw, []byte("https://org-staging.openanonymity.ai"), []byte("https://untrusted.example"), 1)
 		},
 		"unknown origin": func(raw []byte) []byte {
-			return bytes.ReplaceAll(raw, []byte("https://sepolia.100.21.48.23.sslip.io"), []byte("https://untrusted.example"))
+			return bytes.ReplaceAll(raw, []byte(manifest.ProtocolURL), []byte("https://untrusted.example"))
 		},
 		"partial migration": func(raw []byte) []byte {
-			return bytes.Replace(raw, []byte("https://sepolia.100.21.48.23.sslip.io"), []byte("https://zkapi-sepolia.openanonymity.ai"), 1)
+			return bytes.Replace(raw, []byte(manifest.ProtocolURL), []byte("https://zkapi-sepolia.openanonymity.ai"), 1)
 		},
 		"additional field": func(raw []byte) []byte {
 			return bytes.Replace(raw, []byte("{\n"), []byte("{\n  \"unreviewed\": true,\n"), 1)
@@ -228,8 +303,17 @@ func TestSepoliaOriginMigrationPreservesWalletAndRejectsOtherChanges(t *testing.
 			}
 		})
 	}
+	for _, target := range [][]byte{
+		bytes.Replace(packaged, []byte("fresh-20260930"), []byte("fresh-20260928"), 1),
+		bytes.ReplaceAll(packaged, []byte("https://zkapi-sepolia.openanonymity.ai"), []byte("https://untrusted.example")),
+		append(append([]byte(nil), packaged...), '\n'),
+	} {
+		if isSepoliaOriginMigration(legacy, target) {
+			t.Fatal("actual prior manifest accepted an unreviewed replacement")
+		}
+	}
 	_, mainnet, _ := pinnedDeployment("mainnet")
-	oldMainnet := bytes.ReplaceAll(mainnet, []byte("https://zkapi-mainnet.openanonymity.ai"), []byte("https://mainnet.100.21.48.23.sslip.io"))
+	oldMainnet := bytes.ReplaceAll(mainnet, []byte("https://zkapi-mainnet.openanonymity.ai"), []byte("https://retired.example"))
 	if isSepoliaOriginMigration(oldMainnet, mainnet) {
 		t.Fatal("Sepolia exception accepted mainnet")
 	}

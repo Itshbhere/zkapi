@@ -1,9 +1,10 @@
 # Browser SDK ownership
 
-OA Chat consumes `@openanonymity/zkapi-browser-sdk` as an immutable dependency
-and owns its UI, payment-mode runtime, routing, and Vercel deployments.
+Host applications consume `@openanonymity/zkapi-browser-sdk` as an immutable
+dependency and own their UI, payment-mode runtime, routing, and deployments.
 
-This repository has no OA Chat submodule or browser-chat build. See
+This repository builds the SDK and local client independently of host applications.
+See
 [SDK integration](../sdk/README.md) for the host API and asset packaging,
 and [the local client guide](../zkapi-clientd/README.md) for the independent
 local daemon.

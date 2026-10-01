@@ -95,7 +95,7 @@ else:
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.last_result = None
-        self.temporary = tempfile.TemporaryDirectory(prefix="oa-installer-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="zkapi-installer-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.home = self.root / "home with spaces"

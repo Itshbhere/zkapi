@@ -2,7 +2,7 @@
 
 `@openanonymity/zkapi-browser-sdk` owns the browser wallet, local proof worker,
 private-note journal, short-lived key issuance and settlement, deposit/withdrawal
-recovery, and public payment-history reconciliation. It has no OA Chat, UI,
+recovery, and public payment-history reconciliation. It has no UI,
 model-catalog, or chat-storage dependency. The host owns chat and payment UI.
 
 Install a reviewed immutable Git revision, or install its `npm pack` tarball.

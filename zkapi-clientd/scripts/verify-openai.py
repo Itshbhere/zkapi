@@ -10,7 +10,7 @@ import urllib.request
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base-url", default="http://127.0.0.1:8787/v1")
 parser.add_argument("--token-file", type=Path, required=True)
-parser.add_argument("--model", default="oa-e2e-streaming")
+parser.add_argument("--model", default="zkapi-e2e-streaming")
 parser.add_argument("--stream-only", action="store_true", help="Send only the streaming request (useful for one-use zkAPI leases).")
 args = parser.parse_args()
 token = args.token_file.read_text().strip()

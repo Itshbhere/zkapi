@@ -20,13 +20,13 @@ import (
 	"github.com/OpenAnonymity/zkapi/zkapi-clientd/internal/server"
 )
 
-const model = "oa-e2e-streaming"
+const model = "zkapi-e2e-streaming"
 const answer = "Streaming works: tokens arrive before the response finishes. This is a deterministic integration test."
 
 type fixture struct{}
 
 func (fixture) Models(context.Context) (json.RawMessage, error) {
-	return json.RawMessage(`{"object":"list","data":[{"id":"oa-e2e-streaming","object":"model","created":0,"owned_by":"oa-e2e-fixture"}]}`), nil
+	return json.RawMessage(`{"object":"list","data":[{"id":"zkapi-e2e-streaming","object":"model","created":0,"owned_by":"zkapi-e2e-fixture"}]}`), nil
 }
 
 func response(status int, contentType string, reader io.ReadCloser) *http.Response {
@@ -47,7 +47,7 @@ func (fixture) Complete(ctx context.Context, body json.RawMessage) (*http.Respon
 	created := time.Now().Unix()
 	if !request.Stream {
 		payload, _ := json.Marshal(map[string]any{
-			"id": "chatcmpl-oa-fixture", "object": "chat.completion", "created": created, "model": model,
+			"id": "chatcmpl-zkapi-fixture", "object": "chat.completion", "created": created, "model": model,
 			"choices": []any{map[string]any{"index": 0, "message": map[string]string{"role": "assistant", "content": answer}, "finish_reason": "stop"}},
 			"usage":   map[string]int{"prompt_tokens": 8, "completion_tokens": 16, "total_tokens": 24},
 		})
@@ -59,7 +59,7 @@ func (fixture) Complete(ctx context.Context, body json.RawMessage) (*http.Respon
 		started := time.Now()
 		emit := func(delta map[string]string, finish any) error {
 			payload, _ := json.Marshal(map[string]any{
-				"id": "chatcmpl-oa-fixture", "object": "chat.completion.chunk", "created": created, "model": model,
+				"id": "chatcmpl-zkapi-fixture", "object": "chat.completion.chunk", "created": created, "model": model,
 				"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}},
 			})
 			_, err := fmt.Fprintf(writer, "data: %s\n\n", payload)
@@ -91,9 +91,9 @@ func (fixture) Complete(ctx context.Context, body json.RawMessage) (*http.Respon
 }
 
 func main() {
-	api, err := server.New(fixture{}, os.Getenv("OA_E2E_API_KEY"), 4)
+	api, err := server.New(fixture{}, os.Getenv("ZKAPI_E2E_API_KEY"), 4)
 	if err != nil {
-		log.Fatal("set OA_E2E_API_KEY to a random token of at least 32 characters")
+		log.Fatal("set ZKAPI_E2E_API_KEY to a random token of at least 32 characters")
 	}
 	srv := &http.Server{Addr: "127.0.0.1:8787", Handler: api, ReadHeaderTimeout: 5 * time.Second}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -104,7 +104,7 @@ func main() {
 		defer stop()
 		srv.Shutdown(shutdown)
 	}()
-	log.Print("MOCK ONLY: OA streaming fixture at 127.0.0.1:8787")
+	log.Print("MOCK ONLY: zkAPI streaming fixture at 127.0.0.1:8787")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

@@ -185,7 +185,7 @@ def main():
     """
     outputs = json.loads(nix("build", "--impure", "--no-link", "--json", "--expr", expression))
     package = Path(outputs[0]["outputs"]["out"])
-    with tempfile.TemporaryDirectory(prefix="oa-nix-no-state-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zkapi-nix-no-state-") as temporary:
         state = Path(temporary) / "private-state"
         env = {**os.environ, "ZKAPI_CLIENTD_CONFIG_DIR": str(state), "PATH": str(package / "bin")}
         subprocess.run([str(package / "bin/zkapi-clientd"), "version"], env=env, check=True)
