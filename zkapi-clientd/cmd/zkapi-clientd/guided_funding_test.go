@@ -18,6 +18,7 @@ type fundingWizardUI struct {
 	answers                   []string
 	confirmations             []bool
 	asks, confirms, continues int
+	beforeContinue            func()
 }
 
 func (u *fundingWizardUI) Printf(format string, args ...any) { fmt.Fprintf(&u.Buffer, format, args...) }
@@ -42,6 +43,9 @@ func (u *fundingWizardUI) Confirm(context.Context, string) (bool, error) {
 
 func (u *fundingWizardUI) Continue(context.Context, string) (bool, error) {
 	u.continues++
+	if u.beforeContinue != nil {
+		u.beforeContinue()
+	}
 	if len(u.confirmations) == 0 {
 		return false, errors.New("unexpected deposit continuation")
 	}
@@ -287,34 +291,48 @@ func TestSetupDepositDoesNotDisplayInconsistentPayment(t *testing.T) {
 	}
 }
 
-func TestGuidedFundingFeeIncreaseNeedsNewConsent(t *testing.T) {
-	for _, accept := range []bool{false, true} {
-		t.Run(fmt.Sprint(accept), func(t *testing.T) {
+func TestGuidedFundingAffordableFeeIncreaseKeepsSingleEnter(t *testing.T) {
+	for _, test := range []struct {
+		name                      string
+		required, reserve, funded int64
+	}{
+		{name: "higher optional reserve", required: 25000, reserve: 31000, funded: 30000},
+		{name: "required fee uses funded buffer", required: 28000, reserve: 33000, funded: 30000},
+		{name: "required fee exceeds original reserve", required: 35000, reserve: 40000, funded: 45000},
+		{name: "exact required balance", required: 35000, reserve: 40000, funded: 35000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			f := newWizardFixture()
-			u := &fundingWizardUI{confirmations: []bool{true, accept}}
+			u := &fundingWizardUI{confirmations: []bool{true}}
+			u.beforeContinue = func() {
+				if !strings.Contains(u.String(), "Network fees adjust automatically while the receiving balance covers this deposit and its fees.") {
+					t.Fatal("automatic fee adjustment was not explained before Enter")
+				}
+			}
 			f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
 				q := wizardQuote()
-				q.InputMicroUSD = usd
+				q.InputMicroUSD, q.ID = usd, fmt.Sprintf("%064x", n)
+				principal, _ := new(big.Int).SetString(q.PrincipalWei, 10)
+				q = wizardBalance(q, principal.Add(principal, big.NewInt(test.funded)).String())
 				if n > 2 {
-					q.FeeReserveWei = "31000"
-					q.FeeBufferWei = "6000"
-					q.RecommendedTotalWei = "750001000031000"
+					q = wizardFees(q, test.required, test.reserve)
 				}
 				return q, nil
 			}
-			err := guidedFunding(context.Background(), f, "2", u, immediateWizardPoll)
-			if (err == nil) != accept || (u.confirms != 0 || u.continues != 2) {
-				t.Fatalf("wrong increased fee approval: %v", err)
+			f.approve = func(id string) (zkapi.AddressFundingStatus, error) {
+				if id != fmt.Sprintf("%064x", 3) {
+					t.Fatal("increased fees used a stale quote")
+				}
+				return wizardState("active"), nil
 			}
-			expected := 0
-			if accept {
-				expected = 1
+			if err := guidedFunding(context.Background(), f, "2", u, immediateWizardPoll); err != nil {
+				t.Fatal(err)
 			}
-			if f.approveCalls != expected {
-				t.Fatal("increased fee signed without approval")
+			if u.confirms != 0 || u.continues != 1 || f.approveCalls != 1 || f.quoteCalls != 3 {
+				t.Fatalf("affordable fee increase requested renewed consent: enters=%d approvals=%d quotes=%d", u.continues, f.approveCalls, f.quoteCalls)
 			}
-			if accept && f.quoteCalls != 4 {
-				t.Fatal("quote not refreshed after renewed consent")
+			if strings.Contains(u.String(), "Network fees increased; review") {
+				t.Fatal("affordable fee increase requested another fee review")
 			}
 		})
 	}
@@ -492,6 +510,15 @@ func wizardBalance(q zkapi.AddressPaymentQuote, balance string) zkapi.AddressPay
 	}
 	q.ShortfallWei, q.RecommendedTopUpWei = remaining(q.RequiredTotalWei), remaining(q.RecommendedTotalWei)
 	return q
+}
+
+func wizardFees(q zkapi.AddressPaymentQuote, required, reserve int64) zkapi.AddressPaymentQuote {
+	principal, _ := new(big.Int).SetString(q.PrincipalWei, 10)
+	q.RequiredFeeWei, q.FeeReserveWei = fmt.Sprint(required), fmt.Sprint(reserve)
+	q.FeeBufferWei = fmt.Sprint(reserve - required)
+	q.RequiredTotalWei = new(big.Int).Add(principal, big.NewInt(required)).String()
+	q.RecommendedTotalWei = new(big.Int).Add(principal, big.NewInt(reserve)).String()
+	return wizardBalance(q, q.BalanceWei)
 }
 
 func TestGuidedFundingPartialPaymentsAndFeesUpdateWithoutPrompting(t *testing.T) {
@@ -753,18 +780,24 @@ func TestGuidedFundingUnsignedApprovalRechecksEntireQuoteBinding(t *testing.T) {
 	}
 }
 
-func TestGuidedFundingUnsignedApprovalRetainsCeilingAndRenewsAfterShortage(t *testing.T) {
-	for _, reason := range []string{"expired quote", "fee increase", "returned balance drop", "fresh balance drop"} {
+func TestGuidedFundingUnsignedApprovalRetainsConsentWhileFundedAndRenewsAfterShortage(t *testing.T) {
+	for _, reason := range []string{"expired quote", "fee increase", "returned balance drop", "fresh balance drop", "fee increase causes shortfall"} {
 		t.Run(reason, func(t *testing.T) {
 			f := newWizardFixture()
 			u := &fundingWizardUI{confirmations: []bool{true, true}}
 			f.address = func() zkapi.AddressFundingStatus { s := wizardState("ready"); s.TransactionHash = ""; return s }
-			f.approve = func(string) (zkapi.AddressFundingStatus, error) {
+			f.approve = func(id string) (zkapi.AddressFundingStatus, error) {
+				if id != fmt.Sprintf("%064x", f.quoteCalls) {
+					t.Fatal("unsigned approval retry used a stale quote")
+				}
 				if f.approveCalls > 1 {
 					return wizardState("active"), nil
 				}
 				if reason == "expired quote" {
 					return zkapi.AddressFundingStatus{}, errors.New("quote expired before signing")
+				}
+				if reason == "fee increase" {
+					return zkapi.AddressFundingStatus{}, errors.New("network fees changed before signing")
 				}
 				s := wizardState("waiting_funds")
 				s.TransactionHash = ""
@@ -778,12 +811,19 @@ func TestGuidedFundingUnsignedApprovalRetainsCeilingAndRenewsAfterShortage(t *te
 				q.ID = fmt.Sprintf("%064x", n)
 				q.InputMicroUSD = usd
 				if n > 3 && reason == "fee increase" {
-					q.FeeReserveWei = "31000"
-					q.FeeBufferWei = "6000"
-					q.RecommendedTotalWei = "750001000031000"
+					q = wizardFees(q, 35000, 40000)
 				}
 				if n == 4 && reason == "fresh balance drop" {
 					q = wizardBalance(q, "0")
+				}
+				if reason == "fee increase causes shortfall" {
+					q = wizardBalance(q, "750001000030000")
+					if n > 3 {
+						q = wizardFees(q, 35000, 40000)
+					}
+					if n > 4 {
+						q = wizardBalance(q, "750001000040000")
+					}
 				}
 				return q, nil
 			}
@@ -792,11 +832,14 @@ func TestGuidedFundingUnsignedApprovalRetainsCeilingAndRenewsAfterShortage(t *te
 				t.Fatal(err)
 			}
 			wantEnter := 2
-			if reason == "expired quote" {
+			if reason == "expired quote" || reason == "fee increase" {
 				wantEnter = 1
 			}
 			if u.continues != wantEnter || f.approveCalls != 2 || polls < 1 || f.resumeCalls != 0 {
 				t.Fatalf("lost fee/funding consent: enters=%d approvals=%d polls=%d", u.continues, f.approveCalls, polls)
+			}
+			if reason == "fee increase" && f.quoteCalls != 4 {
+				t.Fatal("funded fee retry asked for another quote or Enter")
 			}
 		})
 	}

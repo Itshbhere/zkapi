@@ -246,7 +246,6 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 	lastProgress := setupFundingProgressKey(initial)
 	displayed := initial
 	approved, retrying, approvalWaiting := false, false, false
-	ceiling := ""
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -307,12 +306,10 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 		balance, _ := new(big.Int).SetString(quote.BalanceWei, 10)
 		required, _ := new(big.Int).SetString(quote.RequiredTotalWei, 10)
 		if balance.Cmp(required) >= 0 {
-			if !approved || !setupFeeWithin(quote, ceiling) {
+			if !approved {
 				clearSetupProgress(ui)
-				if approved {
-					ui.Printf("Network fees increased; review the updated maximum before continuing.\n")
-				}
-				ui.Printf("Ready to deposit %s ETH. Maximum network fee: %s ETH.\n", fundingUnits(quote.PrincipalWei, 18), fundingUnits(quote.FeeReserveWei, 18))
+				ui.Printf("Ready to deposit %s ETH. Current maximum network fee: %s ETH.\n", fundingUnits(quote.PrincipalWei, 18), fundingUnits(quote.FeeReserveWei, 18))
+				ui.Printf("Network fees adjust automatically while the receiving balance covers this deposit and its fees.\n")
 				proceed, err := ui.Continue(ctx, "Press Enter to continue with this deposit, or type cancel")
 				if err != nil {
 					return err
@@ -320,9 +317,11 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 				if !proceed {
 					return errors.New("deposit declined; no transaction was authorized")
 				}
-				approved, ceiling = true, quote.FeeReserveWei
+				approved = true
 				continue // Recheck identity, balance, and fees after terminal input.
 			}
+			// Enter covers fresh, affordable fees for this same fixed deposit.
+			// The signer still enforces this quote's ceiling and current balance.
 			setupProgress(ui, "Preparing deposit of %s ETH...", fundingUnits(quote.PrincipalWei, 18))
 			state, approveErr := service.Approve(ctx, quote.ID)
 			if approveErr != nil {
@@ -355,7 +354,7 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 				}
 				if currentBalance.Cmp(required) < 0 {
 					ui.Printf("The receiving balance no longer covers the deposit and fees. Waiting for ETH again; press Enter again once funded.\n")
-					approved, ceiling = false, ""
+					approved = false
 				}
 				if !approvalWaiting {
 					setupProgress(ui, "No deposit transaction was sent. Refreshing the receiving balance and network fees automatically.")
@@ -364,7 +363,7 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 				lastProgress = ""
 				// Approval can lose its fee quote or funding before signing. Keep
 				// the same principal, commitment and nonce: the next fresh quote
-				// must pass sameSetupDeposit and the existing fee ceiling again.
+				// must pass sameSetupDeposit and fit the receiving balance again.
 				// Yield even when funding still looks sufficient so a repeated
 				// unsigned response cannot create a tight approval retry loop.
 				if err := wait(ctx); err != nil {
@@ -377,7 +376,7 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 		}
 		if approved {
 			ui.Printf("The receiving balance no longer covers the deposit and fees. Waiting for ETH again; press Enter again once funded.\n")
-			approved, ceiling = false, ""
+			approved = false
 			// A durable warning gives the terminal back to the transcript;
 			// restore the live wait even if the next quote is unchanged.
 			showSetupFundingProgress(ui, quote)

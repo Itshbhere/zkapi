@@ -11,7 +11,8 @@ Ethereum Mainnet, direct HTTPS and a loopback listener at `127.0.0.1:8787`.
 It asks for the deposit amount in USD, defaulting to $20 on Enter, and shows the
 ETH amount, receiving address and locally generated QR. It waits automatically
 for ETH and updates the receiving balance. Once funded, Enter approves the
-shown principal and maximum network fee. It checks the quote again before
+fixed deposit with network fees that adjust automatically while the receiving
+balance covers the principal and required fees. It checks a fresh quote before
 signing, deposits and activates the private balance once its successful mined
 receipt is validated against the canonical block and saved deposit. There is
 no additional 15-minute finality gate for successful native ETH deposits, matching
@@ -20,8 +21,10 @@ the web wallet. No model is selected or priced during funding.
 If the last fee or balance check leaves the deposit unsigned, configuration
 refreshes the same fixed deposit and continues watching instead of exiting.
 Interrupted approval responses are checked against saved progress before any
-retry. A higher fee ceiling or renewed funding shortage requires Enter again.
-The recommended fee buffer remains optional.
+retry. Higher fees do not require another Enter while the deposit remains
+funded, even if the recommended buffer is no longer fully covered. A renewed
+funding shortage requires Enter again once funded. The recommended fee buffer
+remains optional; the signer caps fees to the fresh quote and available balance.
 
 After signing, progress distinguishes waiting to be mined, waiting for network
 fees to fall below the signed cap, and private balance activation. In an

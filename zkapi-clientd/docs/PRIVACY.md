@@ -53,13 +53,16 @@ Deposit/withdrawal QR codes are generated locally and contain only public
 payment address, chain and amount. No external QR service receives them.
 A withdrawal fee QR funds the local signing address, never the private payout.
 
-Waiting for ETH and refreshing quotes do not authorize transactions. Enter
-approves the displayed operation and fee ceiling; a fresh quote is checked
-before signing. Network/deployment/address/note/payout/nonce bindings are
-preserved. Increased fees or renewed shortage require another Enter. A lost
-reply is recovered from durable state, not a blind second approval. Signed
-pending operations resume their exact bytes; reverts never automatically
-sign a replacement. Existing wallets are preserved across updates.
+Waiting for ETH and refreshing quotes do not authorize transactions. For a
+guided deposit, Enter approves the fixed principal with fees that adjust
+automatically while the receiving balance covers the deposit and required
+fees. The signer caps fees to the fresh quote and available balance. A renewed
+shortage requires another Enter once funded. Withdrawal fee increases still
+require renewed approval. Fresh quotes preserve network/deployment/address/
+note/payout/nonce bindings. A lost reply is recovered from durable state, not
+a blind second approval. Signed pending operations resume their exact bytes;
+reverts never automatically sign a replacement. Existing wallets are preserved
+across updates.
 
 Successful native ETH deposits activate after the saved transaction's successful
 mined receipt, canonical block and deposit event are validated, matching the web
