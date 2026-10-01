@@ -59,16 +59,18 @@ The AUR handoff and Homebrew formula are ready to copy into their respective
 package repositories; adding them here does not publish an AUR entry or a public
 Homebrew tap. The Nix flake can be used directly from this checkout.
 
-## Existing wallets
+## Wallet storage and updates
 
-Reuse a saved zkAPI profile with `--config-dir`. Default-directory selection
-also recognizes compatible existing profiles when the current default location
-is absent. It uses the directory in place without copying, deleting or re-keying
-wallet state. `ZKAPI_CLIENTD_CONFIG_DIR` explicitly selects a directory.
-Malformed profiles, orphaned recovery files and unsupported ticket profiles
-require explicit attention; they are never silently converted. Stop the previous
-daemon before switching clients, and never run two clients against one wallet.
-Keep each retired deployment's wallet and matching client together for recovery.
+`--config-dir` or `ZKAPI_CLIENTD_CONFIG_DIR` explicitly selects the wallet's
+private directory. Use the same directory when updating the client or resuming
+configuration so signing keys, notes, signed transactions and recovery journals
+remain together. The client uses the directory in place without copying,
+deleting or re-keying wallet state.
+
+Stop the running daemon before updating or changing configuration, and never
+run two clients against one wallet. Malformed profiles, orphaned recovery files
+and unsupported profiles require explicit attention; the client never silently
+converts them. Preserve recovery data when resolving configuration errors.
 
 ## Native bundle
 
@@ -136,8 +138,8 @@ It supports install/update with the same prefix and optional `--setup`.
 `--setup` runs configuration after activation; no configuration is performed
 by default. Update the pinned README URL when publishing another client release.
 
-The root Rust workspace intentionally has a newer native-only operator layout.
-The frontend still prepares historical companion commit
+The root Rust workspace uses a native-only operator layout.
+The frontend prepares pinned companion commit
 `20aa542ae98e767c0507133fd34b12a56f5ccd3d` with protocol commit
 `8b2d4e3da921f956e1eb6b93afbf722a877c060c` in a separate build directory and applies
 its reviewed bridge/transport patches. Source verification checks exact commits
@@ -154,20 +156,9 @@ python3 scripts/test-prepare-zkapi.py
 python3 scripts/test-packages.py
 ```
 
-The default Go tests check exact source/target manifest digest matching with
-synthetic origins. To also exercise the actual prior-release Sepolia manifest,
-extract its immutable Git object into a temporary fixture and run the persistence
-integration test (from the repository root):
-
-```sh
-fixture=$(mktemp)
-git show bf4893bdf369131efd8da9c55c01e2fbb4139562:zkapi-clientd/internal/zkapi/deployments/sepolia.json > "$fixture"
-(cd zkapi-clientd && ZKAPI_TEST_PREVIOUS_MANIFEST="$fixture" go test ./internal/zkapi -run TestSepoliaOriginMigrationPreservesWalletAndRejectsOtherChanges)
-rm -f "$fixture"
-```
-
-The test checks the fixture's pinned SHA-256 before any simulated wallet update.
-It never reads an installed profile or contacts an old endpoint.
+The Go tests check deployment-manifest integrity, exact approved digest
+matching, and persistence of wallet state. Fixture tests do not read an installed
+profile or contact deployment endpoints.
 
 Native packaging and service-manager checks have extra platform dependencies;
 see the client workflows. Fixture tests never need live funds.

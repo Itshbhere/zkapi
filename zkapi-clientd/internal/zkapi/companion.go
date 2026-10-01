@@ -74,7 +74,7 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 	if config.Network == "mainnet" {
 		legacy := filepath.Join(companion.StateDir, "mainnet", "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928")
 		if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
-			return nil, errors.New("existing mainnet wallet belongs to the September 28 deployment; preserve it with the matching client and use a separate configuration directory")
+			return nil, errors.New("wallet state does not match the configured Mainnet deployment")
 		}
 	}
 	if err := verifyProofSetup(companion.SetupDir, deployment.Proof); err != nil {

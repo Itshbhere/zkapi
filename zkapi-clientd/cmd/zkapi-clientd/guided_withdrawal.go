@@ -56,7 +56,7 @@ func guidedWithdrawal(ctx context.Context, service guidedWithdrawalService, ui s
 		return err
 	}
 	if initial.BillingAsset != "native_eth" {
-		return errors.New("guided withdrawal requires the native ETH deployment; preserve legacy wallet recovery files")
+		return errors.New("guided withdrawal requires the native ETH deployment")
 	}
 	switch initial.Phase {
 	case "no_note":

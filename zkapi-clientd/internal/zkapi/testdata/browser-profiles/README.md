@@ -6,7 +6,5 @@ These public profiles match the reviewed deployment configurations packaged in
 
 The fixtures independently check the client's embedded deployment identity,
 public signing keys, origins and proof hashes. They contain no credentials or
-user wallet state. Mainnet selects the deployed September 30 vault; existing
-September 28 wallets are preserved for their matching client. Only the exact
-September 30 Sepolia manifest permits an origin-only update; both its prior
-bytes and its canonical replacement are pinned by SHA-256.
+user wallet state. The network manifests pin the current vaults and deployment
+configuration; SHA-256 checks enforce exact approved manifest bytes.

@@ -39,8 +39,8 @@ fixed `trusted_station_fallback` detail. A fixed warning explains the reduced
 assurance without exposing keys, station signatures or verifier response bodies.
 One verification result remains with its acquired key for the configured fixed
 reuse window; there is no background re-verification or ban polling. The gateway
-rejects legacy outage detail values from older helpers, whose fallback did not
-enforce this station pin.
+accepts fallback only with the `trusted_station_fallback` detail that identifies
+this station-pin check.
 
 The default key-reuse window is a fixed 60 seconds from acquisition, capped by
 the provider's expiry; reusing a key does not extend it. Compatible requests can
@@ -50,7 +50,7 @@ The provider can link all requests using the same key, and its original
 aggregate spending cap is shared. Expiry, errors and cancellation discard
 cached access. The cache is memory-only and does not survive a restart.
 
-Existing profiles retain their explicitly saved window. Profiles without a
+An explicitly saved window is preserved across updates. Profiles without a
 saved window use the default. Stop `serve`, run
 `zkapi-clientd config --key-reuse-window-seconds 0`, then restart `serve` to
 disable reuse; keep the same `--config-dir` if set.
@@ -87,7 +87,7 @@ shortage requires another Enter once funded. Withdrawal fee increases still
 require renewed approval. Fresh quotes preserve network/deployment/address/
 note/payout/nonce bindings. A lost reply is recovered from durable state, not
 a blind second approval. Signed pending operations resume their exact bytes;
-reverts never automatically sign a replacement. Existing wallets are preserved
+reverts never automatically sign a replacement. Wallet state is preserved
 across updates.
 
 Successful native ETH deposits activate after the saved transaction's successful
@@ -95,7 +95,7 @@ mined receipt, canonical block and deposit event are validated, matching the web
 wallet. Success does not wait for Ethereum finality. Failed receipts retain the
 finality gate before explicit retry; missing or ambiguous receipts preserve the
 exact signed transaction without authorizing a replacement. Withdrawals and
-public ETH returns retain their existing finality checks.
+public ETH returns require their own finality checks.
 
 Pre-finality activation exposes the same reorganization risk as the web wallet:
 a block can be replaced after a private note or inference credit becomes usable.
@@ -125,6 +125,6 @@ endpoint, which is also used by the web client; that does not add ticket
 wallet, issuance or redemption support. Exact balances and prompt sizes do
 not choose the bucket.
 
-The protocol is experimental and uses the existing single-party Groth16
-setup. See the repository's [note-bound commitments](../../docs/note-bound-commitments.md)
+The protocol is experimental and uses a single-party Groth16 setup. See the
+repository's [note-bound commitments](../../docs/note-bound-commitments.md)
 and [native ETH architecture](../../docs/architecture.md).

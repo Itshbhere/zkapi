@@ -65,12 +65,12 @@ protocol services, wallet proofs and contracts are real. See the
 Native server startup requires a pinned oracle RPC/feed and a lease issuer.
 Use [deployment instructions](docs/deployment.md), [Docker operation](docker/aws/README.md)
 and [challenge service operation](docs/challenge-service.md). The browser sends
-prompts directly to the inference provider; this server does not offer a legacy
-inference proxy.
+prompts directly to the inference provider; the server handles authorization
+and settlement.
 
-The existing keys in `protocol/setup/v2` are bound to deployed verifiers. Do not
-run `setup` to connect to an existing deployment. A new setup requires its own
-verifier/vault and explicit client/fund migration.
+The keys in `protocol/setup/v2` must match the vault's immutable verifier and
+the client's pinned proof artifacts. The `setup` command generates new keys; it
+is not part of connecting a client to the configured vault.
 
 ## Source layout
 
@@ -84,6 +84,3 @@ verifier/vault and explicit client/fund migration.
 | `crates/` | Operator CLI, server, indexer and challenger |
 | `demo/contracts/` | Native ETH verifier/vault deployment script |
 | `docker/aws/` | API/indexer/challenger image configuration and restricted signer |
-
-Existing token wallets must use their matching client release; this SDK rejects
-them instead of reinterpreting their balances as ETH.

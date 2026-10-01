@@ -41,10 +41,9 @@ Keep its port unpublished; the public API reverse proxy must never route to it.
 
 The server, browser/client proving keys, verifier, and daemon must all use the
 same deployment and circuit setup. The circuit identifier is
-`zkapi-v2-note-bound-v1`. The key loader rejects old unversioned setup files.
-Replacing a local key directory does not upgrade an existing deployed verifier.
-A vault also needs the historical-root challenge fix: the archived request root
-is intentionally preserved while the restoration path uses the current root.
+`zkapi-v2-note-bound-v1`. The key loader requires this circuit header. The
+vault's immutable verifier must match the selected keys. The archived request
+root is intentionally preserved while the restoration path uses the current root.
 
 ## Recovery and verification
 
@@ -83,7 +82,7 @@ reaches the configured confirmation depth; a tip reorg therefore cannot silently
 forget the reservation. A reverted transaction is eligible for a fresh nonce
 after that confirmation depth. If a withdrawal disappears or a replayed event
 replaces its nullifier, the checkpoint retains its outstanding nonce separately
-until confirmed consumption. Older checkpoints load without a migration.
+until confirmed consumption.
 
 An **unmined** ambiguous nonce still prevents new allocations. The RPC's pending
 count alone is not proof that a transaction consumed it. While its withdrawal is

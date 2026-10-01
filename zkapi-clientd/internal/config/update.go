@@ -19,7 +19,7 @@ func Update(dir string, previous, next Config) error {
 		return errors.New("configuration edits must preserve existing credentials")
 	}
 	if next.OrgURL != previous.OrgURL {
-		return errors.New("legacy org_url must be preserved when editing an existing profile")
+		return errors.New("org_url cannot be changed through configuration editing")
 	}
 	if err := EnsureDir(dir); err != nil {
 		return err

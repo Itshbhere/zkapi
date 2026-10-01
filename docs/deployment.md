@@ -5,9 +5,9 @@ The source supports native ETH vaults and the note-bound Groth16 circuit
 experimental setup; publishing code does not establish an independent audit or
 setup ceremony. See [setup provenance](../protocol/setup/v2/README.md).
 
-For an existing deployment, use its exact circuit artifacts, contract and signing
-key pins, oracle feed, denomination, and persistent operator state. Do not
-regenerate keys or copy wallet journals between deployments.
+Configure the exact circuit artifacts, contract and signing-key pins, oracle
+feed, and denomination for the vault. Preserve persistent operator state and
+keep wallet journals bound to their configuration.
 
 ## Build services
 
@@ -30,18 +30,18 @@ See [Sepolia shared password](testnet-auth.md) for client behavior, proxy header
 forwarding, validation and rotation. Never put this value in the public SDK
 manifest or configure it on Mainnet.
 
-## Fresh contracts
+## Contracts
 
 `demo/contracts/script/Deploy.s.sol` deploys the real Groth16 adapter and a
 native-only vault. It reads `PRIVATE_KEY`, `TREASURY`, `OUTPUT_PATH`, state and
 clearance public-key coordinates, optional `CHAIN_ID`, `REQUEST_CHARGE_CAP`
 and `CHALLENGE_PERIOD_SECONDS`. The deployment output is constructor metadata;
 prepare the public SDK manifest with circuit/key hashes and oracle/deployment
-pins separately. The vault no longer accepts a token constructor argument.
+pins separately. The vault accepts native ETH.
 
 Use a fresh directory when intentionally generating a new Groth16 setup.
-Keep challenger coverage and persistent server/indexer state for every funded
-deployment during a rollout.
+Keep challenger coverage and persistent server/indexer state available whenever
+the vault holds funds.
 
 ## Runtime
 

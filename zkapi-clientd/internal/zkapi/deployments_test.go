@@ -335,7 +335,7 @@ func TestCompanionPreservesRetiredMainnetProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd, err := CompanionCommand(context.Background(), Config{Network: "mainnet", BridgeToken: testBridgeToken, HTTPClient: &http.Client{}}, CompanionConfig{Binary: binary, SetupDir: t.TempDir(), StateDir: stateDir, ProxyURL: "http://bridge:private-local-token@127.0.0.1:8791"})
-	if err == nil || cmd != nil || !strings.Contains(err.Error(), "September 28") {
+	if err == nil || cmd != nil || !strings.Contains(err.Error(), "wallet state does not match the configured Mainnet deployment") {
 		t.Fatalf("retired profile accepted: %v", err)
 	}
 	state, _ := os.ReadFile(wallet)

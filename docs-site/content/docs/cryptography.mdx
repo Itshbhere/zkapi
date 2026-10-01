@@ -172,29 +172,27 @@ being used, its exact balance and expiry, and the current signed state.
 
 ## Setup and compatibility
 
-The note-binding revision uses the v2 JSON schemas and public-input order,
-but requires matching circuits and signed commitments. Legacy unbound signed
-states, proving/verifying keys and deployed verifiers are incompatible.
+The note-bound circuit revision uses the v2 JSON schemas and public-input
+order. Signed commitments, proving/verifying keys and deployed verifiers must
+all match this circuit revision and setup.
 
 Proving and verifying key files carry the `zkapi-v2-note-bound-v1` header, and
-loaders reject earlier files. Deployment manifests advertise
+loaders reject incompatible files. Deployment manifests advertise
 `proof_setup.circuit_id`; clients must also pin the key hashes and vault
 address. The header catches accidental mismatches. It does not establish
 setup provenance or replace independently pinned hashes.
 
-The checked-in `protocol/setup/v2` artifacts are a **single-party development
-setup generated with OS randomness**, not a reviewed multiparty ceremony.
+The checked-in `protocol/setup/v2` artifacts are a **single-party setup
+generated with OS randomness**. No multiparty ceremony has been conducted.
 Matching hashes identify the artifacts; they do not establish that setup
 secrets were destroyed. The circuit, generator derivation and setup require
 independent review before production. The generated Solidity verifier,
 native keys and browser WASM/proving-key assets must match the same revision
 and setup.
 
-Existing vaults have immutable proof adapters and signing keys. Updating a
-server or frontend cannot repair an old vault. Preserve legacy wallet state
-for recovery with the original matching client release and deployment;
-migration requires a fresh verifier/vault, new client pins and explicit
-movement of funds. Legacy recovery code is not part of the current runtime.
+The vault's proof adapter and signing keys are immutable. Configure the server,
+client, verifier and proof assets to match the deployed vault, and verify the
+client's deployment pins before funding a wallet.
 
 Implementation references: [v2 primitives](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/rust/crates/zkapi-core/src/v2.rs),
 [Groth16 circuits](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/rust/crates/zkapi-proof/src/groth16.rs),
@@ -202,4 +200,4 @@ Implementation references: [v2 primitives](https://github.com/OpenAnonymity/zkap
 and [Solidity verifier](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/contracts/src/adapters/Groth16ProofAdapter.sol).
 The [note-bound commitments](https://github.com/OpenAnonymity/zkapi/blob/main/docs/note-bound-commitments.md)
 and [setup notes](https://github.com/OpenAnonymity/zkapi/blob/main/protocol/setup/v2/README.md)
-describe the binding and migration requirements.
+describe the binding, artifact compatibility and setup requirements.

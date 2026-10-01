@@ -98,8 +98,7 @@ withdrawal; it does not slash or pay out the note.
 
 ## Deployment compatibility
 
-The current verifier must match circuit revision `zkapi-v2-note-bound-v1` and
-the selected setup. Existing vaults cannot acquire the repair by updating a
-server or frontend: their adapter and signing keys are immutable. Preserve
-legacy wallet state and its recovery client, and use an explicit fund migration
-to a fresh compatible deployment.
+The verifier must match circuit revision `zkapi-v2-note-bound-v1` and the
+selected setup. The vault's adapter and signing keys are immutable. The server,
+frontend, deployment manifest and proof assets must match these deployed
+values, and clients must independently pin the trusted configuration.

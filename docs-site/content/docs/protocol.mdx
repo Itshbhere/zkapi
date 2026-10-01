@@ -48,8 +48,8 @@ active note.
 
 The server can update the commitment without learning `L`. Rerandomization
 changes its blinding while retaining the note term. The circuit and setup keys
-must support this note binding even when deployments share the v2 JSON schema
-and public-input order.
+must support this note binding; the v2 JSON schema and public-input order
+alone do not establish circuit compatibility.
 
 ## Per-request flow
 
@@ -136,13 +136,11 @@ journals for transaction recovery.
 ## Compatibility and trust
 
 Use matching note-bound circuits, proving/verifying keys, browser WASM, and
-deployed verifiers. Old signed states cannot be relabeled as this revision,
-and immutable vaults require an explicit migration to new contracts. Preserve
-old wallet data for recovery with the corresponding historical client. The
-current SDK rejects legacy token wallets instead of converting their balances
-to ETH.
+deployed verifiers. The vault's proof adapter and signing keys are immutable;
+client configuration must pin their deployed values. The SDK supports native
+ETH balances and rejects incompatible wallet formats without converting them.
 
 The current elliptic-curve construction is **not post-quantum**. The checked-in
-setup is a single-party development setup, not a reviewed multiparty ceremony.
-Read the [setup and migration requirements](/docs/cryptography#setup-and-compatibility)
+setup is single-party; no multiparty ceremony has been conducted.
+Read the [setup and compatibility requirements](/docs/cryptography#setup-and-compatibility)
 before choosing deployment artifacts.

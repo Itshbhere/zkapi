@@ -3,28 +3,24 @@
 The protocol uses native ETH billing with the browser SDK and the
 server, indexer, and challenger services.
 
-Native ETH deployments hold ETH and use integer **gwei** in the existing proof
+Native ETH deployments hold ETH and use integer **gwei** in the proof
 ledger: one unit is 1,000,000,000 wei. The browser displays an approximate USD reference value;
 the USD value changes with ETH's price. This is not a stable-dollar deposit or a
 swap into USDC. Fractional gwei are never credited to a private note.
 
-The native vault is a fresh deployment with `billingToken() == address(0)` and
-`nativeAssetWeiPerUnit() == 1000000000`. Its existing deposit selector accepts
+The native vault exposes `billingToken() == address(0)` and
+`nativeAssetWeiPerUnit() == 1000000000`. Its deposit selector accepts
 integer gwei and requires exactly `amount * 1 gwei` in `msg.value`. Wrong values
 revert atomically. Native deposits are capped at JavaScript's maximum exact
 integer, 9,007,199,254,740,991 units. Withdrawal and expiry payouts convert ledger
-units back to wei and retain the existing proof, nullifier, destination, timing
+units back to wei and enforce proof, nullifier, destination, timing
 and reentrancy protections. Failed recipient transfers revert the complete close.
 
-Historical token vaults are immutable and do not gain native support from a
-frontend update. Their recovery code remains available in earlier Git revisions.
-Publish a fresh deployment ID, contract address and native asset pins; preserve
-legacy wallet data for any old notes. This asset change
-requires circuit `zkapi-v2-note-bound-v1`, its exact revised setup/WASM/key hashes,
-and the historical-root challenge repair. Integer gwei accounting does not itself
-require a new circuit, but the old circuit allowed signed balance state to move
-between notes and must not be reused. The independent note-bound repair is now a
-mandatory part of this native deployment. See [Note-bound migration](note-bound-commitments.md).
+The deployment manifest pins the vault address, native asset, and circuit
+`zkapi-v2-note-bound-v1` with its exact setup/WASM/key hashes. The circuit binds
+each signed balance to its deposit note. Challenges preserve the historical
+request root and use a current restoration path. See
+[Note-bound commitments](note-bound-commitments.md).
 
 ## Pinned configuration
 
@@ -42,9 +38,9 @@ The public deployment manifest and browser trust configuration must agree on:
 }
 ```
 
-Pin the RPC URL, chain, fresh vault and ordinary protocol/signing/proof-asset
+Pin the RPC URL, chain, vault and protocol/signing/proof-asset
 fields too. Both manifest `proof_setup.circuit_id` and browser
-`trusted_deployment.circuit_id` must equal `zkapi-v2-note-bound-v1`, and all new
+`trusted_deployment.circuit_id` must equal `zkapi-v2-note-bound-v1`, and all
 request/withdrawal proving and verifying key hashes must match that setup. The example feed is Sepolia; it does not select a production feed.
 The server checks chain ID, feed decimals and the vault's native-unit getter
 before answering or accepting a quote. There is no symbol-only fallback.
@@ -167,11 +163,11 @@ require prompt-private leases with a proof-bound native quote.
 ## Deployment
 
 The deploy script creates a native-only vault and accepts `REQUEST_CHARGE_CAP`
-in gwei. It checks an optional `CHAIN_ID` against the connected chain. Token and
-mint options have been removed. A new deployment must have its own manifest;
-do not overwrite the manifest for an existing funded vault.
+in gwei. It checks an optional `CHAIN_ID` against the connected chain. Publish
+a manifest that pins the resulting vault, circuit artifacts, signing keys, and
+native asset configuration.
 
-Start the native server with its fresh vault/chain/request cap and ordinary
+Start the native server with its vault/chain/request cap and
 signer, indexer, proof and OA-source settings, plus:
 
 ```sh
@@ -185,7 +181,7 @@ zkapi ... serverd ... \
 The server requires native oracle and prompt-private lease configuration.
 Operate the compatible v2 [challenge daemon](challenge-service.md)
 alongside server and indexer, with a dedicated funded signer restricted to the
-new vault. It reads the exact historical request root from the native server's
+configured vault. It reads the exact historical request root from the native server's
 finalized transcript or exact active-lease request and uses a current zero-slot
 restoration path. A missing station usage receipt does not prevent an already
 issued lease from being challenged. Native usage
@@ -207,5 +203,4 @@ nullifier, browser request ID, payload/quote, and proof). This separate ID is
 persisted atomically with the lease and reused for key issuance and usage
 recovery. It prevents two deployments that share an org from redeeming the same
 key by choosing the same browser request ID. The browser-visible ID stays
-unchanged. Historical SQLite rows remain readable without a destructive migration;
-OA lease recovery rejects a missing or mismatched native upstream ID.
+unchanged. OA lease recovery rejects a missing or mismatched native upstream ID.

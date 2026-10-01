@@ -106,7 +106,7 @@ func TestExplicitLegacyTicketProfileFailsWithoutMutation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "only zkAPI profiles") {
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "requires a zkAPI native ETH profile") {
 		t.Fatalf("ticket migration: %v", err)
 	}
 	after, _ := os.ReadFile(filepath.Join(dir, "config.json"))

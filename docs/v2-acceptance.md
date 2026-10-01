@@ -5,8 +5,8 @@ provider usage, signed settlement, a challenged stale escape, and a successful
 real-proof withdrawal. A separate regression verifies that a failed issuance
 cannot create access from the saved request after its note begins or completes
 an escape withdrawal. The provider and price oracle are local mocks. Everything
-runs on loopback with disposable Anvil accounts; no existing wallet, hosted
-server, provider credential, public RPC, or testnet funds are required.
+runs on loopback with disposable Anvil accounts; no hosted server, provider
+credential, public RPC, or testnet funds are required.
 
 ## Run
 
@@ -31,7 +31,7 @@ of the tracked diff against that commit, and the tested binary/artifact hashes.
 Override the parent directory with
 `npm run test:e2e:v2 -- --output-dir /path/to/results`.
 The runner shuts down its own child processes and listeners on success or
-failure. Existing wallet data and deployment directories are never loaded.
+failure. Wallet data and service state are confined to the run's private directory.
 
 On macOS the wrapper respects explicit `DEVELOPER_DIR` and `SDKROOT` values.
 Otherwise, it uses installed standalone Command Line Tools and the macOS 15.4

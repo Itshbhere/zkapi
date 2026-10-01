@@ -41,8 +41,8 @@ forge test
 ```
 
 The proof system requires the circuit-specific Groth16 setup. The committed
-artifacts are development artifacts; their existing trust assumptions and
-compatibility requirements are described in the setup README.
+artifacts use a single-party setup with no multi-party ceremony. Its trust
+assumptions and compatibility requirements are described in the setup README.
 
 ## License
 

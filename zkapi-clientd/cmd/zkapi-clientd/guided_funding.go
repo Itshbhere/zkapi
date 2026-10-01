@@ -105,7 +105,7 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText st
 		return err
 	}
 	if state.BillingAsset != "native_eth" {
-		return errors.New("this setup requires the native ETH deployment; keep legacy wallet recovery separate")
+		return errors.New("this setup requires the native ETH deployment")
 	}
 	switch state.Phase {
 	case "deposit_pending", "confirming":

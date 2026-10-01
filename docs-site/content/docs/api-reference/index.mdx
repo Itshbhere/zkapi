@@ -28,14 +28,13 @@ messages. Runtime handlers in `crates/zkapi-serverd/src/routes.rs` and
 
 ## Proof and field encoding
 
-The active circuit revision is `zkapi-v2-note-bound-v1`. The note-binding
-repair preserves the v2 JSON shapes and public-input order. Migrating from
-an unbound circuit requires matching proving/verifying keys and a fresh vault
-with the matching Groth16 adapter. Pin the circuit ID, artifact hashes, vault address, and
-server signing keys for the selected deployment.
+The active circuit revision is `zkapi-v2-note-bound-v1`, using the v2 JSON
+shapes and public-input order. The proving/verifying keys and vault's Groth16
+adapter must match that circuit and setup. Pin the circuit ID, artifact hashes,
+vault address, and server signing keys for the configured deployment.
 
-Field values use `0x`-prefixed hexadecimal strings. The historical Rust type
-name `Felt252` now carries BN254 scalar-field values; it does not select the
+Field values use `0x`-prefixed hexadecimal strings. The Rust type
+`Felt252` carries BN254 scalar-field values; it does not select the
 Stark field. Curve points use `{ x, y }` and Schnorr signatures use
 `{ r_x, r_y, s }`.
 
@@ -45,7 +44,3 @@ base-field coordinates in the order `A.x, A.y, B.x.c0, B.x.c1, B.y.c0,
 B.y.c1, C.x, C.y`. These same bytes are passed to the vault's proof adapter.
 Public inputs are supplied separately and verified directly. The v2 proof
 object has no `public_output_hash` or private witness envelope.
-
-
-Native ETH deployments already pinned to this revision retain their circuit,
-setup, and proof assets; removing legacy runtime paths does not change them.

@@ -1,8 +1,7 @@
 # Native ETH protocol API
 
 The browser SDK sends prompt-free proof authorizations to `zkapi-serverd`.
-Inference runs directly against the issued provider key. The old local wallet
-HTTP API and server-side inference proxy are removed.
+Inference runs directly against the issued provider key.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

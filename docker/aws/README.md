@@ -21,10 +21,10 @@ Create these root-owned, mode `0600` files without printing their contents:
 | `/etc/zkapi/indexer.env` | `RPC_URL`, the chain's read RPC endpoint. |
 | `/etc/zkapi/server.env` | `ZKAPI_STATE_SEED`, `ZKAPI_CLEAR_SEED`, and `ZKAPI_OPENROUTER_MANAGEMENT_KEY` for direct leases; alternatively set `OA_ORG_URL` in deployment metadata and `ZKAPI_OA_ORG_SHARED_SECRET` here. For private Sepolia access, also set `ZKAPI_TESTNET_PASSWORD` here only. |
 | `/etc/zkapi/challenge.env` | `ZKAPI_CHALLENGE_RPC_URL=http://signer:8547` and `ZKAPI_CHALLENGE_SENDER`, the exclusive funded sender managed by the private sidecar. |
-| `/etc/zkapi/signer.env` | `ZKAPI_CHALLENGE_PRIVATE_KEY`, `ZKAPI_CHALLENGE_CHAIN_ID=11155111`, `ZKAPI_CHALLENGE_RPC_URL` (the public Sepolia upstream RPC), and `ZKAPI_CHALLENGE_VAULT` (the fresh vault). Only the signer container receives this file. |
+| `/etc/zkapi/signer.env` | `ZKAPI_CHALLENGE_PRIVATE_KEY`, `ZKAPI_CHALLENGE_CHAIN_ID=11155111`, `ZKAPI_CHALLENGE_RPC_URL` (the public Sepolia upstream RPC), and `ZKAPI_CHALLENGE_VAULT` (the configured vault). Only the signer container receives this file. |
 
 Also create `/etc/zkapi/config.json` with mode `0644`: this is the public client
-manifest containing the fresh contract, signing-key, circuit and proving-key
+manifest containing the contract, signing-key, circuit and proving-key
 hash pins. The gateway mounts it read-only and serves exactly `/config.json`,
 `/proofs/request.pk`, `/proofs/withdrawal.pk`, and `/proofs/manifest.json` as static
 artifacts. Proving keys are copied into the gateway image from the same checkout
@@ -81,7 +81,7 @@ sudo docker compose -f docker/aws/compose.yml logs --tail=50 challenger
 ```
 
 Verify that health and attestation report protocol 2, the selected chain, the
-fresh vault and the intended signing coordinates. Compare the server root and
+configured vault and the intended signing coordinates. Compare the server root and
 indexer root against the vault's current root. Verify that requests to
 `/v1/dashboard/recent` and `/v1/dashboard/events` return 404 through the public
 origin and HTTPS edge. The API health endpoint measures process health;

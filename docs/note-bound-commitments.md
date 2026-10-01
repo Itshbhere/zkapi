@@ -30,8 +30,9 @@ assumptions. Groth16/BN254 and Baby-JubJub are not post-quantum.
 ## Compatibility and setup
 
 The circuit identifier is `zkapi-v2-note-bound-v1`. Proving and verifying key
-files carry that header; loaders reject legacy files before decoding. Public
-deployment manifests must advertise `proof_setup.circuit_id`, and clients must
+files carry that header; loaders reject files without the expected circuit header
+before decoding. Public deployment manifests must advertise
+`proof_setup.circuit_id`, and clients must
 pin the matching key hashes and vault address. The header guards against
 accidental mismatches; it does not establish setup provenance or replace
 independently pinned key hashes.
@@ -42,13 +43,9 @@ together. Artifact hashes identify setup files but do not establish that setup
 secrets were destroyed. See [setup provenance](../protocol/setup/v2/README.md)
 for the trust assumptions.
 
-Existing vaults have immutable verifiers and keys. Replacing a server or frontend
-cannot change their circuit. Unbound signed states are incompatible with this
-circuit. Preserve old wallet state and use its corresponding legacy client for
-recovery or withdrawal; do not rewrite its commitment or label an old vault as
-this revision. Migration requires a fresh deployment, matching client pins, and
-an explicit transfer of funds. Vaults, denomination, signing keys and wallet
-state from separate deployments must never be interchanged. See
+The vault has an immutable verifier and signing keys. Its circuit, proof
+artifacts, denomination, and client pins must match exactly. Wallet state and
+recovery journals are bound to that configuration. See
 [native ETH billing](native-eth-billing.md) for asset and quote configuration.
 
 ## Challenge and settlement requirements

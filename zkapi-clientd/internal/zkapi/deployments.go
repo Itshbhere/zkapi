@@ -74,13 +74,13 @@ func writeDeploymentManifest(dir string, raw []byte) (string, error) {
 		}
 		saved, err := os.ReadFile(path)
 		if err != nil {
-			return "", errors.New("saved zkAPI deployment differs from this release; preserve the wallet and use a separate configuration directory")
+			return "", errors.New("deployment manifest does not match this client's pinned configuration")
 		}
 		if bytes.Equal(saved, raw) {
 			return path, nil
 		}
 		if !isSepoliaOriginMigration(saved, raw) {
-			return "", errors.New("saved zkAPI deployment differs from this release; preserve the wallet and use a separate configuration directory")
+			return "", errors.New("deployment manifest does not match this client's pinned configuration")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", errors.New("cannot read saved zkAPI deployment")
@@ -109,7 +109,7 @@ func writeDeploymentManifest(dir string, raw []byte) (string, error) {
 	return path, err
 }
 
-// These exact September 30 Sepolia manifests differ only in their three origin
+// This exact Sepolia manifest pair differs only in its three origin
 // fields. Pin both sides so neither changed wallet/proof bindings nor an arbitrary
 // replacement can use this exception. Hashes retain compatibility without keeping
 // a retired endpoint in the source. All other deployment changes fail closed.

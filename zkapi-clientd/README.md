@@ -30,7 +30,7 @@ Leave that terminal running. In Open WebUI or another OpenAI-compatible client, 
 The default reuses an OpenRouter key for a fixed window of up to 60 seconds.
 Compatible requests from different chats, local clients, and Open WebUI's title
 and follow-up requests can share a key and its spending cap; the provider can
-link those requests. Existing profiles retain their saved key-reuse setting.
+link those requests. Your saved key-reuse setting is preserved across updates.
 Settlement starts automatically when the window ends, even without another
 request. An active response finishes first.
 For a fresh key per inference request, stop `serve`, run
@@ -38,7 +38,7 @@ For a fresh key per inference request, stop `serve`, run
 With reuse disabled, settlement starts after each response. Fresh keys may wait
 for the previous key's settlement.
 
-To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved. Mainnet wallets created with the September 28 deployment need their matching earlier client and a separate configuration directory for the fresh deployment; see [existing-wallet guidance](docs/CLI_ZKAPI.md#deployment-origins-and-existing-wallets).
+To update, stop `serve`, rerun the install command, then start `serve` again. Your wallet is preserved. See [wallet storage and updates](docs/CLI_PACKAGING.md#wallet-storage-and-updates).
 
 To withdraw, run `zkapi-clientd config --menu` and choose `withdraw`. It asks for the destination and waits for extra ETH for fees only if needed.
 

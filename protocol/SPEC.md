@@ -133,14 +133,15 @@ active notes can be claimed for the treasury.
 
 ## Setup compatibility and verification
 
-The v2 wire version does not imply compatibility with every earlier v2 circuit.
-Keys carry the circuit revision header. Existing setup files, Solidity
-verification keys, WASM, and SDK asset hashes must remain paired. See
-[the setup README](setup/v2/README.md) for the development setup's trust and
-migration constraints.
+The wire version is v2 and the circuit ID is `zkapi-v2-note-bound-v1`.
+Keys carry that circuit header. Setup files, Solidity verification keys, WASM,
+and SDK asset hashes must remain paired. The committed keys use a single-party
+setup with no multi-party ceremony. See [the setup README](setup/v2/README.md)
+for setup provenance, compatibility requirements, and trust assumptions.
 
 Run protocol Rust tests with
 `cargo test --release --manifest-path rust/Cargo.toml --workspace --locked` and contract
 tests with `forge test` from `contracts/`. The parent workspace tests the active
 HTTP and settlement integration. Regenerating setup keys is a separate change
-that requires replacing every dependent artifact and a deployment migration.
+that requires regenerating all dependent artifacts and deploying their matching
+verifier and vault.

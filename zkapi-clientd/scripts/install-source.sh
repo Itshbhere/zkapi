@@ -37,7 +37,7 @@ Usage: ./scripts/install-source.sh [--prefix ABSOLUTE_DIR]
 The source build uses version 0.0.0 by default and records the exact checkout,
 source state, wallet companion commits, patch hashes and build toolchains.
 It prepares and builds the pinned Rust companion in a temporary directory;
-the repository's operator services and existing wallets are left unchanged.
+the build does not modify operator services or wallet data.
 Installation defaults to ~/.local. Stop an existing daemon before updating,
 then restart it after installation. Prior installation bundles are retained.
 

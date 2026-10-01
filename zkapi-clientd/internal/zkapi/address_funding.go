@@ -151,7 +151,7 @@ func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 	case "reverted":
 		status.Message = "The saved transaction reverted. Retry explicitly to reuse the private note with a fresh transaction after finality."
 	case "legacy_recovery":
-		status.Message = "An earlier browser-funded deposit needs recovery. Resume its saved transaction before starting another deposit."
+		status.Message = "A saved deposit needs recovery. Resume its transaction before starting another deposit."
 	case "withdrawal_pending":
 		status.Message = "A withdrawal is saved. Run zkapi-clientd withdraw and resume its destination before funding again."
 	default:

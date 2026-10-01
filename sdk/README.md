@@ -76,11 +76,8 @@ journals remain authoritative. Mainnet does no password discovery or prompting.
 
 This SDK requires `proof_setup.circuit_id: "zkapi-v2-note-bound-v1"` in the
 deployment manifest and matching `trusted_deployment.circuit_id` in the host
-config. Legacy unbound deployments are rejected before funding. This circuit
-change requires new setup/verifier artifacts and a newly deployed vault;
-changing only the manifest label does not migrate a deployment or its notes.
-Retain legacy wallet data and the corresponding legacy recovery client for
-existing funds until that deployment has been safely retired.
+config. The vault's immutable verifier, proving keys, and signing-key pins must
+match this circuit. Configuration mismatches are rejected before funding.
 
 ## External wallets and manual signing
 
@@ -169,10 +166,9 @@ its CSP/rewrites, and hashes these emitted assets in its deployment manifest.
 Proof downloads are verified again inside the worker. No private credentials
 are required to build either network.
 
-The SDK preserves the existing IndexedDB database, local/session storage keys,
-Web Locks names, BroadcastChannel names, revision checks, journal migration,
-and signed receipt handling. Hosting the same SDK on a different origin does
-not transfer browser wallet data. A model adapter must select one of
+The SDK uses IndexedDB, local/session storage, Web Locks, BroadcastChannel,
+revision checks, and signed receipt validation to manage wallet state. Hosting
+the same SDK on a different origin does not transfer browser wallet data. A model adapter must select one of
 `CHAT_SPENDING_TIER_USD` (`1`, `2`, `3`, `4.5`, `6`) without disclosing the user's
 exact balance. The SDK settles/rekeys when a selected cap changes; only actual
 usage is charged. Expiry and withdrawal contract behavior are unchanged.
@@ -184,16 +180,15 @@ local fixtures and do not connect a wallet or broadcast transactions.
 
 ## Native ETH deployments
 
-Native ETH requires a separate, trusted native vault and billing-server
-deployment. Token manifests are unsupported and rejected before wallet mutation. Existing
-notes and transaction journals remain bound to their original deployment; they
-are never reinterpreted as ETH.
+Native ETH requires a trusted native vault and billing-server configuration.
+Token manifests are unsupported and rejected before wallet mutation. Notes and
+transaction journals are bound to the configured chain and vault.
 Native manifests pin `billing_asset: "native_eth"`, `billing_unit: "gwei"`,
 `native_asset_wei_per_unit: "1000000000"`, a null `billing_token_address`,
 `rpc_url`, `native_price_feed_address`, `native_price_feed_decimals: 8`, and
 `native_price_max_age_seconds`. The browser config must pin the same values.
 Protocol amounts are whole gwei, bounded by JavaScript's safe-integer range.
-The payable deposit ABI is unchanged; `msg.value` must equal the exact ledger
+For a payable deposit, `msg.value` must equal the exact ledger
 amount multiplied by one billion wei. Token minting, approvals and transfers are unsupported.
 Withdrawals and all other protected calls retain zero transaction value.
 
@@ -244,9 +239,9 @@ deployment-bound.
 For an ambiguous funding-address deposit, an explicit user action may call
 `await client.prepareDepositRetry(onStatus)` to review retry fees. This checks
 for a mined deposit first and returns `status: "confirmed"` if recovered.
-Otherwise it authorizes only an exact retry fee review, including an existing
-saved `retry_exact` from an older client. It does not sign or submit. The
-funding-quote flag then permits simulation of the saved calldata without
+Otherwise it authorizes only an exact retry fee review, including a saved
+`retry_exact` operation. It does not sign or submit. The funding-quote flag
+then permits simulation of the saved calldata without
 refreshing its Merkle path. After the quote is shown, a separate explicit Next
 uses the same `preparedOperationId`. A pre-broadcast fee rejection keeps that
 exact path for the next quote. Only finalized consumed-slot recovery permits
@@ -304,13 +299,10 @@ current USD value independently of a running key's frozen conversion.
 
 The packaged mainnet and Sepolia configurations use
 `https://zkapi-mainnet.openanonymity.ai` and
-`https://zkapi-sepolia.openanonymity.ai`. Both pin the already deployed
-September 30 native ETH vaults and their signing keys. Proof artifacts and
-circuit hashes are unchanged. Hosts may continue supplying reviewed explicit
-profiles as described above.
+`https://zkapi-sepolia.openanonymity.ai`. Each profile pins its native ETH vault,
+signing keys, proof artifacts, and circuit hashes. Hosts may supply reviewed
+explicit profiles as described above.
 
-The runtime refuses to load an active note, pending deposit, lease or other
-unfinished recovery state from a different deployment. Keep the matching older
-application for old balances; changing the default profile does not migrate a
-note to another contract. The hostname-only switch for an existing September 30
-wallet retains its deployment identity and stored state.
+The runtime checks that active notes, pending deposits, leases, and unfinished
+recovery state match the selected deployment. Preserve wallet state and recovery
+journals with their matching configuration.

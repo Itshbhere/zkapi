@@ -4,7 +4,7 @@ This note describes the active zkAPI v2 usage-credit protocol. The implementatio
 uses BN254 Groth16 proofs, BN254 Poseidon hashing, Baby-JubJub Schnorr signatures,
 and native ETH settlement in whole gwei. See [SPEC.md](SPEC.md) for exact public
 statements and [setup compatibility](setup/v2/README.md) for the current circuit
-revision and development setup assumptions.
+revision and single-party setup trust assumptions.
 
 The goal is: a user deposits funds on-chain once, and then makes many anonymous off-chain API requests. The server must be protected against replay and non-payment, while honest users remain unlinkable.
 

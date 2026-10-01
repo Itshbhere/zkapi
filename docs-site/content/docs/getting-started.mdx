@@ -75,11 +75,10 @@ keys, and `zkapi-v2-note-bound-v1` circuit revision.
 ## Select the matching setup
 
 The checked-in `protocol/setup/v2` keys belong to the
-`zkapi-v2-note-bound-v1` circuit and are incompatible with earlier v2 keys.
-Keep the proving keys, verifying keys,
+`zkapi-v2-note-bound-v1` circuit. Keep the proving keys, verifying keys,
 Solidity adapter, and browser WASM from the same release together.
 
-For an existing deployment, use its pinned artifacts. Check
+Use the configured deployment's pinned artifacts. Check
 `proof_setup.circuit_id`, key and WASM hashes, chain ID, vault address, and
 state/clearance signing keys against independently trusted deployment values.
 The key-file circuit header catches accidental mismatches; it does not prove
@@ -93,12 +92,10 @@ setup directory:
 ```
 
 This creates new incompatible keys and a matching verifier. The checked-in
-setup is a single-party development setup, not a reviewed multiparty ceremony.
+setup is single-party; no multiparty ceremony has been conducted.
 Production use requires independent review of the design and setup assumptions.
 
-Legacy vaults have immutable verifiers and signing keys. Replacing a server,
-frontend, or manifest does not repair them. Preserve old wallet state and use
-its original client/deployment for recovery or withdrawal before an explicit
-fund migration.
+The vault's verifier and signing keys are immutable. The server, frontend and
+manifest must match those deployed values before a wallet is funded.
 
 See `protocol/setup/v2/README.md` for setup provenance and compatibility.
