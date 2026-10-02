@@ -1,6 +1,6 @@
 pkgbase = zkapi-clientd-bin
 	pkgdesc = Local inference API with private prepaid zkAPI access
-	pkgver = 0.1.3
+	pkgver = 0.1.4
 	pkgrel = 1
 	url = https://github.com/ethereum/zkapi
 	arch = x86_64
@@ -14,9 +14,9 @@ pkgbase = zkapi-clientd-bin
 	options = !strip
 	provides = zkapi-clientd
 	conflicts = zkapi-clientd
-	source_x86_64 = zkapi-clientd_0.1.3_linux_amd64.tar.gz::https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_linux_amd64.tar.gz
-	sha256sums_x86_64 = fa9184770e7864cd71ac8081545a4e55036924dbae456632244682b8541addf5
-	source_aarch64 = zkapi-clientd_0.1.3_linux_arm64.tar.gz::https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_linux_arm64.tar.gz
-	sha256sums_aarch64 = 1eb8b36618341aa406f6b83b2843c30dbadd5ad08dc86111f94961594b5bc26b
+	source_x86_64 = zkapi-clientd_0.1.4_linux_amd64.tar.gz::https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/zkapi-clientd_0.1.4_linux_amd64.tar.gz
+	sha256sums_x86_64 = c037d938e12239393b121384fe19514c7f4d141f40bdcc02ec38c0504dac273e
+	source_aarch64 = zkapi-clientd_0.1.4_linux_arm64.tar.gz::https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/zkapi-clientd_0.1.4_linux_arm64.tar.gz
+	sha256sums_aarch64 = 49691d6559a93c75010eb953a5368cd48084bfb91a8175f0f307b2935aed5436
 
 pkgname = zkapi-clientd-bin

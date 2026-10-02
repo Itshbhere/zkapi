@@ -124,8 +124,8 @@ After publishing a release, add its tag and four native archive hashes to
 installable manifests from the templates and pinned hashes:
 
 ```sh
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.3
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.3 --check
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.4
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.4 --check
 ```
 
 Run these commands from the repository root. Update the version in the package

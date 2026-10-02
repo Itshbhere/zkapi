@@ -2,18 +2,18 @@
 class ZkapiClientd < Formula
   desc "Local inference API with private prepaid zkAPI access"
   homepage "https://github.com/ethereum/zkapi"
-  version "0.1.3"
+  version "0.1.4"
   license "MIT"
 
   on_macos do
     depends_on macos: :ventura
     on_arm do
-      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_darwin_arm64.tar.gz"
-      sha256 "7f7d1188f35f211b210563094c6354a1a3109f6318790ed89d32c45546bd5822"
+      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/zkapi-clientd_0.1.4_darwin_arm64.tar.gz"
+      sha256 "049cd6bccd55d5d6cdf139b29ba17aaf654a15b7a0a6bb814d7d36fdb5611299"
     end
     on_intel do
-      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_darwin_amd64.tar.gz"
-      sha256 "cde13c1021859cf0486ddce25ee9276791c953ff301794c5f629fba97228e95d"
+      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/zkapi-clientd_0.1.4_darwin_amd64.tar.gz"
+      sha256 "750f9a4dcc438e9c365f96da5eaf8968718ffb071a9bf0f77eb00f2d141d6de5"
     end
   end
 
@@ -21,12 +21,12 @@ class ZkapiClientd < Formula
     depends_on "openssl@3"
     depends_on "patchelf" => :build
     on_arm do
-      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_linux_arm64.tar.gz"
-      sha256 "1eb8b36618341aa406f6b83b2843c30dbadd5ad08dc86111f94961594b5bc26b"
+      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/zkapi-clientd_0.1.4_linux_arm64.tar.gz"
+      sha256 "49691d6559a93c75010eb953a5368cd48084bfb91a8175f0f307b2935aed5436"
     end
     on_intel do
-      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/zkapi-clientd_0.1.3_linux_amd64.tar.gz"
-      sha256 "fa9184770e7864cd71ac8081545a4e55036924dbae456632244682b8541addf5"
+      url "https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/zkapi-clientd_0.1.4_linux_amd64.tar.gz"
+      sha256 "c037d938e12239393b121384fe19514c7f4d141f40bdcc02ec38c0504dac273e"
     end
   end
 
