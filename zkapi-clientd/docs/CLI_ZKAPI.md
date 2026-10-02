@@ -180,6 +180,27 @@ settlement, which can arrive after the response ends. Routine helper
 readiness/retry messages are hidden. The foreground daemon stops if its helper
 exits; only an external service manager can restart it.
 
+### Mainnet production issuer and verifier
+
+Version `0.1.4` switches Mainnet to issuer
+`https://org-live.openanonymity.ai` and verifier
+`https://verifier-production-20260917.openanonymity.ai`. Sepolia continues using
+the staging org and `verifier2`. The Mainnet vault, signing keys, proof hashes,
+protocol endpoints and wallet directory are unchanged.
+
+Stop the running daemon, install the update and restart with the same profile.
+Existing Mainnet profiles using the historical default `verifier2` origin use
+the production verifier when loaded; custom verifier origins are preserved.
+Loading alone does not rewrite the configuration file. New profiles and network
+selection use the matching network default. The saved Mainnet manifest migrates
+only when both complete old and new manifests match their reviewed SHA-256 pins;
+any other manifest change is rejected. Wallet notes and recovery journals are
+preserved, and Sepolia's existing migration behavior is unchanged.
+
+This update does not add station trust exceptions, fund a wallet or clear an
+unfinished lease. Existing lease recovery still uses the saved request and
+server-signed settlement response.
+
 ### Trusted-station verification fallback
 
 Version `0.1.3` adds the same pinned-station exception as the web app.

@@ -133,6 +133,11 @@ func initialize(dir string, args []string) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected init arguments")
 	}
+	verifierExplicit := false
+	f.Visit(func(field *flag.Flag) { verifierExplicit = verifierExplicit || field.Name == "verifier-url" })
+	if !verifierExplicit {
+		c.VerifierURL = config.DefaultVerifierURL(c.ZKAPI.Network)
+	}
 	if err := config.Init(dir, c); err != nil {
 		return err
 	}
