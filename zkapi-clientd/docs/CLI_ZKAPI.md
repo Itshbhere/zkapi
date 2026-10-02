@@ -78,6 +78,22 @@ with input hidden. Fund with Sepolia ETH, never mainnet ETH. Mainnet and
 Sepolia have separate signing keys and wallet state. Switching networks keeps
 the other network's recovery data.
 
+## Tor
+
+Start Tor with a local SOCKS listener, then select its numeric loopback address:
+
+```sh
+zkapi-clientd config --relay-url socks5://127.0.0.1:9050
+zkapi-clientd serve
+```
+
+The client passes destination names to SOCKS5 for remote DNS and keeps HTTPS
+certificate verification. The Go frontend and the wallet companion use the
+same route. If Tor is unavailable, requests fail instead of connecting directly.
+Keep the local OpenAI-compatible API at its loopback URL. Stop a running
+`serve` before changing its saved transport. `HTTP_PROXY`, `HTTPS_PROXY`, and
+`ALL_PROXY` do not change this client's route.
+
 ## Deployment origins
 
 The client defaults use these deployment manifests and vaults:

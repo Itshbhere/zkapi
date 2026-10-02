@@ -12,7 +12,9 @@ and uses local DNS, so network timing/IP can correlate activity even though
 credential issuance is unlinkable. Optional Wisp carries destination TLS with
 certificate verification and hides the source IP from destination services;
 the relay still sees connection metadata. A configured relay failure never
-falls back to direct HTTPS. Environment proxy variables are ignored.
+falls back to direct HTTPS. A loopback SOCKS5 route can send destination DNS
+and HTTPS traffic through Tor when Tor is running locally. It also fails closed
+if the proxy is unavailable. Environment proxy variables are ignored.
 
 The client keeps the deployed manifest/contract pins and normal station/key
 verification binding. Unverified continuation requires the compiled `oa-station`

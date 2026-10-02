@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"time"
 
@@ -123,7 +124,7 @@ func initialize(dir string, args []string) error {
 	f := flag.NewFlagSet("init", flag.ContinueOnError)
 	f.StringVar(&c.ZKAPI.Network, "network", c.ZKAPI.Network, "mainnet or sepolia")
 	f.StringVar(&c.VerifierURL, "verifier-url", c.VerifierURL, "verifier HTTPS origin")
-	f.StringVar(&c.RelayURL, "relay-url", c.RelayURL, "opt into an encrypted Wisp relay (default: direct HTTPS)")
+	f.StringVar(&c.RelayURL, "relay-url", c.RelayURL, "Wisp relay URL or loopback SOCKS5 proxy (default: direct HTTPS)")
 	f.StringVar(&c.Listen, "listen", c.Listen, "loopback IP:port")
 	f.StringVar(&c.ZKAPI.Binary, "zkapi-binary", "", "path to zkapi-walletd wallet/prover")
 	f.StringVar(&c.ZKAPI.ProofSetupDir, "proof-setup-dir", "", "verified deployed circuit proving assets")
@@ -305,7 +306,9 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- httpServer.Serve(listener) }()
 	transport := "direct HTTPS (network proxy off)"
-	if c.RelayURL != "" {
+	if strings.HasPrefix(c.RelayURL, "socks5://") {
+		transport = "SOCKS5 proxy required"
+	} else if c.RelayURL != "" {
 		transport = "encrypted relay required"
 	}
 	logger.Printf("zkAPI client %s listening at http://%s/v1 (%s); %s", version, c.Listen, c.Backend, transport)

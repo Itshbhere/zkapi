@@ -76,7 +76,7 @@ type Config struct {
 	Backend               string `json:"backend"`           // fixed to zkapi; retained for existing profile compatibility
 	OrgURL                string `json:"org_url,omitempty"` // legacy profile field; unused
 	VerifierURL           string `json:"verifier_url"`
-	RelayURL              string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp
+	RelayURL              string `json:"relay_url"` // empty uses direct HTTPS; nonempty selects Wisp or loopback SOCKS5
 	Concurrency           int    `json:"concurrency"`
 	ZKAPI                 ZKAPI  `json:"zkapi"`
 }
