@@ -200,9 +200,10 @@ impl NullifierStore {
     pub(crate) fn acquire_writer_lock(
         &self,
     ) -> Result<Option<crate::writer_lock::ServerWriterLock>, ServerError> {
-        let conn = self.conn.lock().map_err(|error| {
-            ServerError::Database(format!("lock poisoned: {error}"))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|error| ServerError::Database(format!("lock poisoned: {error}")))?;
         match conn.path().filter(|path| !path.is_empty()) {
             Some(path) => crate::writer_lock::ServerWriterLock::acquire(Path::new(path)).map(Some),
             None => Ok(None),
