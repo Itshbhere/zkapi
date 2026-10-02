@@ -2,10 +2,10 @@
 
 ## One-command installation
 
-Install or update the `0.1.4` prerelease:
+Install or update the `0.1.5` prerelease:
 
 ```sh
-curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/install.sh | bash
+curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.5/install.sh | bash
 ```
 
 Then configure and serve:
@@ -105,7 +105,7 @@ On macOS install Xcode command-line tools and the corresponding Homebrew tools.
 
 ```sh
 ./scripts/prepare-zkapi.sh /tmp/clientd-wallet-source
-./scripts/build-native.sh 0.1.4 /tmp/clientd-artifacts /tmp/clientd-wallet-source
+./scripts/build-native.sh 0.1.5 /tmp/clientd-artifacts /tmp/clientd-wallet-source
 ```
 
 Run on the native target. Supported release targets are macOS 13+ and Linux
@@ -124,8 +124,8 @@ After publishing a release, add its tag and four native archive hashes to
 installable manifests from the templates and pinned hashes:
 
 ```sh
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.4
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.4 --check
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.5
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.5 --check
 ```
 
 Run these commands from the repository root. Update the version in the package

@@ -93,6 +93,8 @@ same route. If Tor is unavailable, requests fail instead of connecting directly.
 Keep the local OpenAI-compatible API at its loopback URL. Stop a running
 `serve` before changing its saved transport. `HTTP_PROXY`, `HTTPS_PROXY`, and
 `ALL_PROXY` do not change this client's route.
+On macOS, `torify zkapi-clientd serve` alone does not route the Go client; set
+the SOCKS5 relay URL above even when launching it through `torify`.
 
 ## Deployment origins
 
