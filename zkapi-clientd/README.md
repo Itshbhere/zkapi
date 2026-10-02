@@ -7,7 +7,7 @@ A local OpenAI-compatible API, paid from your private ETH balance. No OA account
 Install or update:
 
 ```sh
-curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.5/install.sh | bash
+curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.6/install.sh | bash
 ```
 
 Configure your wallet:

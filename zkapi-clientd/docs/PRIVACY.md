@@ -20,8 +20,10 @@ The client keeps the deployed manifest/contract pins and normal station/key
 verification binding. Unverified continuation requires the compiled `oa-station`
 Ed25519 public key, scoped to `https://verifier2.openanonymity.ai`, and local
 verification of the station signature over the exact station ID, provider key
-and integer expiry. A station name, `station_recently_attested` flag or live
-broadcast cannot add a trusted station. Unknown stations still need a matching
+and integer expiry. This fallback pin remains scoped to the Sepolia verifier;
+Mainnet's production verifier requires ordinary matching verifier approval.
+The web client has the same pin scope. A station name,
+`station_recently_attested` flag or live broadcast cannot add a trusted station. Unknown stations still need a matching
 successful verifier approval, including during rate limiting and outages.
 
 For that pinned station, the client may continue through a verifier outage or
@@ -66,6 +68,16 @@ earlier lease blocks the next fresh key, the daemon also requests settlement
 instead of waiting for the key's full expiry. The helper recovers pending or
 ambiguous outcomes without repeated retirement requests. Signed settlement
 can still take several minutes.
+
+For interrupted provisioning, settlement first sends the exact saved proof to
+the server's authenticated retirement endpoint. A server that still reports
+`lease_pending` can be retried using that original issuance request, including
+its frozen quote and spending bound. The helper validates the returned lease
+and OA key before retiring it; that recovered credential never enters the
+inference cache or bridge response. A confirmed unissued cancellation advances
+the wallet only through the normal matching signed response. Missing keys,
+expiry, HTTP errors and ambiguous issuance never authorize clearing a journal.
+Stopping or failing recovery keeps the original note and request for retry.
 
 Inference is loopback-only and key-free by default. Other local processes can
 use it. Optional local API-key authentication affects only the UI-to-daemon hop.
