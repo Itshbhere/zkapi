@@ -204,3 +204,53 @@ persisted atomically with the lease and reused for key issuance and usage
 recovery. It prevents two deployments that share an org from redeeming the same
 key by choosing the same browser request ID. The browser-visible ID stays
 unchanged. OA lease recovery rejects a missing or mismatched native upstream ID.
+
+## Recovering rejected OA provisioning
+
+The server records whether a new OA lease has ever attempted issuance. Before
+provider I/O, it durably changes `not_started` to `may_have_issued`; a timeout,
+lost reply, malformed success or restart therefore preserves uncertainty. The
+only automatic rejection classification is HTTP 400 with an exact org
+pre-provider validation detail: `credit_limit exceeds zkAPI policy`,
+`credit_limit_credits exceeds zkAPI policy`, or
+`duration_minutes exceeds zkAPI policy`. These are a contract with the org's
+`request_key` validator, which runs before station/provider I/O. A generic
+400, 429, missing key hash, or expired local lease is not nonissuance evidence.
+Even a recognized rejection cannot clear uncertainty from an earlier attempt.
+
+A definitive first-attempt rejection becomes `confirmed_unissued` and receives
+a normal signed zero-charge successor state. The issuance request returns
+`oa_key_policy_rejected` (HTTP 400, nonretriable); this error alone does not
+authorize deleting a wallet journal. Clients retrieve and verify the signed
+response using ordinary request recovery. The receipt keeps the original quote
+and has type `oa_org_unissued_lease_cancellation`, `issued: false`, and zero usage.
+The nullifier is finalized, never deleted or made reusable.
+
+If finalization is interrupted, the next background scan or exact saved-proof
+settlement request finishes it. A tracked request with no issuance attempt can
+also be retired, or recovered by the scanner after its original settlement
+deadline. Cancellation excludes concurrent issuance, verifies the saved full
+request, deployment, signer, quote, allowance and upstream ID, and requires an
+explicit unspent-nullifier RPC result before signing. A persisted signed
+successor is reused after a crash; it is never replaced with a new signature.
+Active leases still require normal provider usage reconciliation. Their network
+waits do not hold the global issuance lock.
+
+Historical rows migrate conservatively to `may_have_issued`. These and any
+ambiguous attempts remain pending until exact replay or authoritative issuer
+reconciliation establishes what happened. The current org API has no durable
+cancellation fence for unknown issuance; this change does not invent one or
+refund ambiguous requests automatically.
+
+A crash after nullifier reservation but before the lease row is created still
+requires exact issuance replay. This cancellation path cannot infer an outcome
+from that incomplete state and does not clear the reservation.
+
+Every file-backed signing processor holds an exclusive database sidecar lock
+for its lifetime. Challenger reads remain available. Stop all older server
+writers before deployment: old binaries and manual database writes do not honor
+this lock. Preserve the sidecar, database and backup together; never unlink the
+lock to bypass an active writer. Do not downgrade a migrated live database to an
+older writer, whose issuance does not update the new outcome field. Rollback
+requires a compatible writer or stopped-service reconciliation of affected
+provisioning rows, not restoring an old database over newer wallet activity.

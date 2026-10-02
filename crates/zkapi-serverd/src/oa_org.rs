@@ -180,6 +180,9 @@ impl OaOrgProvisioner {
         let text = text_result.map_err(|error| {
             ServerError::Internal(format!("OA org key response failed: {error}"))
         })?;
+        if is_definitive_policy_rejection(status, &text) {
+            return Err(ServerError::OaKeyPolicyRejected);
+        }
         if !status.is_success() {
             return Err(ServerError::Internal(format!(
                 "OA org key request returned {status}"
@@ -546,6 +549,27 @@ fn validate_usage_response(
     }))
 }
 
+/// These exact OA request_key validation errors occur before station/provider
+/// I/O. This says nothing about an earlier attempt: the processor must preserve
+/// any durable uncertainty from that attempt. Never infer nonissuance from an
+/// arbitrary HTTP status, transport error, malformed success or missing key.
+fn is_definitive_policy_rejection(status: reqwest::StatusCode, body: &str) -> bool {
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    matches!(
+        value.get("detail").and_then(Value::as_str),
+        Some(
+            "credit_limit exceeds zkAPI policy"
+                | "credit_limit_credits exceeds zkAPI policy"
+                | "duration_minutes exceeds zkAPI policy"
+        )
+    )
+}
+
 fn is_hex_signature(value: &str) -> bool {
     value.len() == 128 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -570,6 +594,41 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::post;
     use axum::{Json, Router};
+
+    #[test]
+    fn only_exact_pre_provider_policy_rejections_confirm_nonissuance() {
+        for detail in [
+            "credit_limit exceeds zkAPI policy",
+            "credit_limit_credits exceeds zkAPI policy",
+            "duration_minutes exceeds zkAPI policy",
+        ] {
+            let body = json!({"detail": detail}).to_string();
+            assert!(is_definitive_policy_rejection(
+                StatusCode::BAD_REQUEST,
+                &body
+            ));
+            for status in [
+                StatusCode::OK,
+                StatusCode::UNAUTHORIZED,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ] {
+                assert!(!is_definitive_policy_rejection(status, &body));
+            }
+        }
+        for body in [
+            "",
+            "null",
+            r#"{"detail":"provider failed"}"#,
+            r#"{"detail":{"message":"credit_limit exceeds zkAPI policy"}}"#,
+            r#"{"detail":"credit_limit exceeds zkAPI policy after issuance"}"#,
+        ] {
+            assert!(!is_definitive_policy_rejection(
+                StatusCode::BAD_REQUEST,
+                body
+            ));
+        }
+    }
 
     #[test]
     fn delayed_issuance_requires_explicit_replay_and_preserves_expiry_bounds() {
