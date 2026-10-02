@@ -235,7 +235,7 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 
 func applyConfigureOptions(c config.Config, o configureOptions) config.Config {
 	if o.fields["network"] {
-		c.ZKAPI.Network = o.network
+		c = config.SelectNetwork(c, o.network)
 	}
 	if o.fields["key-reuse-window-seconds"] {
 		c.KeyReuseWindowSeconds = o.keyReuseWindowSeconds
@@ -291,11 +291,11 @@ func saveConfiguredSettings(ctx context.Context, dir string, previous, next conf
 }
 
 func promptConfigure(ctx context.Context, c config.Config, ui setupPrompter, edit bool) (config.Config, error) {
-	var err error
-	c.ZKAPI.Network, err = configureChoice(ctx, ui, "Choose network: mainnet (real ETH) or sepolia (test ETH)", c.ZKAPI.Network, "mainnet", "sepolia")
+	network, err := configureChoice(ctx, ui, "Choose network: mainnet (real ETH) or sepolia (test ETH)", c.ZKAPI.Network, "mainnet", "sepolia")
 	if err != nil {
 		return c, err
 	}
+	c = config.SelectNetwork(c, network)
 	if !edit {
 		return c, nil
 	}

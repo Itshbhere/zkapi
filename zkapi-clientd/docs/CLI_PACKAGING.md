@@ -2,10 +2,10 @@
 
 ## One-command installation
 
-Install or update the `0.1.3` prerelease:
+Install or update the `0.1.4` prerelease:
 
 ```sh
-curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.3/install.sh | bash
+curl -fsSL https://github.com/ethereum/zkapi/releases/download/clientd-v0.1.4/install.sh | bash
 ```
 
 Then configure and serve:
@@ -37,9 +37,10 @@ OpenSSL 3, libgcc and CA certificates.
 
 ## Platform packages and background services
 
-This checkout includes directly installable packages pinned to the published
-`clientd-v0.1.3` native bundles. Each contains the client, wallet companion, and
+Each client release includes generated platform package metadata pinned to its
+native bundles. Each bundle contains the client, wallet companion, and
 deployment-pinned proof assets, with SHA-256 checks for every supported archive.
+The checked-in package pins are promoted after publication verifies all artifacts.
 
 | Platform | Package | Background service |
 | --- | --- | --- |
@@ -104,7 +105,7 @@ On macOS install Xcode command-line tools and the corresponding Homebrew tools.
 
 ```sh
 ./scripts/prepare-zkapi.sh /tmp/clientd-wallet-source
-./scripts/build-native.sh 0.1.3 /tmp/clientd-artifacts /tmp/clientd-wallet-source
+./scripts/build-native.sh 0.1.4 /tmp/clientd-artifacts /tmp/clientd-wallet-source
 ```
 
 Run on the native target. Supported release targets are macOS 13+ and Linux
@@ -123,8 +124,8 @@ After publishing a release, add its tag and four native archive hashes to
 installable manifests from the templates and pinned hashes:
 
 ```sh
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.3
-python3 zkapi-clientd/scripts/sync-packages.py 0.1.3 --check
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.4
+python3 zkapi-clientd/scripts/sync-packages.py 0.1.4 --check
 ```
 
 Run these commands from the repository root. Update the version in the package
