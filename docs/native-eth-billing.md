@@ -236,11 +236,25 @@ successor is reused after a crash; it is never replaced with a new signature.
 Active leases still require normal provider usage reconciliation. Their network
 waits do not hold the global issuance lock.
 
-Historical rows migrate conservatively to `may_have_issued`. These and any
-ambiguous attempts remain pending until exact replay or authoritative issuer
-reconciliation establishes what happened. The current org API has no durable
-cancellation fence for unknown issuance; this change does not invent one or
-refund ambiguous requests automatically.
+Historical rows migrate conservatively to `may_have_issued`. After their
+settlement deadline, these and ambiguous attempts enter read-only issuer
+reconciliation. An exact saved-proof settlement request can also start it.
+Authenticated `POST /api/zkapi/reconcile_key` reads the org's existing durable
+issuance binding; it never creates, replays or returns a plaintext key, consumes
+issuance quota, or writes issuer state. The server validates request namespace,
+cap, integer credits, duration, station request ID and expiry bounds, then
+atomically records the existing key hash and original expiry. Normal
+station-signed actual-usage settlement supplies the successor signature using
+the frozen quote. Expired provider keys can follow this path. Usage outages
+preserve the active metadata and retry normal settlement after restart.
+
+A missing issuer binding, unavailable endpoint, malformed/mismatched response,
+or unknown outcome stays pending. This API has no durable cancellation fence
+for unknown issuance and never authorizes an automatic zero-charge refund.
+Reconciliation does not apply current issuance policy caps, but the existing
+usage endpoint still requires those caps and the server's configured TTL to
+be compatible with the historical lease. Incompatible policy changes fail
+closed and need operator reconciliation rather than refunding automatically.
 
 A crash after nullifier reservation but before the lease row is created still
 requires exact issuance replay. This cancellation path cannot infer an outcome

@@ -660,6 +660,46 @@ impl NullifierStore {
         Ok(())
     }
 
+    /// Recover an existing issuer binding atomically. No plaintext key is
+    /// stored, and a definitive non-issuance outcome can never become issued.
+    pub(crate) fn reconcile_oa_lease(
+        &self,
+        client_request_id: &str,
+        key_hash: &str,
+        expires_at: u64,
+        settle_after: u64,
+    ) -> Result<(), ServerError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|error| ServerError::Database(format!("lock poisoned: {error}")))?;
+        let rows = conn
+            .execute(
+                "UPDATE openrouter_leases SET
+                    status = 'active', key_hash = ?1, expires_at = ?2,
+                    settle_after = ?3, last_error = NULL, updated_at = ?4
+                 WHERE client_request_id = ?5 AND key_source = 'oa_org'
+                    AND status = 'provisioning' AND key_hash IS NULL
+                    AND oa_provisioning_outcome = 'may_have_issued'",
+                params![
+                    key_hash,
+                    expires_at as i64,
+                    settle_after as i64,
+                    current_timestamp() as i64,
+                    client_request_id
+                ],
+            )
+            .map_err(|error| {
+                ServerError::Database(format!("OA reconciliation update failed: {error}"))
+            })?;
+        if rows != 1 {
+            return Err(ServerError::Internal(
+                "OA reconciliation state changed".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn remove_failed_openrouter_lease(
         &self,
         client_request_id: &str,
@@ -702,7 +742,7 @@ impl NullifierStore {
              WHERE (status IN ('active', 'retiring', 'disabled', 'revoking') AND settle_after <= ?1)
                 OR (key_source = 'oa_org' AND status = 'provisioning' AND key_hash IS NULL
                     AND (oa_provisioning_outcome = 'confirmed_unissued'
-                         OR (oa_provisioning_outcome = 'not_started' AND settle_after <= ?1)))
+                         OR (oa_provisioning_outcome IN ('not_started', 'may_have_issued') AND settle_after <= ?1)))
              ORDER BY settle_after ASC",
         ) {
             Ok(statement) => statement,
@@ -1069,7 +1109,7 @@ mod tests {
                 .oa_provisioning_outcome,
             OaProvisioningOutcome::MayHaveIssued
         );
-        assert!(store.due_openrouter_leases(10_000).is_empty());
+        assert_eq!(store.due_openrouter_leases(10_000).len(), 1);
         store
             .record_openrouter_lease_error("ambiguous", "response lost")
             .unwrap();
@@ -1080,7 +1120,7 @@ mod tests {
             OaProvisioningOutcome::MayHaveIssued
         );
         assert_eq!(lease.last_error.as_deref(), Some("response lost"));
-        assert!(store.due_openrouter_leases(10_000).is_empty());
+        assert_eq!(store.due_openrouter_leases(10_000).len(), 1);
     }
 
     #[test]
@@ -1147,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_oa_outcome_is_ambiguous_and_never_automatically_due() {
+    fn unknown_oa_outcome_is_ambiguous_until_normalized_for_reconciliation() {
         let store = NullifierStore::in_memory().unwrap();
         create_oa_lease(&store, "unknown", 1);
         store.conn.lock().unwrap().execute(
@@ -1164,7 +1204,7 @@ mod tests {
         assert!(store.due_openrouter_leases(10_000).is_empty());
         assert!(store.confirm_oa_unissued("unknown").is_err());
         assert!(!store.begin_oa_issuance("unknown").unwrap());
-        assert!(store.due_openrouter_leases(10_000).is_empty());
+        assert_eq!(store.due_openrouter_leases(10_000).len(), 1);
     }
 
     #[test]
@@ -1201,7 +1241,7 @@ mod tests {
                     .oa_provisioning_outcome,
                 OaProvisioningOutcome::MayHaveIssued
             );
-            assert!(store.due_openrouter_leases(10_000).is_empty());
+            assert_eq!(store.due_openrouter_leases(10_000).len(), 1);
             assert!(!store.begin_oa_issuance("legacy").unwrap());
             create_oa_lease(&store, "never-started", 2);
             create_oa_lease(&store, "attempted", 3);
@@ -1227,12 +1267,16 @@ mod tests {
             OaProvisioningOutcome::ConfirmedUnissued
         );
         assert!(reopened.begin_oa_issuance("rejected").is_err());
-        let due_ids: Vec<_> = reopened
+        let mut due_ids: Vec<_> = reopened
             .due_openrouter_leases(21)
             .into_iter()
             .map(|lease| lease.client_request_id)
             .collect();
-        assert_eq!(due_ids, vec!["never-started", "rejected"]);
+        due_ids.sort();
+        assert_eq!(
+            due_ids,
+            vec!["attempted", "legacy", "never-started", "rejected"]
+        );
     }
 
     #[test]

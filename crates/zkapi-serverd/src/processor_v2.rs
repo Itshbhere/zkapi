@@ -620,19 +620,7 @@ impl RequestProcessor {
                     )),
                 },
                 "oa_org" if lease.status == "provisioning" => {
-                    // Only cancellation needs issuance exclusion. An unavailable
-                    // usage service for active leases must not block all new keys.
-                    // When both locks are needed, settlement precedes issuance.
-                    let _issue_guard = self.lease_issue_lock.lock().await;
-                    match self.store.lookup_openrouter_lease(&lease.client_request_id) {
-                        Some(current) if current.status == "provisioning" => {
-                            self.finalize_unissued_oa_lease(&current).await
-                        }
-                        // Issuance or another finalizer won the race. A normal
-                        // active lease will be picked up at its settlement time.
-                        Some(_) => Ok(()),
-                        None => Err(ServerError::Internal("pending lease disappeared".into())),
-                    }
+                    self.settle_provisioning_oa_lease(&lease).await
                 }
                 "oa_org" => self.settle_oa_org_lease(&lease).await,
                 source => Err(ServerError::Internal(format!(
@@ -680,14 +668,7 @@ impl RequestProcessor {
         match lease.status.as_str() {
             "finalized" => {}
             "provisioning" if lease.key_source == "oa_org" => {
-                let _issue_guard = self.lease_issue_lock.lock().await;
-                let current = self
-                    .store
-                    .lookup_openrouter_lease(client_request_id)
-                    .ok_or_else(|| ServerError::Internal("pending lease disappeared".into()))?;
-                if current.status != "finalized" {
-                    self.finalize_unissued_oa_lease(&current).await?;
-                }
+                self.settle_provisioning_oa_lease(&lease).await?;
             }
             "active" | "retiring" | "disabled" | "revoking" => match lease.key_source.as_str() {
                 "openrouter" => {
@@ -715,6 +696,138 @@ impl RequestProcessor {
             .ok_or_else(|| ServerError::Internal("retired lease disappeared".to_string()))
     }
 
+    /// Recover only metadata already persisted by the issuer, then use normal
+    /// signed usage settlement. A missing binding never authorizes a refund.
+    /// Callers hold the settlement lock; issuer reads do not block new keys.
+    async fn settle_provisioning_oa_lease(
+        &self,
+        lease: &OpenRouterLeaseRecord,
+    ) -> Result<(), ServerError> {
+        if lease.status != "provisioning" || lease.key_source != "oa_org" {
+            return Err(ServerError::LeasePending);
+        }
+        if lease.oa_provisioning_outcome != OaProvisioningOutcome::MayHaveIssued {
+            let _issue_guard = self.lease_issue_lock.lock().await;
+            let current = self
+                .store
+                .lookup_openrouter_lease(&lease.client_request_id)
+                .ok_or_else(|| ServerError::Internal("pending lease disappeared".into()))?;
+            return if current.status == "finalized" {
+                Ok(())
+            } else {
+                self.finalize_unissued_oa_lease(&current).await
+            };
+        }
+        let record = self.validate_oa_lease_binding(lease)?;
+        if record.status == NullifierStatus::Finalized {
+            return self.settle_oa_org_lease(lease).await;
+        }
+        let config = self.config.openrouter_leases.as_ref().ok_or_else(|| {
+            ServerError::Internal("OA org lease configuration is unavailable".into())
+        })?;
+        if config.ttl_seconds == 0 || !config.ttl_seconds.is_multiple_of(60) {
+            return Err(ServerError::Internal("invalid OA lease duration".into()));
+        }
+        let provider = self
+            .oa_org
+            .as_ref()
+            .ok_or_else(|| ServerError::Internal("OA org lease provider is unavailable".into()))?;
+        let binding = provider
+            .reconcile_key(
+                &self.persisted_oa_request_id(lease)?,
+                OaOrgUsageExpectation {
+                    credit_limit_usd: lease.spending_limit_usd,
+                    duration_minutes: config.ttl_seconds / 60,
+                    limit_credits: self.lease_limit_micro_usd(&lease.api_request)?,
+                    minimum_expires_at: lease
+                        .issued_at
+                        .saturating_add(config.ttl_seconds)
+                        .saturating_sub(OA_LEASE_EXPIRY_SAFETY_SECONDS),
+                    maximum_expires_at: current_timestamp()
+                        .saturating_add(config.ttl_seconds)
+                        .saturating_add(OA_LEASE_EXPIRY_SAFETY_SECONDS),
+                },
+            )
+            .await?;
+        let Some(binding) = binding else {
+            return Err(ServerError::LeasePending);
+        };
+        // Re-read after I/O under issuance exclusion. The original issuance
+        // may have completed while reconciliation was reading its binding.
+        let current = {
+            let _issue_guard = self.lease_issue_lock.lock().await;
+            let current = self
+                .store
+                .lookup_openrouter_lease(&lease.client_request_id)
+                .ok_or_else(|| ServerError::Internal("pending lease disappeared".into()))?;
+            self.validate_oa_lease_binding(&current)?;
+            if current.status == "provisioning" {
+                let expires_at = binding
+                    .expires_at
+                    .saturating_sub(OA_LEASE_EXPIRY_SAFETY_SECONDS);
+                self.store.reconcile_oa_lease(
+                    &current.client_request_id,
+                    &binding.key_hash,
+                    expires_at,
+                    expires_at.saturating_add(config.settlement_grace_seconds),
+                )?;
+            } else if current.status != "finalized"
+                && current.key_hash.as_deref() != Some(binding.key_hash.as_str())
+            {
+                return Err(ServerError::Internal(
+                    "OA reconciliation raced a different key".into(),
+                ));
+            }
+            self.store
+                .lookup_openrouter_lease(&lease.client_request_id)
+                .ok_or_else(|| ServerError::Internal("reconciled lease disappeared".into()))?
+        };
+        if current.status == "finalized" {
+            return Ok(());
+        }
+        self.settle_oa_org_lease(&current).await
+    }
+
+    fn validate_oa_lease_binding(
+        &self,
+        lease: &OpenRouterLeaseRecord,
+    ) -> Result<TranscriptRecord, ServerError> {
+        let request = &lease.api_request;
+        let binding = api_request_binding(request)?;
+        let record = self
+            .store
+            .lookup_by_nullifier(&lease.request_nullifier)
+            .ok_or_else(|| ServerError::Internal("OA lease has no reservation".into()))?;
+        let public = &request.public_inputs;
+        let signing_key = self.state_signing_key();
+        if lease.client_request_id != request.client_request_id
+            || lease.request_nullifier != public.request_nullifier
+            || record.reservation_kind != "openrouter_lease"
+            || record.client_request_id.as_deref() != Some(request.client_request_id.as_str())
+            || record.payload_hash != Some(request.payload_hash)
+            || record.api_request_binding.as_deref() != Some(binding.as_str())
+            || canonical_payload_hash(request.payload.as_bytes()) != request.payload_hash
+            || public.protocol_version != self.config.protocol_version
+            || public.chain_id != self.config.chain_id
+            || public.contract_address != self.config.contract_address
+            || public.state_signing_key_x != signing_key.x
+            || public.state_signing_key_y != signing_key.y
+            || self.lease_authorization(request)?.0 != OpenRouterLeaseAuthorization::default()
+            || lease.spending_limit_usd.to_bits()
+                != pricing::micro_usd_to_usd(self.lease_limit_micro_usd(request)?).to_bits()
+        {
+            return Err(ServerError::Internal("OA lease binding mismatch".into()));
+        }
+        self.persisted_oa_request_id(lease)?;
+        if !matches!(
+            record.status,
+            NullifierStatus::Reserved | NullifierStatus::Finalized
+        ) {
+            return Err(ServerError::LeasePending);
+        }
+        Ok(record)
+    }
+
     /// Consume an accepted authorization without charge only when durable
     /// evidence excludes upstream issuance. Callers hold lease_issue_lock.
     /// Expiry, a missing key, and a later rejection after a lost reply do not
@@ -734,34 +847,7 @@ impl RequestProcessor {
             return Err(ServerError::LeasePending);
         }
         let request = &lease.api_request;
-        let binding = api_request_binding(request)?;
-        let record = self
-            .store
-            .lookup_by_nullifier(&lease.request_nullifier)
-            .ok_or_else(|| ServerError::Internal("unissued lease has no reservation".into()))?;
-        let public = &request.public_inputs;
-        let signing_key = self.state_signing_key();
-        if lease.client_request_id != request.client_request_id
-            || lease.request_nullifier != public.request_nullifier
-            || record.reservation_kind != "openrouter_lease"
-            || record.client_request_id.as_deref() != Some(request.client_request_id.as_str())
-            || record.payload_hash != Some(request.payload_hash)
-            || record.api_request_binding.as_deref() != Some(binding.as_str())
-            || canonical_payload_hash(request.payload.as_bytes()) != request.payload_hash
-            || public.protocol_version != self.config.protocol_version
-            || public.chain_id != self.config.chain_id
-            || public.contract_address != self.config.contract_address
-            || public.state_signing_key_x != signing_key.x
-            || public.state_signing_key_y != signing_key.y
-            || self.lease_authorization(request)?.0 != OpenRouterLeaseAuthorization::default()
-            || lease.spending_limit_usd.to_bits()
-                != pricing::micro_usd_to_usd(self.lease_limit_micro_usd(request)?).to_bits()
-        {
-            return Err(ServerError::Internal(
-                "unissued lease binding mismatch".into(),
-            ));
-        }
-        self.persisted_oa_request_id(lease)?;
+        let record = self.validate_oa_lease_binding(lease)?;
         if record.status == NullifierStatus::Finalized {
             // The transcript was committed before the lease row. Reuse that
             // exact signed successor; a retry must never sign another balance.
@@ -1663,6 +1749,13 @@ mod tests {
             .route("/rpc", post(issuance_rpc))
             .route("/v1/keys", get(list).post(create))
             .route("/api/zkapi/request_key", post(create))
+            .route(
+                "/api/zkapi/reconcile_key",
+                post(|Json(body): Json<Value>| async move {
+                    Json(json!({"source":"oa_org", "version":1, "status":"unknown",
+                    "client_request_id":body["client_request_id"]}))
+                }),
+            )
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1713,6 +1806,157 @@ mod tests {
             )
             .unwrap();
         (processor, request, server)
+    }
+
+    #[tokio::test]
+    async fn expired_issued_provisioning_recovers_metadata_and_charges_actual_usage() {
+        use axum::{routing::post, Json, Router};
+        use serde_json::{json, Value};
+        let state = Arc::new(std::sync::Mutex::new(IssuanceMock::default()));
+        let (mut processor, request, old_server) = issuance_processor(true, state.clone()).await;
+        processor
+            .store
+            .begin_oa_issuance(&request.client_request_id)
+            .unwrap();
+        let expected_id = RequestProcessor::native_oa_request_id(&request).unwrap();
+        let expected_cap = processor.lease_limit_micro_usd(&request).unwrap();
+        let expected_usd = pricing::micro_usd_to_usd(expected_cap);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let reconciliation_seen = seen.clone();
+        let usage_seen = seen.clone();
+        let reconciliation_id = expected_id.clone();
+        let app = Router::new()
+            .route("/api/zkapi/reconcile_key", post(move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+                let seen = reconciliation_seen.clone();
+                let expected_id = reconciliation_id.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer test-secret");
+                    assert_eq!(body["client_request_id"], expected_id);
+                    assert_eq!(body["credit_limit_credits"], json!(expected_cap));
+                    assert_eq!(body["credit_limit"], expected_usd);
+                    assert_eq!(body["duration_minutes"], 5);
+                    seen.lock().unwrap().push("reconcile".into());
+                    Json(json!({"source":"oa_org", "version":1, "status":"issued",
+                        "client_request_id":body["client_request_id"], "station_request_id":crate::oa_org::station_request_id(body["client_request_id"].as_str().unwrap()),
+                        "key_hash":"recovered-hash", "credit_limit":body["credit_limit"],
+                        "credit_limit_credits":body["credit_limit_credits"], "duration_minutes":5,
+                        "expires_at_unix":600, "station_id":"saved-station"}))
+                }
+            }))
+            .route("/api/zkapi/key_usage", post(move |Json(body): Json<Value>| {
+                let seen = usage_seen.clone();
+                async move {
+                    assert_eq!(body["key_hash"], "recovered-hash");
+                    assert_eq!(body["expires_at_unix"], 600);
+                    let first_usage = {
+                        let mut calls = seen.lock().unwrap();
+                        let first = !calls.iter().any(|call| call == "usage");
+                        calls.push("usage".into());
+                        first
+                    };
+                    if first_usage {
+                        return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"detail":"usage temporarily unavailable"})));
+                    }
+                    (axum::http::StatusCode::OK, Json(json!({"source":"oa_org", "version":1, "status":"finalized",
+                        "client_request_id":body["client_request_id"], "station_request_id":"ab".repeat(32),
+                        "key_hash":"recovered-hash", "usage_credits":1_000_000,
+                        "credit_limit_credits":body["credit_limit_credits"], "expires_at_unix":600,
+                        "closed_at_unix":550, "finalized_at_unix":601, "station_id":"saved-station",
+                        "station_signature":"ab".repeat(64), "org_signature":"cd".repeat(64)})))
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        processor.oa_org = Some(Arc::new(
+            OaOrgProvisioner::new(
+                format!("http://{}", listener.local_addr().unwrap()),
+                "test-secret".into(),
+            )
+            .unwrap(),
+        ));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        processor.settle_due_openrouter_leases().await;
+        let interrupted = processor
+            .store
+            .lookup_openrouter_lease(&request.client_request_id)
+            .unwrap();
+        assert_eq!(interrupted.status, "active");
+        assert_eq!(interrupted.key_hash.as_deref(), Some("recovered-hash"));
+        assert_eq!(interrupted.expires_at, 570);
+        assert_eq!(
+            processor
+                .store
+                .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+                .unwrap()
+                .status,
+            NullifierStatus::Reserved
+        );
+        // Resume from the durable metadata boundary without reconciliation,
+        // replaying issuance, or changing the original quote.
+        processor.settle_due_openrouter_leases().await;
+        let lease = processor
+            .store
+            .lookup_openrouter_lease(&request.client_request_id)
+            .unwrap();
+        assert_eq!(lease.status, "finalized");
+        assert_eq!(lease.key_hash.as_deref(), Some("recovered-hash"));
+        assert_eq!(lease.expires_at, 570);
+        let expected_charge = processor.lease_charge_units(&request, 1_000_000).unwrap();
+        assert!(expected_charge > 0);
+        assert_eq!(lease.charge_applied, Some(expected_charge));
+        let record = processor
+            .store
+            .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+            .unwrap();
+        assert_eq!(record.status, NullifierStatus::Finalized);
+        assert!(record.next_state_sig.is_some());
+        let payload: Value =
+            serde_json::from_str(record.response_payload.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["type"], "oa_org_ephemeral_lease_settlement");
+        assert_eq!(payload["usage_credits"], 1_000_000);
+        assert_eq!(
+            payload["billing_quote"],
+            serde_json::from_str::<Value>(&request.payload).unwrap()["billing_quote"]
+        );
+        processor
+            .retire_openrouter_lease(&request.client_request_id, &request)
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec!["reconcile", "usage", "usage"]);
+        assert_eq!(state.lock().unwrap().creates, 0);
+        old_server.abort();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unknown_issuer_binding_retains_ambiguous_reservation_without_reissuing() {
+        let state = Arc::new(std::sync::Mutex::new(IssuanceMock::default()));
+        let (processor, request, server) = issuance_processor(true, state.clone()).await;
+        processor
+            .store
+            .begin_oa_issuance(&request.client_request_id)
+            .unwrap();
+        assert!(matches!(
+            processor
+                .retire_openrouter_lease(&request.client_request_id, &request)
+                .await,
+            Err(ServerError::LeasePending)
+        ));
+        processor.settle_due_openrouter_leases().await;
+        let lease = processor
+            .store
+            .lookup_openrouter_lease(&request.client_request_id)
+            .unwrap();
+        assert_eq!(lease.status, "provisioning");
+        assert!(lease.key_hash.is_none());
+        let record = processor
+            .store
+            .lookup_by_nullifier(&request.public_inputs.request_nullifier)
+            .unwrap();
+        assert_eq!(record.status, NullifierStatus::Reserved);
+        assert!(record.next_state_sig.is_none());
+        assert_eq!(state.lock().unwrap().creates, 0);
+        server.abort();
     }
 
     #[tokio::test]
