@@ -170,6 +170,20 @@ The helper recovers pending or ambiguous settlement outcomes without repeated
 retirement requests. Signed settlement can still take several minutes.
 Inference is never retried automatically after a provider/transport error.
 
+The allowance follows the OA web client's public model-tier policy: $1, $2,
+$3, $4.50 or $6 depending on the model. This is an aggregate spending ceiling,
+not a fixed charge. Both clients strip only `:online` for tier lookup, keep
+other variants distinct, and reject an explicit tier without a reviewed budget.
+The production org's $20 per-key ceiling does not raise these client allowances.
+
+If issuance was interrupted before a key reached the client, settlement first
+asks the server to reconcile the saved authorization. For an older pending
+server, it replays that exact request, verifies any returned key and retires it
+without using it for inference. A finalized cancellation needs no key: the
+helper verifies and installs the signed wallet response. Unknown outcomes stay
+pending with the original recovery journal intact. Retrying uses the existing
+wallet; deleting or resetting its files cannot safely release a server reservation.
+
 The default `key_reuse_window_seconds` is 60 seconds. An explicitly saved
 window is preserved across updates. Stop `serve`, run
 `zkapi-clientd config --key-reuse-window-seconds 0`, then restart `serve` to
